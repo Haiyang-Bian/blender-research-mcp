@@ -8,7 +8,7 @@ from pathlib import Path
 PACKAGE_NAME = "blender_research_mcp_addon"
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "blender_addon" / PACKAGE_NAME
-DEFAULT_OUTPUT = ROOT / "artifacts" / "blender-research-mcp-addon-0.3.0.zip"
+DEFAULT_OUTPUT = ROOT / "artifacts" / "blender-research-mcp-addon-0.3.1.zip"
 
 
 def build(output: Path) -> Path:

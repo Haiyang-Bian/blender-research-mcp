@@ -3,7 +3,7 @@
 - Status: first vertical slice live-validated; 0.3 autonomous observation implemented,
   background validation pending
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.3.0
+- Package and add-on version: 0.3.1
 - Protocol version: 1
 - Development transport port: 9877
 

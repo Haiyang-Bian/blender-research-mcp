@@ -2,7 +2,7 @@
 
 ## Start and connect
 
-1. Install `artifacts/blender-research-mcp-addon-0.3.0.zip` in Blender 4.2.23 and
+1. Install `artifacts/blender-research-mcp-addon-0.3.1.zip` in Blender 4.2.23 and
    enable **Blender Research MCP**.
 2. Keep the blend file open with at least one 3D Viewport.
 3. Configure the `blender_research` STDIO MCP as shown in the repository README and

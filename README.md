@@ -9,8 +9,8 @@
 
 项目的首个纵向切片已通过 Blender 4.2.23 LTS 实时烟测：认证传输、
 上下文观察、事务化局部缩放、显式/断线回退，以及 Microsoft Store 版
-Blender 会话发现。0.3.0 已实现不依赖窗口像素的 GPU 离屏捕获和一致的
-多视图 `observation.bundle`；后台遮挡烟测将在安装 0.3.0 插件后记录。
+Blender 会话发现。0.3.1 已实现不依赖窗口像素的 GPU 离屏捕获和一致的
+多视图 `observation.bundle`；后台遮挡烟测将在安装 0.3.1 插件后记录。
 首个切片的验收记录见
 [docs/validation/2026-08-28-first-vertical-slice.md](docs/validation/2026-08-28-first-vertical-slice.md)。
 
@@ -61,7 +61,7 @@ Blender 插件会话。它不提供任意 Python 或保存 `.blend` 文件的工
 | 事务、局部绝对缩放、回退 | 否 |
 | `viewport.capture`、`observation.bundle` | 否；Blender 可被其他窗口遮挡 |
 
-Blender 必须保持运行并存在至少一个 `VIEW_3D`。最小化不是 0.3.0 的兼容
+Blender 必须保持运行并存在至少一个 `VIEW_3D`。最小化不是 0.3.1 的兼容
 保证；GPU 上下文不可用时工具返回 `CAPTURE_GPU_UNAVAILABLE`，不会把黑图
 作为证据。捕获后端和焦点契约可通过 `connection.ping` 查看。
 

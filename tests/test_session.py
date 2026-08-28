@@ -19,7 +19,7 @@ def write_manifest(path, *, port: int, pid: int | None = None) -> None:
                 "pid": pid or os.getpid(),
                 "instance_id": "instance-1",
                 "session_token": "s" * 43,
-                "addon_version": "0.3.0",
+                "addon_version": "0.3.1",
                 "created_at": datetime.now(UTC).isoformat(),
             }
         ),
