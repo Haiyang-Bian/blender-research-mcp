@@ -12,7 +12,12 @@ import bpy
 import gpu
 from mathutils import Vector
 
-from .capture_codec import bounded_dimensions, encode_rgba_png, is_blank_rgba
+from .capture_codec import (
+    bounded_dimensions,
+    encode_rgba_png,
+    flatten_rgba_buffer,
+    is_blank_rgba,
+)
 
 
 class ContextOperationError(RuntimeError):
@@ -343,17 +348,17 @@ def capture_viewport(
             projection_matrix = viewport.space.region_3d.window_matrix.copy()
             try:
                 offscreen = gpu.types.GPUOffScreen(width, height, format="RGBA8")
+                offscreen.draw_view3d(
+                    viewport.window.scene,
+                    viewport.window.view_layer,
+                    viewport.space,
+                    viewport.region,
+                    view_matrix,
+                    projection_matrix,
+                    do_color_management=True,
+                    draw_background=True,
+                )
                 with offscreen.bind():
-                    offscreen.draw_view3d(
-                        viewport.window.scene,
-                        viewport.window.view_layer,
-                        viewport.space,
-                        viewport.region,
-                        view_matrix,
-                        projection_matrix,
-                        do_color_management=True,
-                        draw_background=True,
-                    )
                     framebuffer = gpu.state.active_framebuffer_get()
                     pixels = framebuffer.read_color(
                         0,
@@ -364,7 +369,7 @@ def capture_viewport(
                         0,
                         "UBYTE",
                     )
-                    rgba = bytes(pixels)
+                    rgba = flatten_rgba_buffer(pixels, width, height)
             except Exception as exc:
                 raise ContextOperationError(
                     "CAPTURE_GPU_UNAVAILABLE",

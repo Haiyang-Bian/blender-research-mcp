@@ -29,6 +29,23 @@ def test_bounded_dimensions_preserve_aspect_and_never_upscale() -> None:
         codec.bounded_dimensions(0, 100, 800)
 
 
+def test_gpu_buffer_is_flattened_before_byte_conversion() -> None:
+    codec = load_module("capture_codec")
+    payload = bytes(range(16))
+
+    class FakeBuffer:
+        dimensions = (2, 2, 4)
+
+        def __bytes__(self) -> bytes:
+            assert self.dimensions == 16
+            return payload
+
+    buffer = FakeBuffer()
+
+    assert codec.flatten_rgba_buffer(buffer, 2, 2) == payload
+    assert buffer.dimensions == 16
+
+
 def test_png_encoder_flips_bottom_up_rgba_rows() -> None:
     codec = load_module("capture_codec")
     bottom_red_top_blue = bytes(

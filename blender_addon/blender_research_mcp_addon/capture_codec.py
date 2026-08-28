@@ -4,8 +4,21 @@ from __future__ import annotations
 
 import struct
 import zlib
+from typing import Any
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def flatten_rgba_buffer(buffer: Any, width: int, height: int) -> bytes:
+    """Flatten Blender's multidimensional UBYTE GPU buffer into packed RGBA8."""
+    expected = width * height * 4
+    if width <= 0 or height <= 0:
+        raise ValueError("RGBA buffer dimensions must be positive")
+    buffer.dimensions = expected
+    data = bytes(buffer)
+    if len(data) != expected:
+        raise ValueError("GPU buffer size does not match image dimensions")
+    return data
 
 
 def bounded_dimensions(width: int, height: int, max_size: int) -> tuple[int, int]:
