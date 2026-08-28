@@ -1,6 +1,6 @@
 ---
 name: blender-research-workflow
-description: Inspect, diagnose, compare, and reversibly preview supported changes in a live Blender 4.2 scene through Blender Research MCP. Use when the user asks to observe objects or viewports, capture multi-view evidence, adjust supported object scale values, or verify and roll back Blender changes; do not use for arbitrary Python or saving blend files.
+description: Inspect, spatially diagnose, compare, and reversibly preview supported changes in a live Blender 4.2 scene through Blender Research MCP. Use for viewport evidence, capture-bound raycasts, evaluated mesh summaries, supported scale previews, and rollback verification; do not use for arbitrary Python or saving blend files.
 ---
 
 # Blender Research Workflow
@@ -10,16 +10,28 @@ Use the semantic `blender_research` MCP as the source of truth for live Blender 
 ## Start safely
 
 1. Call `connection.ping` before relying on the tools. Require protocol `1`, add-on
-   `0.3.x`, and `capability_versions.viewport_capture >= 2`.
+   `0.4.x`, `viewport_capture >= 3`, `viewport_raycast >= 1`, and
+   `geometry_inspection >= 1`.
 2. Call `context.get` and use exact object names. Never infer live connectivity from
    tool registration alone.
 3. For visual diagnosis, prefer `observation.bundle` with the smallest useful set of
-   views. Use `object.inspect` when structured state answers the question without an
-   image.
+   views. Use `object.inspect` or `object.geometry.inspect` when structured state
+   answers the question without an image.
 
 Blender may be behind another window. It must remain running with a `VIEW_3D` area;
 minimized capture is not guaranteed. Treat `CAPTURE_GPU_UNAVAILABLE` as a request to
 restore the Blender window, not permission to use desktop automation or raw Python.
+
+## Ground image evidence
+
+Use a successful capture's own `capture_id` when mapping normalized top-left image
+coordinates through `viewport.raycast`. Do not raycast against a different capture or
+infer that a transparent rendered surface is absent from geometry. Inspect the exact
+hit object when a structured mesh summary would clarify the diagnosis.
+
+If the capture is missing, stale, or belongs to a different scene/view layer, discard
+the image-coordinate pair and capture again. Never reuse matrices or coordinates from
+rejected evidence.
 
 ## Mutate through a preview
 

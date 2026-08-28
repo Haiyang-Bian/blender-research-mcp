@@ -1,8 +1,8 @@
 # Blender Research MCP — design and handoff
 
-- Status: first vertical slice and 0.3.1 autonomous background observation live-validated
+- Status: 0.3.1 autonomous observation validated; 0.4.0 spatial diagnosis implemented
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.3.1
+- Package and add-on version: 0.4.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -190,12 +190,16 @@ single socket recv call must never be treated as one complete JSON message.
 - context.snapshot
 - context.restore
 - object.inspect
+- object.geometry.inspect
 - viewport.capture
+- viewport.raycast
 - observation.bundle
 
 `viewport.capture` uses GPU off-screen rendering and does not depend on foreground
 window pixels. `observation.bundle` composes one to three sequential captures and
-requires stable scene, object, and user-context evidence.
+requires stable scene, object, and user-context evidence. Captures can use bounded
+diagnostic shading and absolute orbit parameters, and their session-local IDs ground
+normalized image coordinates for evaluated-scene raycasts.
 
 ### Implemented bounded mutation
 
@@ -203,12 +207,8 @@ requires stable scene, object, and user-context evidence.
 
 The 0.3 implementation accepts only absolute partial local `scale.x/y/z` patches.
 
-### Planned observation and mutation
+### Planned mutation
 
-- selection.set
-- viewport.frame
-- viewport.orbit
-- viewport.raycast
 - object.visibility.set
 - modifier.set_input
 - material.set_input
@@ -256,13 +256,17 @@ Status: completed and live-validated on 2026-08-28.
 
 ### Phase 1 — active observation
 
-Status: partially completed. Context, exact inspection, focus-independent capture, and
-multi-view bundles are implemented; selection, standalone frame/orbit, and raycast
-remain planned.
+Status: implemented for context-safe active observation in 0.4.0; live validation is
+the remaining release gate.
 
 - Implement context read/snapshot/restore.
-- Implement selection, frame, orbit, capture, and raycast.
+- Implement temporary selection, frame, absolute orbit, capture-bound raycast, and
+  evaluated geometry summaries.
 - Validate on the portrait scene without saving it.
+
+Standalone selection, frame, and incremental orbit tools are intentionally not
+exposed. Their observation use cases run inside one capture and restore the original
+context, avoiding persistent viewport debt.
 
 ### Phase 2 — transactions
 
@@ -322,7 +326,8 @@ research scenarios.
 
 - Whether a future capture backend should guarantee operation while Blender is
   minimized; 0.3 guarantees only an unfocused or obscured running window.
-- Which remaining selection, orbit, and raycast operations are stable enough to expose.
+- Whether any future persistent viewport-control operation justifies a separate
+  context lease; 0.4 keeps navigation inside restored capture operations.
 - Whether the add-on should later ship as a Blender Extension in addition to the
   current traditional ZIP.
 - Whether a bounded project-script capability is necessary; arbitrary inline Python

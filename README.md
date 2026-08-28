@@ -9,9 +9,10 @@
 
 项目的首个纵向切片已通过 Blender 4.2.23 LTS 实时烟测：认证传输、
 上下文观察、事务化局部缩放、显式/断线回退，以及 Microsoft Store 版
-Blender 会话发现。0.3.1 已实现不依赖窗口像素的 GPU 离屏捕获和一致的
-多视图 `observation.bundle`，并已通过 Blender 被 Codex 完全遮挡时的真实
-烟测。验收记录见
+Blender 会话发现。0.4.0 在不依赖窗口像素的 GPU 离屏捕获上增加了诊断
+着色、绝对 orbit、捕获绑定的 `viewport.raycast` 和有界 evaluated geometry
+摘要。0.3.1 的后台捕获已经通过 Blender 被 Codex 完全遮挡时的真实烟测；
+0.4.0 的空间诊断等待本分支最终烟测。验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)。
 
@@ -54,16 +55,35 @@ uv run --no-sync python scripts/build_addon.py
 外部 MCP 服务无参数时通过 stdio 启动，并自动发现端口 9877 的本地
 Blender 插件会话。它不提供任意 Python 或保存 `.blend` 文件的工具。
 
+## 空间诊断
+
+`viewport.capture` 和 `observation.bundle` 可临时使用 `WIREFRAME`、`SOLID`、
+`MATERIAL` 或 `RENDERED`，并在完成后恢复用户的 shading、overlays、选择、
+模式和视角。单图捕获还可从一个明确轴向执行绝对 yaw/pitch orbit。
+
+每张成功图片返回会话内 `capture_id`。将图片上以左上角为原点的归一化
+`x/y` 传给 `viewport.raycast`，即可获得 evaluated 场景中的几何命中对象、
+世界坐标、法线和面索引。场景变化后旧 ID 返回 `CAPTURE_STALE`，调用方必须
+重新捕获。`object.geometry.inspect` 提供网格计数、bounds、材质使用、modifier
+和有界拓扑摘要，不返回原始网格数组。
+
+## Blender 控制区域
+
+3D Viewport 的 **Research MCP** N-panel 只显示紧凑状态。完整 endpoint、
+heartbeat、scene generation、命令耗时、事务和错误信息位于
+**Scene Properties > Blender Research MCP**。插件不会自动切割 Area 或创建
+Workspace；用户可以手动把任意现有 Area 切换为 Properties Editor。
+
 ## Blender 是否需要焦点
 
 | 操作 | 是否需要 Blender 在前台 |
 | --- | --- |
 | 连接、上下文、对象检查 | 否 |
 | 事务、局部绝对缩放、回退 | 否 |
-| `viewport.capture`、`observation.bundle` | 否；Blender 可被其他窗口遮挡 |
+| 捕获、bundle、raycast、geometry inspect | 否；Blender 可被其他窗口遮挡 |
 
-Blender 必须保持运行并存在至少一个 `VIEW_3D`。最小化不是 0.3.1 的兼容
-保证；GPU 上下文不可用时工具返回 `CAPTURE_GPU_UNAVAILABLE`，不会把黑图
+Blender 必须保持运行并存在至少一个 `VIEW_3D`。最小化不是 0.4.0 的兼容
+保证；GPU 上下文不可用时捕获返回 `CAPTURE_GPU_UNAVAILABLE`，不会把黑图
 作为证据。捕获后端和焦点契约可通过 `connection.ping` 查看。
 
 ## 配置 Codex

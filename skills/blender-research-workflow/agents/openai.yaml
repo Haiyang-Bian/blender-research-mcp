@@ -1,7 +1,7 @@
 interface:
   display_name: "Blender Research Workflow"
-  short_description: "Inspect and safely preview Blender scenes"
-  default_prompt: "Use $blender-research-workflow to inspect this Blender scene and make any requested change through a reversible preview."
+  short_description: "Spatially diagnose and safely preview Blender scenes"
+  default_prompt: "Use $blender-research-workflow to capture, spatially diagnose, and safely preview this Blender scene."
 dependencies:
   tools:
     - type: "mcp"

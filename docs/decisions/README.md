@@ -7,5 +7,8 @@ boundaries as numbered files:
 0001-short-title.md
 ~~~
 
+Current records cover authenticated transport, reversible transactions,
+focus-independent off-screen observation, and capture-bound spatial diagnosis.
+
 Each record should include context, decision, alternatives, consequences, and
 status. Do not use decision records for routine implementation details.
