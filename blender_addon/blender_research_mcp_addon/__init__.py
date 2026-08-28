@@ -1,5 +1,7 @@
 """Blender Research MCP add-on."""
 
+from typing import Any
+
 import bpy
 from bpy.app.handlers import persistent
 from bpy.props import IntProperty
@@ -48,6 +50,52 @@ class BRMCP_OT_restart(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _draw_stopped(layout: Any) -> bool:
+    if STATE is not None:
+        return False
+    layout.label(text="Stopped", icon="PAUSE")
+    return True
+
+
+def _draw_compact_status(layout: Any) -> None:
+    if _draw_stopped(layout):
+        return
+    assert STATE is not None
+    runtime = STATE.runtime
+    icon = "CHECKMARK" if runtime.status in {"listening", "connected"} else "ERROR"
+    layout.label(text=f"Status: {runtime.status}", icon=icon)
+    layout.label(text=f"Capture: {STATE.last_capture_backend}")
+    layout.label(text=f"Transaction: {STATE.transactions.last_status}")
+    if runtime.last_error or STATE.last_error:
+        box = layout.box()
+        box.label(text=runtime.last_error or STATE.last_error, icon="ERROR")
+    layout.operator(BRMCP_OT_restart.bl_idname, icon="FILE_REFRESH")
+
+
+def _draw_full_status(layout: Any) -> None:
+    if _draw_stopped(layout):
+        return
+    assert STATE is not None
+    runtime = STATE.runtime
+    icon = "CHECKMARK" if runtime.status in {"listening", "connected"} else "ERROR"
+    layout.label(text=f"Add-on: {ADDON_VERSION}")
+    layout.label(text=f"Status: {runtime.status}", icon=icon)
+    layout.label(text=f"Endpoint: 127.0.0.1:{runtime.port}")
+    layout.label(text=f"Instance: {runtime.instance_id[:8] or 'starting'}")
+    layout.label(text=f"Connected: {'yes' if runtime.connected else 'no'}")
+    layout.label(text=f"Heartbeat: {STATE.heartbeat}")
+    layout.label(text=f"Scene generation: {STATE.scene_generation}")
+    layout.label(text=f"Capture: {STATE.last_capture_backend}")
+    layout.label(text=f"Transaction: {STATE.transactions.last_status}")
+    if STATE.active_command:
+        layout.label(text=f"Running: {STATE.active_command}")
+    layout.label(text=f"Last command: {STATE.last_command_ms:.3f} ms")
+    if runtime.last_error or STATE.last_error:
+        box = layout.box()
+        box.label(text=runtime.last_error or STATE.last_error, icon="ERROR")
+    layout.operator(BRMCP_OT_restart.bl_idname, icon="FILE_REFRESH")
+
+
 class BRMCP_PT_status(bpy.types.Panel):
     bl_label = "Blender Research MCP"
     bl_idname = "BRMCP_PT_status"
@@ -57,29 +105,27 @@ class BRMCP_PT_status(bpy.types.Panel):
 
     def draw(self, context: bpy.types.Context) -> None:
         del context
-        layout = self.layout
-        if STATE is None:
-            layout.label(text="Stopped", icon="PAUSE")
-            return
-        runtime = STATE.runtime
-        icon = "CHECKMARK" if runtime.status in {"listening", "connected"} else "ERROR"
-        layout.label(text=f"Add-on: {ADDON_VERSION}")
-        layout.label(text=f"Status: {runtime.status}", icon=icon)
-        layout.label(text=f"Endpoint: 127.0.0.1:{runtime.port}")
-        layout.label(text=f"Connected: {'yes' if runtime.connected else 'no'}")
-        layout.label(text=f"Heartbeat: {STATE.heartbeat}")
-        layout.label(text=f"Scene generation: {STATE.scene_generation}")
-        layout.label(text=f"Capture: {STATE.last_capture_backend}")
-        layout.label(text=f"Transaction: {STATE.transactions.last_status}")
-        if STATE.active_command:
-            layout.label(text=f"Running: {STATE.active_command}")
-        if runtime.last_error or STATE.last_error:
-            box = layout.box()
-            box.label(text=runtime.last_error or STATE.last_error, icon="ERROR")
-        layout.operator(BRMCP_OT_restart.bl_idname, icon="FILE_REFRESH")
+        _draw_compact_status(self.layout)
 
 
-CLASSES = (BRMCP_AddonPreferences, BRMCP_OT_restart, BRMCP_PT_status)
+class BRMCP_PT_scene_status(bpy.types.Panel):
+    bl_label = "Blender Research MCP"
+    bl_idname = "BRMCP_PT_scene_status"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "scene"
+
+    def draw(self, context: bpy.types.Context) -> None:
+        del context
+        _draw_full_status(self.layout)
+
+
+CLASSES = (
+    BRMCP_AddonPreferences,
+    BRMCP_OT_restart,
+    BRMCP_PT_status,
+    BRMCP_PT_scene_status,
+)
 
 
 def _timer() -> float | None:
