@@ -1,9 +1,11 @@
 # Blender Research MCP — design and handoff
 
-- Status: first vertical slice implemented; Blender 4.2.23 live validation pending
+- Status: first vertical slice live-validated; 0.3 autonomous observation implemented,
+  background validation pending
 - Primary Blender target: 4.2.23 LTS
-- Protocol version: 1 (proposed)
-- Development transport port: 9877 (proposed)
+- Package and add-on version: 0.3.0
+- Protocol version: 1
+- Development transport port: 9877
 
 ## 1. Why this project exists
 
@@ -103,7 +105,7 @@ The bridge runs with Blender-process authority. It must be local-first:
   artist.
 - Editing or migrating the existing portrait scene during bridge development.
 
-## 5. Proposed architecture
+## 5. Current architecture
 
 ~~~text
 Codex / another MCP client
@@ -180,33 +182,42 @@ state.
 Messages require explicit framing, preferably a four-byte length prefix. A
 single socket recv call must never be treated as one complete JSON message.
 
-## 7. Initial tool surface
+## 7. Tool surface
 
-### Observation
+### Implemented observation
 
 - connection.ping
 - context.get
 - context.snapshot
 - context.restore
-- selection.set
 - object.inspect
-- viewport.frame
-- viewport.orbit
 - viewport.capture
-- viewport.raycast
+- observation.bundle
 
-### Bounded mutation
+`viewport.capture` uses GPU off-screen rendering and does not depend on foreground
+window pixels. `observation.bundle` composes one to three sequential captures and
+requires stable scene, object, and user-context evidence.
+
+### Implemented bounded mutation
 
 - object.transform
+
+The 0.3 implementation accepts only absolute partial local `scale.x/y/z` patches.
+
+### Planned observation and mutation
+
+- selection.set
+- viewport.frame
+- viewport.orbit
+- viewport.raycast
 - object.visibility.set
 - modifier.set_input
 - material.set_input
 - shape_key.set_value
 
-### Transactions
+### Implemented transactions
 
 - transaction.begin
-- transaction.preview
 - transaction.commit
 - transaction.rollback
 
@@ -236,6 +247,8 @@ contract because user actions and agent actions can interleave.
 
 ### Phase 0 — transport spike
 
+Status: completed and live-validated on 2026-08-28.
+
 - Install a separate add-on using port 9877.
 - Implement handshake, ping, request IDs, timeouts, reconnect, and shutdown.
 - Keep the existing Blender MCP on port 9876 for fallback.
@@ -244,11 +257,18 @@ contract because user actions and agent actions can interleave.
 
 ### Phase 1 — active observation
 
+Status: partially completed. Context, exact inspection, focus-independent capture, and
+multi-view bundles are implemented; selection, standalone frame/orbit, and raycast
+remain planned.
+
 - Implement context read/snapshot/restore.
 - Implement selection, frame, orbit, capture, and raycast.
 - Validate on the portrait scene without saving it.
 
 ### Phase 2 — transactions
+
+Status: completed for reversible absolute object-scale previews and live-validated on
+2026-08-28.
 
 - Implement property deltas and rollback tokens.
 - Change one eye-aperture parameter, capture evidence, and roll it back.
@@ -269,6 +289,8 @@ contract because user actions and agent actions can interleave.
 
 ## 10. Acceptance criteria for the first milestone
 
+Completed on Blender 4.2.23 LTS; see the validation record under `docs/validation`.
+
 - Blender 4.2.23 remains responsive while commands execute.
 - The client reconnects after add-on restart.
 - Chinese object names round-trip without corruption.
@@ -287,6 +309,7 @@ contract because user actions and agent actions can interleave.
 blender_addon/            installable Blender-side package
 docs/                     design and decisions
 src/blender_research_mcp/ external MCP server
+skills/                   versioned Codex workflow skill source
 tests/                    fast server/protocol tests
 tests_blender/            future live Blender smoke scripts
 artifacts/                ignored local screenshots and diagnostics
@@ -298,14 +321,14 @@ research scenarios.
 
 ## 12. Open decisions
 
-- Whether protocol framing uses a length prefix or an established local RPC
-  transport.
-- Whether the Blender add-on is distributed as a zip, Blender Extension, or both.
-- Whether authentication uses an ephemeral token file or manual pairing.
-- How transaction conflicts are reported when the user edits during an agent
-  preview.
-- Which viewport operations are stable across Blender 4.2 and future 5.x.
-- Project license; decide before publishing or copying upstream code.
+- Whether a future capture backend should guarantee operation while Blender is
+  minimized; 0.3 guarantees only an unfocused or obscured running window.
+- Which remaining selection, orbit, and raycast operations are stable enough to expose.
+- Whether the add-on should later ship as a Blender Extension in addition to the
+  current traditional ZIP.
+- Whether a bounded project-script capability is necessary; arbitrary inline Python
+  remains out of scope.
+- Blender 5.x capability policy and the project license; decide both before publishing.
 
 ## 13. Guidance for a new Codex task
 
@@ -315,7 +338,8 @@ At the start of a new task:
 2. Inspect Git status and do not overwrite uncommitted IDE or user changes.
 3. Use uv for all Python dependency and execution work.
 4. Keep Blender 4.2.23 and Python 3.11 add-on compatibility.
-5. Develop on port 9877 until the new bridge passes the acceptance suite.
+5. Develop on port 9877 and require explicit capability negotiation.
 6. Do not modify the portrait blend file while building transport infrastructure.
-7. Prefer one vertical slice—connect, observe, mutate, rollback, verify—over a
-   broad catalogue of unfinished tools.
+7. Prefer one vertical slice—connect, observe, mutate, rollback, verify—over a broad
+   catalogue of unfinished tools. Use `observation.bundle` before adding new mutation
+   authority.

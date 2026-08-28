@@ -1,0 +1,11 @@
+interface:
+  display_name: "Blender Research Workflow"
+  short_description: "Inspect and safely preview Blender scenes"
+  default_prompt: "Use $blender-research-workflow to inspect this Blender scene and make any requested change through a reversible preview."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "blender_research"
+      description: "Local semantic Blender Research MCP server"
+policy:
+  allow_implicit_invocation: true
