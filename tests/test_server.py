@@ -5,7 +5,7 @@ from blender_research_mcp.server import create_server
 
 def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     server = create_server()
-    assert server._mcp_server.version == "0.3.1"
+    assert server._mcp_server.version == "0.4.0"
     tools = asyncio.run(server.list_tools())
     assert [tool.name for tool in tools] == [
         "connection.ping",
@@ -14,6 +14,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "context.restore",
         "object.inspect",
         "viewport.capture",
+        "viewport.raycast",
         "observation.bundle",
         "transaction.begin",
         "object.transform",
@@ -26,6 +27,12 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert capture.annotations.readOnlyHint is True
     assert capture.inputSchema["properties"]["max_size"]["minimum"] == 256
     assert capture.inputSchema["properties"]["max_size"]["maximum"] == 1600
+    raycast = tools_by_name["viewport.raycast"]
+    assert raycast.annotations is not None
+    assert raycast.annotations.readOnlyHint is True
+    assert raycast.annotations.idempotentHint is True
+    assert raycast.inputSchema["properties"]["x"]["minimum"] == 0.0
+    assert raycast.inputSchema["properties"]["x"]["maximum"] == 1.0
     bundle = tools_by_name["observation.bundle"]
     assert bundle.annotations is not None
     assert bundle.annotations.readOnlyHint is True

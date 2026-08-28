@@ -53,3 +53,5 @@ def test_capability_versions_default_to_incompatible_zeroes() -> None:
     versions = CapabilityVersions()
 
     assert versions.viewport_capture == 0
+    assert versions.viewport_raycast == 0
+    assert versions.geometry_inspection == 0

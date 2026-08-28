@@ -18,7 +18,7 @@ from blender_research_mcp.constants import DEFAULT_PORT
 from blender_research_mcp.observation import (
     capture_image,
     collect_observation_bundle,
-    settle_scene_generation,
+    settle_capture_generation,
 )
 
 READ_ONLY = ToolAnnotations(
@@ -49,6 +49,8 @@ SceneGeneration = Annotated[int, Field(ge=0)]
 TransactionLabel = Annotated[str, Field(max_length=200)]
 SemanticView = Literal["FRONT", "RIGHT", "TOP", "BACK", "LEFT", "BOTTOM", "CURRENT"]
 BundleViews = Annotated[tuple[SemanticView, ...], Field(min_length=1, max_length=3)]
+CaptureId = Annotated[str, Field(min_length=1, max_length=128)]
+NormalizedCoordinate = Annotated[float, Field(ge=0.0, le=1.0)]
 
 
 class ScalePatch(BaseModel):
@@ -165,9 +167,7 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
             max_size=max_size,
             viewport_id=viewport_id,
         )
-        settled = await settle_scene_generation(client)
-        result["scene_generation"] = int(settled["scene_generation"])
-        result["settled_heartbeat"] = int(settled["heartbeat"])
+        await settle_capture_generation(client, result)
         return CallToolResult(
             content=[
                 ImageContent(
@@ -178,6 +178,26 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
                 TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2)),
             ],
             structuredContent=result,
+        )
+
+    @server.tool(
+        name="viewport.raycast",
+        description=(
+            "Resolve a normalized image coordinate against the evaluated Blender geometry "
+            "represented by a prior viewport capture."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def viewport_raycast(
+        capture_id: CaptureId,
+        x: NormalizedCoordinate,
+        y: NormalizedCoordinate,
+    ) -> dict[str, Any]:
+        return await client.call(
+            "viewport.raycast",
+            {"capture_id": capture_id, "x": x, "y": y},
+            read_only=True,
         )
 
     @server.tool(

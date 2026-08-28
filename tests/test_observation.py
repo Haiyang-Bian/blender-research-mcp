@@ -8,6 +8,7 @@ from PIL import Image
 from blender_research_mcp.errors import BridgeError
 from blender_research_mcp.observation import (
     collect_observation_bundle,
+    settle_capture_generation,
     settle_scene_generation,
 )
 
@@ -86,6 +87,19 @@ def test_settle_scene_generation_reports_unstable_scene() -> None:
         asyncio.run(scenario())
     assert unstable.value.error.code == "SCENE_UNSTABLE"
     assert unstable.value.error.retryable is True
+
+
+def test_single_capture_rejects_a_newer_settled_generation() -> None:
+    async def scenario():
+        return await settle_capture_generation(
+            FakeClient([8, 8]),
+            {"capture_scene_generation": 7},
+        )
+
+    with pytest.raises(BridgeError) as changed:
+        asyncio.run(scenario())
+    assert changed.value.error.code == "OBSERVATION_SCENE_CHANGED"
+    assert changed.value.error.details == {"before": 7, "after": 8}
 
 
 def test_bundle_returns_ordered_images_and_consistent_evidence() -> None:

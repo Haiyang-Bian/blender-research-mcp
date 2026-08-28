@@ -10,7 +10,7 @@ from typing import Any
 
 import bpy
 import gpu
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 from .capture_codec import (
     bounded_dimensions,
@@ -18,6 +18,7 @@ from .capture_codec import (
     flatten_rgba_buffer,
     is_blank_rgba,
 )
+from .capture_model import CaptureEvidence, MatrixRows
 
 
 class ContextOperationError(RuntimeError):
@@ -290,12 +291,23 @@ def _png_size(data: bytes) -> tuple[int, int]:
     return struct.unpack(">II", data[16:24])
 
 
+def _matrix_rows(matrix: Any) -> MatrixRows:
+    rows = tuple(tuple(float(value) for value in row) for row in matrix)
+    if len(rows) != 4 or any(len(row) != 4 for row in rows):
+        raise ContextOperationError(
+            "RAYCAST_MATRIX_INVALID",
+            "Viewport capture did not produce a 4x4 matrix",
+            kind="blender_api",
+        )
+    return rows  # type: ignore[return-value]
+
+
 def capture_viewport(
     object_name: str,
     view: str,
     max_size: int,
     viewport_id: str | None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     if view not in {"FRONT", "RIGHT", "TOP", "BACK", "LEFT", "BOTTOM", "CURRENT"}:
         raise ContextOperationError("VIEW_INVALID", f"Unsupported view: {view}", kind="validation")
     if not 256 <= max_size <= 1600:
@@ -318,6 +330,7 @@ def capture_viewport(
     preferences_view = bpy.context.preferences.view
     smooth_view = preferences_view.smooth_view
     result: dict[str, Any] | None = None
+    evidence: dict[str, Any] | None = None
     offscreen: Any | None = None
     try:
         preferences_view.smooth_view = 0
@@ -344,8 +357,14 @@ def capture_viewport(
                 viewport.region.height,
                 max_size,
             )
-            view_matrix = viewport.space.region_3d.view_matrix.copy()
-            projection_matrix = viewport.space.region_3d.window_matrix.copy()
+            region_3d = viewport.space.region_3d
+            view_matrix = region_3d.view_matrix.copy()
+            projection_matrix = region_3d.window_matrix.copy()
+            perspective_matrix = region_3d.perspective_matrix.copy()
+            view_rows = _matrix_rows(view_matrix)
+            projection_rows = _matrix_rows(projection_matrix)
+            perspective_rows = _matrix_rows(perspective_matrix)
+            projection_kind = "PERSP" if region_3d.is_perspective else "ORTHO"
             try:
                 offscreen = gpu.types.GPUOffScreen(width, height, format="RGBA8")
                 offscreen.draw_view3d(
@@ -397,7 +416,32 @@ def capture_viewport(
             "backend": "gpu_offscreen",
             "focus_requirement": "none_when_window_exists",
             "native_sha256": hashlib.sha256(data).hexdigest(),
+            "projection_kind": projection_kind,
+            "coordinate_space": "normalized_top_left",
+            "view_matrix": view_rows,
+            "projection_matrix": projection_rows,
+            "perspective_matrix": perspective_rows,
             "png_base64": base64.b64encode(data).decode("ascii"),
+        }
+        evidence = {
+            "scene": viewport.window.scene.name,
+            "view_layer": viewport.window.view_layer.name,
+            "window_id": viewport.window.as_pointer(),
+            "target_name": object_name,
+            "target_identity": f"object:{obj.as_pointer():x}",
+            "viewport_id": viewport.viewport_id,
+            "view": view,
+            "display_mode": "CURRENT",
+            "overlays": "CURRENT",
+            "width": png_width,
+            "height": png_height,
+            "native_sha256": result["native_sha256"],
+            "projection_kind": projection_kind,
+            "clip_start": float(viewport.space.clip_start),
+            "clip_end": float(viewport.space.clip_end),
+            "view_matrix": view_rows,
+            "projection_matrix": projection_rows,
+            "perspective_matrix": perspective_rows,
         }
     finally:
         try:
@@ -423,5 +467,99 @@ def capture_viewport(
             details={"changed_fields": changed_fields},
         )
     assert result is not None
+    assert evidence is not None
     result["context_unchanged"] = True
+    return result, evidence
+
+
+def _window_for_capture(evidence: CaptureEvidence) -> Any:
+    for window in bpy.context.window_manager.windows:
+        if window.as_pointer() == evidence.window_id:
+            if (
+                window.scene.name != evidence.scene
+                or window.view_layer.name != evidence.view_layer
+            ):
+                break
+            return window
+    raise ContextOperationError(
+        "CAPTURE_CONTEXT_STALE",
+        "The capture scene or view layer is no longer active in its Blender window",
+        kind="conflict",
+        retryable=True,
+        details={"scene": evidence.scene, "view_layer": evidence.view_layer},
+    )
+
+
+def _unproject_ray(evidence: CaptureEvidence, x: float, y: float) -> tuple[Vector, Vector, float]:
+    try:
+        inverse = Matrix(evidence.perspective_matrix).inverted()
+        near_h = inverse @ Vector((2.0 * x - 1.0, 1.0 - 2.0 * y, -1.0, 1.0))
+        far_h = inverse @ Vector((2.0 * x - 1.0, 1.0 - 2.0 * y, 1.0, 1.0))
+        if abs(float(near_h.w)) < 1e-12 or abs(float(far_h.w)) < 1e-12:
+            raise ValueError("homogeneous ray endpoint has zero w")
+        origin = Vector((near_h.x / near_h.w, near_h.y / near_h.w, near_h.z / near_h.w))
+        far = Vector((far_h.x / far_h.w, far_h.y / far_h.w, far_h.z / far_h.w))
+        segment = far - origin
+        distance = float(segment.length)
+        if distance <= 1e-12:
+            raise ValueError("ray endpoints are identical")
+        return origin, segment.normalized(), distance
+    except Exception as exc:
+        raise ContextOperationError(
+            "RAYCAST_MATRIX_INVALID",
+            "The capture projection matrix could not be inverted into a finite ray",
+            kind="blender_api",
+            details={"capture_id": evidence.capture_id},
+        ) from exc
+
+
+def raycast_capture(evidence: CaptureEvidence, x: float, y: float) -> dict[str, Any]:
+    """Cast against the same evaluated scene represented by a capture."""
+    window = _window_for_capture(evidence)
+    origin, direction, max_distance = _unproject_ray(evidence, x, y)
+    with bpy.context.temp_override(
+        window=window,
+        scene=window.scene,
+        view_layer=window.view_layer,
+    ):
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        hit, location, normal, face_index, obj, _matrix = window.scene.ray_cast(
+            depsgraph,
+            origin,
+            direction,
+            distance=max_distance,
+        )
+    result: dict[str, Any] = {
+        "capture_id": evidence.capture_id,
+        "capture_scene_generation": evidence.scene_generation,
+        "coordinate": {"x": x, "y": y, "space": "normalized_top_left"},
+        "ray": {
+            "origin": list(origin),
+            "direction": list(direction),
+            "max_distance": max_distance,
+        },
+        "hit": bool(hit),
+        "hit_object": None,
+        "location": None,
+        "normal": None,
+        "face_index": None,
+        "distance": None,
+        "hit_target": False,
+    }
+    if hit and obj is not None:
+        result.update(
+            {
+                "hit_object": {
+                    "name": obj.name,
+                    "type": obj.type,
+                    "session_identity": f"object:{obj.as_pointer():x}",
+                    "library": obj.library.filepath if obj.library else None,
+                },
+                "location": list(location),
+                "normal": list(normal),
+                "face_index": int(face_index),
+                "distance": float((location - origin).length),
+                "hit_target": obj.name == evidence.target_name,
+            }
+        )
     return result

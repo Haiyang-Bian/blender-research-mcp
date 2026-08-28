@@ -66,6 +66,27 @@ async def settle_scene_generation(
     )
 
 
+async def settle_capture_generation(
+    client: BridgeClient,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Attach a settled generation only when it still describes this image."""
+    capture_generation = int(result["capture_scene_generation"])
+    settled = await settle_scene_generation(client)
+    settled_generation = int(settled["scene_generation"])
+    if capture_generation != settled_generation:
+        raise observation_error(
+            ErrorKind.CONFLICT,
+            "OBSERVATION_SCENE_CHANGED",
+            "Blender scene data changed after the viewport image was captured",
+            retryable=True,
+            details={"before": capture_generation, "after": settled_generation},
+        )
+    result["scene_generation"] = settled_generation
+    result["settled_heartbeat"] = int(settled["heartbeat"])
+    return result
+
+
 async def capture_image(
     client: BridgeClient,
     *,

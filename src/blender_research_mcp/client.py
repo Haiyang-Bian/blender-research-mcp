@@ -101,7 +101,8 @@ class BridgeClient:
         required_versions = {
             "transport": 1,
             "context": 1,
-            "viewport_capture": 2,
+            "viewport_capture": 3,
+            "viewport_raycast": 1,
             "transactions": 1,
             "object_transform_scale": 1,
         }

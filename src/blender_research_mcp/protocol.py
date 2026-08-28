@@ -22,6 +22,8 @@ class CapabilityVersions(BaseModel):
     transport: int = Field(default=0, ge=0)
     context: int = Field(default=0, ge=0)
     viewport_capture: int = Field(default=0, ge=0)
+    viewport_raycast: int = Field(default=0, ge=0)
+    geometry_inspection: int = Field(default=0, ge=0)
     transactions: int = Field(default=0, ge=0)
     object_transform_scale: int = Field(default=0, ge=0)
 

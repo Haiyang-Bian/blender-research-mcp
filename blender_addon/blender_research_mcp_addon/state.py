@@ -12,12 +12,14 @@ from typing import Any
 
 import bpy
 
+from .capture_model import CaptureBook, CaptureEvidence
 from .context_ops import (
     ContextOperationError,
     capture_context,
     capture_viewport,
     context_summary,
     inspect_object,
+    raycast_capture,
     restore_context,
     validate_context_snapshot,
 )
@@ -41,6 +43,7 @@ CAPABILITIES = [
     "context.restore",
     "object.inspect",
     "viewport.capture",
+    "viewport.raycast",
     "transaction.begin",
     "transaction.commit",
     "transaction.rollback",
@@ -49,7 +52,9 @@ CAPABILITIES = [
 CAPABILITY_VERSIONS = {
     "transport": 1,
     "context": 1,
-    "viewport_capture": 2,
+    "viewport_capture": 3,
+    "viewport_raycast": 1,
+    "geometry_inspection": 0,
     "transactions": 1,
     "object_transform_scale": 1,
 }
@@ -72,6 +77,7 @@ class AddonState:
         self.last_error = ""
         self.last_capture_backend = "gpu_offscreen"
         self.snapshots: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self.captures = CaptureBook(limit=32)
         self.transactions = TransactionBook()
         self.idempotency = IdempotencyCache()
         self._suppress_generation = 0
@@ -89,6 +95,7 @@ class AddonState:
         finally:
             self.runtime.stop()
             self.snapshots.clear()
+            self.captures.clear()
 
     def restart(self) -> None:
         self.stop()
@@ -121,6 +128,7 @@ class AddonState:
 
     def on_file_loaded(self) -> None:
         self.snapshots.clear()
+        self.captures.clear()
         if self.transactions.active is not None:
             self.transactions.abandon("abandoned_file_load")
             self.last_error = "TRANSACTION_ABANDONED: a different blend file was loaded"
@@ -299,13 +307,67 @@ class AddonState:
                     kind="validation",
                 )
             with self.suppress_generation():
-                result = capture_viewport(
+                result, evidence_data = capture_viewport(
                     object_name,
                     str(params.get("view", "CURRENT")),
                     int(params.get("max_size", 800)),
                     params.get("viewport_id"),
                 )
+            capture_id = str(uuid.uuid4())
+            evidence = CaptureEvidence(
+                capture_id=capture_id,
+                scene_generation=self.scene_generation,
+                **evidence_data,
+            )
+            self.captures.add(evidence)
+            result["capture_id"] = capture_id
+            result["capture_scene_generation"] = self.scene_generation
             self.last_capture_backend = str(result["backend"])
+            return result
+        if command == "viewport.raycast":
+            capture_id = params.get("capture_id")
+            if not isinstance(capture_id, str) or not capture_id:
+                raise ContextOperationError(
+                    "CAPTURE_ID_INVALID",
+                    "capture_id must be a non-empty string",
+                    kind="validation",
+                )
+            evidence = self.captures.get(capture_id)
+            if evidence is None:
+                raise ContextOperationError(
+                    "CAPTURE_NOT_FOUND",
+                    f"Capture evidence does not exist: {capture_id}",
+                    kind="not_found",
+                )
+            if evidence.scene_generation != self.scene_generation:
+                raise ContextOperationError(
+                    "CAPTURE_STALE",
+                    "The Blender scene changed after the capture was created",
+                    kind="conflict",
+                    retryable=True,
+                    details={
+                        "capture_scene_generation": evidence.scene_generation,
+                        "current_scene_generation": self.scene_generation,
+                    },
+                )
+            x = params.get("x")
+            y = params.get("y")
+            if (
+                isinstance(x, bool)
+                or not isinstance(x, (int, float))
+                or isinstance(y, bool)
+                or not isinstance(y, (int, float))
+                or not 0.0 <= float(x) <= 1.0
+                or not 0.0 <= float(y) <= 1.0
+            ):
+                raise ContextOperationError(
+                    "RAYCAST_COORDINATE_INVALID",
+                    "x and y must be finite normalized coordinates between 0 and 1",
+                    kind="validation",
+                )
+            with self.suppress_generation():
+                result = raycast_capture(evidence, float(x), float(y))
+            result["scene_generation"] = self.scene_generation
             return result
         if command == "transaction.begin":
             self._require_scene_generation(request)
