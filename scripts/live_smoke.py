@@ -1,9 +1,10 @@
-"""Run the live Blender 4.2 first-vertical-slice acceptance through MCP stdio."""
+"""Run the live Blender 4.2 autonomous-observation acceptance through MCP stdio."""
 
 from __future__ import annotations
 
 import argparse
 import base64
+import ctypes
 import hashlib
 import json
 import math
@@ -16,7 +17,9 @@ from typing import Any
 import anyio
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
-from PIL import Image
+from PIL import Image, ImageChops, ImageFilter, ImageStat
+
+from blender_research_mcp.session import load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTEXT_KEYS = (
@@ -103,6 +106,86 @@ def save_image(result: types.CallToolResult, path: Path) -> str:
     return sha256(path)
 
 
+def save_bundle_images(
+    result: types.CallToolResult,
+    metadata: dict[str, Any],
+    artifact_directory: Path,
+    prefix: str,
+) -> dict[str, str]:
+    images = [block for block in result.content if isinstance(block, types.ImageContent)]
+    captures = metadata.get("captures", [])
+    if len(images) != len(captures):
+        raise RuntimeError("observation.bundle image count does not match its metadata")
+    hashes: dict[str, str] = {}
+    for capture in captures:
+        index = int(capture["content_index"])
+        view = str(capture["view"])
+        path = artifact_directory / f"{prefix}-{view.lower()}.png"
+        single = types.CallToolResult(content=[images[index]])
+        hashes[view] = save_image(single, path)
+    return hashes
+
+
+def maximum_pixel_difference(first: Path, second: Path) -> int:
+    with Image.open(first) as first_image, Image.open(second) as second_image:
+        left = first_image.convert("RGBA")
+        right = second_image.convert("RGBA")
+        if left.size != right.size:
+            raise RuntimeError("foreground and background captures have different dimensions")
+        extrema = ImageChops.difference(left, right).getextrema()
+    return max(channel[1] for channel in extrema)
+
+
+def image_difference_statistics(first: Path, second: Path) -> dict[str, float | int]:
+    """Measure aligned images while suppressing stochastic rendered-view noise."""
+    with Image.open(first) as first_image, Image.open(second) as second_image:
+        first_rgb = first_image.convert("RGB")
+        second_rgb = second_image.convert("RGB")
+        if first_rgb.size != second_rgb.size:
+            raise RuntimeError("foreground and obscured captures have different dimensions")
+        difference = ImageChops.difference(first_rgb, second_rgb)
+        statistics = ImageStat.Stat(difference)
+        extrema = difference.getextrema()
+
+        first_structure = first_rgb.convert("L").filter(ImageFilter.GaussianBlur(2.0))
+        second_structure = second_rgb.convert("L").filter(ImageFilter.GaussianBlur(2.0))
+        first_structure.thumbnail((256, 256), Image.Resampling.LANCZOS)
+        second_structure.thumbnail((256, 256), Image.Resampling.LANCZOS)
+        structure_difference = ImageChops.difference(first_structure, second_structure)
+        structure_mean = ImageStat.Stat(structure_difference).mean[0]
+
+    return {
+        "max_channel_difference": max(channel[1] for channel in extrema),
+        "mean_absolute_difference": sum(statistics.mean) / 3.0,
+        "rms_difference": math.sqrt(sum(value * value for value in statistics.rms) / 3.0),
+        "structure_mean_absolute_difference": structure_mean,
+    }
+
+
+def images_match_within_render_noise(statistics: dict[str, float | int]) -> bool:
+    return (
+        float(statistics["mean_absolute_difference"]) <= 1.0
+        and float(statistics["structure_mean_absolute_difference"]) <= 0.5
+    )
+
+
+def foreground_process_id() -> int | None:
+    if not hasattr(ctypes, "WinDLL"):
+        return None
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    get_foreground_window = user32.GetForegroundWindow
+    get_foreground_window.restype = ctypes.c_void_p
+    get_window_pid = user32.GetWindowThreadProcessId
+    get_window_pid.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+    get_window_pid.restype = ctypes.c_ulong
+    window = get_foreground_window()
+    if not window:
+        return None
+    process_id = ctypes.c_ulong()
+    get_window_pid(window, ctypes.byref(process_id))
+    return int(process_id.value) or None
+
+
 def find_non_ascii_object(context: dict[str, Any]) -> str:
     candidates = [context.get("active_object"), *context.get("selected_objects", [])]
     for candidate in candidates:
@@ -120,6 +203,7 @@ async def run(args: argparse.Namespace) -> None:
     preparation = json.loads(
         (artifact_directory / "preparation.json").read_text(encoding="utf-8")
     )
+    prepared_temporary_blend = Path(preparation["temporary_blend_file"]).resolve()
     if sha256(source_blend) != preparation["source_sha256"]:
         raise RuntimeError("source blend changed after smoke preparation")
     temporary_hash_before = sha256(temporary_blend)
@@ -138,6 +222,8 @@ async def run(args: argparse.Namespace) -> None:
         "run_id": preparation["run_id"],
         "started_at": datetime.now(UTC).isoformat(),
         "temporary_blend_file": str(temporary_blend),
+        "prepared_temporary_blend_file": str(prepared_temporary_blend),
+        "temporary_path_reused": temporary_blend != prepared_temporary_blend,
         "temporary_sha256_prepared": preparation["temporary_sha256"],
         "temporary_sha256_before": temporary_hash_before,
         "temporary_changed_during_setup": temporary_changed_during_setup,
@@ -147,7 +233,7 @@ async def run(args: argparse.Namespace) -> None:
         async with ClientSession(
             read_stream,
             write_stream,
-            read_timeout_seconds=timedelta(seconds=40),
+        read_timeout_seconds=timedelta(seconds=60),
         ) as session:
             initialized = await session.initialize()
             listed = await session.list_tools()
@@ -159,6 +245,7 @@ async def run(args: argparse.Namespace) -> None:
                 "context.restore",
                 "object.inspect",
                 "viewport.capture",
+                "observation.bundle",
                 "transaction.begin",
                 "object.transform",
                 "transaction.commit",
@@ -173,13 +260,15 @@ async def run(args: argparse.Namespace) -> None:
             }
 
             ping_before, _ = await call_structured(session, "connection.ping")
+            if int(ping_before["capability_versions"]["viewport_capture"]) < 2:
+                raise RuntimeError("Blender add-on does not advertise off-screen capture v2")
             context_before, _ = await call_structured(session, "context.get")
             if Path(context_before["blend_file"]).resolve() != temporary_blend:
                 raise RuntimeError(
                     "Blender is not displaying the prepared temporary blend file: "
                     f"{context_before['blend_file']}"
                 )
-            non_ascii_name = find_non_ascii_object(context_before)
+            non_ascii_name = args.unicode_object or find_non_ascii_object(context_before)
             unicode_object, _ = await call_structured(
                 session,
                 "object.inspect",
@@ -234,31 +323,71 @@ async def run(args: argparse.Namespace) -> None:
             else:
                 report["restart"] = {"mode": "skipped"}
 
-            if args.foreground_delay > 0:
+            foreground_reference_hash: str | None = None
+            if args.verify_background:
                 await anyio.to_thread.run_sync(
                     input,
                     "Bring Blender to the foreground, then press Enter... ",
                 )
-                await anyio.sleep(args.foreground_delay)
-
-            before_image_hashes: dict[str, str] = {}
-            for view in ("FRONT", "RIGHT", "TOP"):
-                metadata, capture = await call_structured(
+                await anyio.sleep(0.5)
+                blender_pid = load_manifest().pid
+                foreground_pid = foreground_process_id()
+                if foreground_pid != blender_pid:
+                    raise RuntimeError(
+                        "Blender is not foreground: "
+                        f"expected PID {blender_pid}, got {foreground_pid}"
+                    )
+                reference_metadata, reference_capture = await call_structured(
                     session,
                     "viewport.capture",
-                    {
-                        "object_name": args.capture_object,
-                        "view": view,
-                        "max_size": 1000,
-                    },
+                    {"object_name": args.capture_object, "view": "FRONT", "max_size": 1000},
                 )
-                before_image_hashes[view] = save_image(
-                    capture,
-                    artifact_directory / f"before-{view.lower()}.png",
+                foreground_reference_hash = save_image(
+                    reference_capture,
+                    artifact_directory / "foreground-front.png",
                 )
-                report[f"capture_before_{view.lower()}"] = metadata
+                report["foreground_capture"] = reference_metadata
+                report["foreground_capture_sha256"] = foreground_reference_hash
+                report["foreground_pid"] = foreground_pid
+                await anyio.to_thread.run_sync(
+                    input,
+                    "Cover Blender with Codex or another window, then press Enter... ",
+                )
+                await anyio.sleep(0.5)
+                background_pid = foreground_process_id()
+                if background_pid == blender_pid:
+                    raise RuntimeError("Blender still owns foreground focus")
+                report["background_foreground_pid"] = background_pid
+
+            bundle_before, bundle_before_result = await call_structured(
+                session,
+                "observation.bundle",
+                {
+                    "object_name": args.capture_object,
+                    "views": ["FRONT", "RIGHT", "TOP"],
+                    "max_size": 1000,
+                },
+            )
+            before_image_hashes = save_bundle_images(
+                bundle_before_result,
+                bundle_before,
+                artifact_directory,
+                "before",
+            )
             if len(set(before_image_hashes.values())) != len(before_image_hashes):
                 raise RuntimeError("orthographic captures unexpectedly returned duplicate images")
+            if args.verify_background:
+                difference_statistics = image_difference_statistics(
+                    artifact_directory / "foreground-front.png",
+                    artifact_directory / "before-front.png",
+                )
+                if not images_match_within_render_noise(difference_statistics):
+                    raise RuntimeError(
+                        "foreground and obscured off-screen captures differ structurally: "
+                        f"{difference_statistics}"
+                    )
+                report["foreground_background_difference"] = difference_statistics
+            report["observation_before"] = bundle_before
             report["capture_before_sha256"] = before_image_hashes
 
             helper_before, _ = await call_structured(
@@ -266,7 +395,7 @@ async def run(args: argparse.Namespace) -> None:
                 "object.inspect",
                 {"object_name": args.transform_object},
             )
-            generation = int(helper_before["scene_generation"])
+            generation = int(bundle_before["scene_generation"])
             transaction, _ = await call_structured(
                 session,
                 "transaction.begin",
@@ -291,29 +420,32 @@ async def run(args: argparse.Namespace) -> None:
             )
             after_metadata, after_capture = await call_structured(
                 session,
-                "viewport.capture",
+                "observation.bundle",
                 {
                     "object_name": args.capture_object,
-                    "view": "FRONT",
+                    "views": ["FRONT"],
                     "max_size": 1000,
                 },
             )
-            report["capture_after_transform_sha256"] = save_image(
+            report["capture_after_transform_sha256"] = save_bundle_images(
                 after_capture,
+                after_metadata,
+                artifact_directory,
+                "after-transform",
+            )["FRONT"]
+            transform_image_difference = image_difference_statistics(
+                artifact_directory / "before-front.png",
                 artifact_directory / "after-transform-front.png",
             )
-            generation_after_capture, _ = await call_structured(
-                session,
-                "connection.ping",
-            )
+            if images_match_within_render_noise(transform_image_difference):
+                raise RuntimeError("scale preview did not produce visible image evidence")
+            report["transform_image_difference"] = transform_image_difference
             rolled_back, _ = await call_structured(
                 session,
                 "transaction.rollback",
                 {
                     "transaction_id": transaction["transaction_id"],
-                    "expected_scene_generation": generation_after_capture[
-                        "scene_generation"
-                    ],
+                    "expected_scene_generation": after_metadata["scene_generation"],
                     "idempotency_key": str(uuid.uuid4()),
                 },
             )
@@ -331,17 +463,29 @@ async def run(args: argparse.Namespace) -> None:
                 raise RuntimeError("rollback did not restore the aperture helper scale")
             rollback_metadata, rollback_capture = await call_structured(
                 session,
-                "viewport.capture",
+                "observation.bundle",
                 {
                     "object_name": args.capture_object,
-                    "view": "FRONT",
+                    "views": ["FRONT"],
                     "max_size": 1000,
                 },
             )
-            report["capture_after_rollback_sha256"] = save_image(
+            report["capture_after_rollback_sha256"] = save_bundle_images(
                 rollback_capture,
+                rollback_metadata,
+                artifact_directory,
+                "after-rollback",
+            )["FRONT"]
+            rollback_image_difference = image_difference_statistics(
+                artifact_directory / "before-front.png",
                 artifact_directory / "after-rollback-front.png",
             )
+            if not images_match_within_render_noise(rollback_image_difference):
+                raise RuntimeError(
+                    "rollback image did not return to the rendered-view noise envelope: "
+                    f"{rollback_image_difference}"
+                )
+            report["rollback_image_difference"] = rollback_image_difference
             context_after, _ = await call_structured(session, "context.get")
             if context_identity(context_after) != context_identity(context_before):
                 raise RuntimeError("user context was not restored exactly")
@@ -364,13 +508,17 @@ async def run(args: argparse.Namespace) -> None:
             ping_after, _ = await call_structured(session, "connection.ping")
             if int(ping_after["heartbeat"]) <= int(heartbeat_baseline["heartbeat"]):
                 raise RuntimeError("Blender UI heartbeat did not advance")
+            if args.verify_background:
+                background_pid_after = foreground_process_id()
+                if background_pid_after == blender_pid:
+                    raise RuntimeError("Blender regained foreground focus during background smoke")
+                report["background_foreground_pid_after"] = background_pid_after
             report.update(
                 {
                     "helper_before": helper_before,
                     "transaction": transaction,
                     "transform": transformed,
                     "capture_after_transform": after_metadata,
-                    "generation_after_capture": generation_after_capture,
                     "rollback": rolled_back,
                     "helper_after_rollback": helper_rolled_back,
                     "capture_after_rollback": rollback_metadata,
@@ -415,12 +563,15 @@ def main() -> int:
         "--transform-object",
         default="Portrait_ID_V13_SubjectFX_ScleraAperture_L",
     )
+    parser.add_argument(
+        "--unicode-object",
+        help="inspect this exact non-ASCII object name instead of requiring selection",
+    )
     parser.add_argument("--skip-restart", action="store_true")
     parser.add_argument(
-        "--foreground-delay",
-        type=float,
-        default=0,
-        help="pause before capture and wait this many seconds after confirmation",
+        "--verify-background",
+        action="store_true",
+        help="require explicit foreground and obscured-window capture checkpoints",
     )
     parser.add_argument(
         "--restart-evidence",
@@ -438,8 +589,6 @@ def main() -> int:
     args = parser.parse_args()
     if args.skip_restart and args.restart_evidence is not None:
         parser.error("--skip-restart and --restart-evidence are mutually exclusive")
-    if args.foreground_delay < 0:
-        parser.error("--foreground-delay must be non-negative")
     anyio.run(run, args)
     return 0
 

@@ -10,9 +10,10 @@
 项目的首个纵向切片已通过 Blender 4.2.23 LTS 实时烟测：认证传输、
 上下文观察、事务化局部缩放、显式/断线回退，以及 Microsoft Store 版
 Blender 会话发现。0.3.1 已实现不依赖窗口像素的 GPU 离屏捕获和一致的
-多视图 `observation.bundle`；后台遮挡烟测将在安装 0.3.1 插件后记录。
-首个切片的验收记录见
-[docs/validation/2026-08-28-first-vertical-slice.md](docs/validation/2026-08-28-first-vertical-slice.md)。
+多视图 `observation.bundle`，并已通过 Blender 被 Codex 完全遮挡时的真实
+烟测。验收记录见
+[首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
+[0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)。
