@@ -67,7 +67,7 @@ class BRMCP_PT_status(bpy.types.Panel):
         layout.label(text=f"Connected: {'yes' if runtime.connected else 'no'}")
         layout.label(text=f"Heartbeat: {STATE.heartbeat}")
         layout.label(text=f"Scene generation: {STATE.scene_generation}")
-        layout.label(text="Transaction: none")
+        layout.label(text=f"Transaction: {STATE.transactions.last_status}")
         if STATE.active_command:
             layout.label(text=f"Running: {STATE.active_command}")
         if runtime.last_error or STATE.last_error:

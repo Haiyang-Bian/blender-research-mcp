@@ -7,8 +7,10 @@
 
 ## 当前状态
 
-项目处于基础设施阶段。尚未安装 Blender 插件，也没有替换现有
-ahujasid/blender-mcp。开发期间两者将使用不同端口并行验证。
+项目已实现首个纵向切片的代码与自动化测试：认证传输、上下文观察、
+视口截图、事务化局部缩放与回退。Blender 4.2.23 的实时烟测仍需在 GUI
+中完成，因此尚未替换现有 ahujasid/blender-mcp。开发期间两者使用不同
+端口并行验证。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)。
 
@@ -37,6 +39,15 @@ uv run --no-sync mypy
 ~~~powershell
 uv run --no-sync blender-research-mcp --version
 ~~~
+
+构建 Blender 开发插件：
+
+~~~powershell
+uv run --no-sync python scripts/build_addon.py
+~~~
+
+外部 MCP 服务无参数时通过 stdio 启动，并自动发现端口 9877 的本地
+Blender 插件会话。它不提供任意 Python 或保存 `.blend` 文件的工具。
 
 ## 兼容目标
 

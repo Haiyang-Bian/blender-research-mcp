@@ -32,6 +32,7 @@ class PendingRequest:
     event: threading.Event
     response: dict[str, Any] | None = None
     cancelled: bool = False
+    started: bool = False
 
 
 def runtime_directory() -> Path:
@@ -138,6 +139,7 @@ class ListenerRuntime:
                 )
             else:
                 try:
+                    pending.started = True
                     pending.response = dispatcher(pending.request)
                     self.last_scene_generation = int(
                         pending.response.get("scene_generation", self.last_scene_generation)
@@ -171,8 +173,7 @@ class ListenerRuntime:
                     break
                 with self._socket_lock:
                     self._client = client
-                self.connected = True
-                self.status = "connected"
+                self.status = "client_connected"
                 try:
                     self._serve_client(client)
                 finally:
@@ -222,6 +223,8 @@ class ListenerRuntime:
                         ),
                     )
                     continue
+                self.connected = True
+                self.status = "connected"
                 pending = PendingRequest(request=request, event=threading.Event())
                 self._requests.put(pending)
                 deadline_ms = request.get("deadline_ms", 5000)
@@ -229,7 +232,7 @@ class ListenerRuntime:
                     deadline_ms = 5000
                 deadline = time.monotonic() + min(max(deadline_ms, 100), 30_000) / 1000
                 while not self._stop.is_set() and not pending.event.wait(0.05):
-                    if time.monotonic() >= deadline:
+                    if time.monotonic() >= deadline and not pending.started:
                         pending.cancelled = True
                         break
                 if pending.response is None:

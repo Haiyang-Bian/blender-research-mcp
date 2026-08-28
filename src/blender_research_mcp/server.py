@@ -10,7 +10,7 @@ from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from blender_research_mcp.client import BridgeClient
 from blender_research_mcp.constants import CAPTURE_DEADLINE_MS, DEFAULT_PORT
@@ -28,9 +28,33 @@ CONTEXT_MUTATION = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=False,
 )
+SCENE_MUTATION = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+)
 ObjectName = Annotated[str, Field(min_length=1, max_length=255)]
 SnapshotId = Annotated[str, Field(min_length=1, max_length=128)]
 CaptureSize = Annotated[int, Field(ge=256, le=1600)]
+TransactionId = Annotated[str, Field(min_length=1, max_length=128)]
+IdempotencyKey = Annotated[str, Field(min_length=1, max_length=128)]
+SceneGeneration = Annotated[int, Field(ge=0)]
+TransactionLabel = Annotated[str, Field(max_length=200)]
+
+
+class ScalePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    x: float | None = Field(default=None, ge=0.000001, le=1000)
+    y: float | None = Field(default=None, ge=0.000001, le=1000)
+    z: float | None = Field(default=None, ge=0.000001, le=1000)
+
+    @model_validator(mode="after")
+    def require_one_axis(self) -> ScalePatch:
+        if self.x is None and self.y is None and self.z is None:
+            raise ValueError("at least one scale axis is required")
+        return self
 
 
 def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
@@ -149,6 +173,95 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
                 TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2)),
             ],
             structuredContent=result,
+        )
+
+    @server.tool(
+        name="transaction.begin",
+        description="Begin the single reversible preview transaction for this Blender instance.",
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def transaction_begin(
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        label: TransactionLabel | None = None,
+        viewport_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await client.call(
+            "transaction.begin",
+            {"label": label, "viewport_id": viewport_id},
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="object.transform",
+        description=(
+            "Set one or more local object scale axes to absolute values inside "
+            "the active transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def object_transform(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        scale: ScalePatch,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        return await client.call(
+            "object.transform",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "scale": scale.model_dump(exclude_none=True),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="transaction.commit",
+        description=(
+            "End a transaction while retaining its changes in the current Blender session. "
+            "This never saves the blend file."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def transaction_commit(
+        transaction_id: TransactionId,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        return await client.call(
+            "transaction.commit",
+            {"transaction_id": transaction_id},
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="transaction.rollback",
+        description="Restore transaction property deltas and the captured user context.",
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def transaction_rollback(
+        transaction_id: TransactionId,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        return await client.call(
+            "transaction.rollback",
+            {"transaction_id": transaction_id},
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
         )
 
     return server

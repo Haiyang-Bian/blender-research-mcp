@@ -20,7 +20,9 @@ The ignored output is written to
 `127.0.0.1:9877`, creates a random per-session token, and publishes its
 ephemeral manifest under the current user's local application data directory.
 
-The first observation surface includes authenticated ping, context snapshots,
-exact object inspection, and context-restoring viewport capture. It does not
-save the blend file, execute arbitrary Python, enable telemetry, or contact
-third-party services.
+The first surface includes authenticated ping, context snapshots, exact object
+inspection, context-restoring viewport capture, and one transaction-scoped
+absolute local-scale operation. Commit affects only the in-memory Blender
+session; rollback restores guarded property deltas and user context. The add-on
+does not save the blend file, execute arbitrary Python, enable telemetry, or
+contact third-party services.

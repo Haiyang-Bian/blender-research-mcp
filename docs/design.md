@@ -1,6 +1,6 @@
 # Blender Research MCP — design and handoff
 
-- Status: initial design
+- Status: first vertical slice implemented; Blender 4.2.23 live validation pending
 - Primary Blender target: 4.2.23 LTS
 - Protocol version: 1 (proposed)
 - Development transport port: 9877 (proposed)

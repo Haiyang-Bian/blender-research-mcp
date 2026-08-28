@@ -148,6 +148,7 @@ def _restore_mode(viewport: ViewportContext, mode: str) -> None:
 
 
 def restore_context(snapshot: dict[str, Any]) -> None:
+    validate_context_snapshot(snapshot)
     viewport = _find_viewport(snapshot)
     scene = bpy.data.scenes.get(snapshot["scene"])
     if scene is None:
@@ -192,6 +193,29 @@ def restore_context(snapshot: dict[str, Any]) -> None:
         viewport.space.overlay.show_overlays = view["show_overlays"]
         region_3d.update()
         _restore_mode(viewport, snapshot["mode"])
+
+
+def validate_context_snapshot(snapshot: dict[str, Any]) -> None:
+    _find_viewport(snapshot)
+    scene = bpy.data.scenes.get(snapshot["scene"])
+    if scene is None:
+        raise ContextOperationError("SCENE_NOT_FOUND", "The snapshot scene no longer exists")
+    if scene.view_layers.get(snapshot["view_layer"]) is None:
+        raise ContextOperationError(
+            "VIEW_LAYER_NOT_FOUND",
+            "The snapshot view layer no longer exists",
+        )
+    names = list(snapshot["selected_objects"])
+    if snapshot["active_object"]:
+        names.append(snapshot["active_object"])
+    if snapshot["active_camera"]:
+        names.append(snapshot["active_camera"])
+    missing = sorted({name for name in names if bpy.data.objects.get(name) is None})
+    if missing:
+        raise ContextOperationError(
+            "OBJECT_NOT_FOUND",
+            f"Snapshot objects no longer exist: {', '.join(missing)}",
+        )
 
 
 def context_summary() -> dict[str, Any]:
