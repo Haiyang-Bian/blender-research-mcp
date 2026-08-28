@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -11,12 +10,16 @@ from importlib.metadata import version as package_version
 from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
-from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
+from mcp.types import CallToolResult, ContentBlock, ImageContent, TextContent, ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from blender_research_mcp.client import BridgeClient
-from blender_research_mcp.constants import CAPTURE_DEADLINE_MS, DEFAULT_PORT
-from blender_research_mcp.media import resize_png
+from blender_research_mcp.constants import DEFAULT_PORT
+from blender_research_mcp.observation import (
+    capture_image,
+    collect_observation_bundle,
+    settle_scene_generation,
+)
 
 READ_ONLY = ToolAnnotations(
     readOnlyHint=True,
@@ -39,10 +42,13 @@ SCENE_MUTATION = ToolAnnotations(
 ObjectName = Annotated[str, Field(min_length=1, max_length=255)]
 SnapshotId = Annotated[str, Field(min_length=1, max_length=128)]
 CaptureSize = Annotated[int, Field(ge=256, le=1600)]
+BundleCaptureSize = Annotated[int, Field(ge=256, le=1200)]
 TransactionId = Annotated[str, Field(min_length=1, max_length=128)]
 IdempotencyKey = Annotated[str, Field(min_length=1, max_length=128)]
 SceneGeneration = Annotated[int, Field(ge=0)]
 TransactionLabel = Annotated[str, Field(max_length=200)]
+SemanticView = Literal["FRONT", "RIGHT", "TOP", "BACK", "LEFT", "BOTTOM", "CURRENT"]
+BundleViews = Annotated[tuple[SemanticView, ...], Field(min_length=1, max_length=3)]
 
 
 class ScalePatch(BaseModel):
@@ -148,26 +154,20 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
     )
     async def viewport_capture(
         object_name: ObjectName,
-        view: Literal["FRONT", "RIGHT", "TOP", "BACK", "LEFT", "BOTTOM", "CURRENT"] = "CURRENT",
+        view: SemanticView = "CURRENT",
         max_size: CaptureSize = 800,
         viewport_id: str | None = None,
     ) -> CallToolResult:
-        result = await client.call(
-            "viewport.capture",
-            {
-                "object_name": object_name,
-                "view": view,
-                "max_size": max_size,
-                "viewport_id": viewport_id,
-            },
-            deadline_ms=CAPTURE_DEADLINE_MS,
-            read_only=True,
+        image_bytes, result = await capture_image(
+            client,
+            object_name=object_name,
+            view=view,
+            max_size=max_size,
+            viewport_id=viewport_id,
         )
-        encoded = result.pop("png_base64")
-        image_bytes, sizes = resize_png(base64.b64decode(encoded, validate=True), max_size)
-        result.update(sizes)
-        result["mime_type"] = "image/png"
-        result["sha256"] = hashlib.sha256(image_bytes).hexdigest()
+        settled = await settle_scene_generation(client)
+        result["scene_generation"] = int(settled["scene_generation"])
+        result["settled_heartbeat"] = int(settled["heartbeat"])
         return CallToolResult(
             content=[
                 ImageContent(
@@ -177,6 +177,44 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
                 ),
                 TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2)),
             ],
+            structuredContent=result,
+        )
+
+    @server.tool(
+        name="observation.bundle",
+        description=(
+            "Capture one to three consistent semantic views with before/after context and "
+            "object evidence."
+        ),
+        annotations=READ_ONLY,
+        structured_output=False,
+    )
+    async def observation_bundle(
+        object_name: ObjectName,
+        views: BundleViews = ("FRONT", "RIGHT", "TOP"),
+        max_size: BundleCaptureSize = 800,
+        viewport_id: str | None = None,
+    ) -> CallToolResult:
+        images, result = await collect_observation_bundle(
+            client,
+            object_name=object_name,
+            views=views,
+            max_size=max_size,
+            viewport_id=viewport_id,
+        )
+        content: list[ContentBlock] = [
+            ImageContent(
+                type="image",
+                data=base64.b64encode(image).decode("ascii"),
+                mimeType="image/png",
+            )
+            for image in images
+        ]
+        content.append(
+            TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))
+        )
+        return CallToolResult(
+            content=content,
             structuredContent=result,
         )
 
