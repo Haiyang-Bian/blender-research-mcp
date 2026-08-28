@@ -6,6 +6,7 @@ import base64
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib.metadata import version as package_version
 from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
@@ -75,6 +76,8 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
         ),
         lifespan=lifespan,
     )
+    # FastMCP 1.x does not expose the low-level Server version in its constructor.
+    server._mcp_server.version = package_version("blender-research-mcp")
 
     @server.tool(
         name="connection.ping",

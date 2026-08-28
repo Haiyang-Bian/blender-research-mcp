@@ -20,6 +20,10 @@ than ordinary command responses.
 - Generate a random token and instance ID for each add-on listener session.
 - Publish them atomically in the current user's local runtime directory; reject
   stale PID, endpoint, instance, token, or protocol data during handshake.
+- On Windows, prefer the ordinary `%LOCALAPPDATA%` manifest and also inspect only
+  `BlenderFoundation.Blender*` Microsoft Store package-local runtime paths. Treat
+  multiple distinct live manifests for one port as a conflict rather than
+  guessing. Validate packaged-process PIDs with a query-only Win32 handle.
 - Allow at most one active Blender listener per port.
 - Never retry a mutation unless the caller supplied an idempotency key.
 
@@ -36,4 +40,6 @@ than ordinary command responses.
 
 The add-on must implement a small framed socket layer using only the Python
 standard library. Screenshot responses must remain bounded. Protocol changes
-require explicit negotiation and a new decision record.
+require explicit negotiation and a new decision record. Store-packaged Blender
+virtualizes local app-data writes, so external discovery needs the narrow Windows
+fallback without broadening the loopback or package trust boundary.

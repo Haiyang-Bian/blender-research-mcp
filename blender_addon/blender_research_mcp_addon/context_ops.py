@@ -230,6 +230,8 @@ def context_summary() -> dict[str, Any]:
         }
         for viewport in list_viewports()
     ]
+    snapshot["blend_file"] = bpy.data.filepath
+    snapshot["blend_file_saved"] = bool(bpy.data.filepath)
     return snapshot
 
 

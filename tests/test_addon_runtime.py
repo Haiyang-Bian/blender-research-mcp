@@ -65,7 +65,7 @@ def test_listener_authenticates_before_dispatch_and_removes_manifest(
     assert runtime.manifest_path.exists()
 
     client = socket.create_connection(("127.0.0.1", port), timeout=1)
-    client.settimeout(1)
+    client.settimeout(0.01)
     request = {
         "protocol": 1,
         "request_id": "00000000-0000-0000-0000-000000000001",
