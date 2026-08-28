@@ -3,22 +3,33 @@
 from __future__ import annotations
 
 import base64
-import os
+import hashlib
 import struct
-import tempfile
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import bpy
+import gpu
 from mathutils import Vector
+
+from .capture_codec import bounded_dimensions, encode_rgba_png, is_blank_rgba
 
 
 class ContextOperationError(RuntimeError):
-    def __init__(self, code: str, message: str, *, kind: str = "precondition") -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        kind: str = "precondition",
+        retryable: bool = False,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.kind = kind
+        self.retryable = retryable
+        self.details = details or {}
 
 
 @dataclass
@@ -179,9 +190,12 @@ def restore_context(snapshot: dict[str, Any]) -> None:
             obj.select_set(True)
         active_name = snapshot["active_object"]
         view_layer.objects.active = bpy.data.objects.get(active_name) if active_name else None
-        scene.frame_set(snapshot["frame_current"])
+        if scene.frame_current != snapshot["frame_current"]:
+            scene.frame_set(snapshot["frame_current"])
         camera_name = snapshot["active_camera"]
-        scene.camera = bpy.data.objects.get(camera_name) if camera_name else None
+        camera = bpy.data.objects.get(camera_name) if camera_name else None
+        if scene.camera != camera:
+            scene.camera = camera
         view = snapshot["view"]
         region_3d = viewport.space.region_3d
         region_3d.view_location = view["location"]
@@ -296,7 +310,8 @@ def capture_viewport(
         raise ContextOperationError("OBJECT_HIDDEN", f"Object is not visible: {object_name}")
     snapshot = capture_context(viewport_id)
     viewport = _find_viewport(snapshot)
-    temporary_path: Path | None = None
+    result: dict[str, Any] | None = None
+    offscreen: Any | None = None
     try:
         _ensure_object_mode(viewport)
         with bpy.context.temp_override(
@@ -316,29 +331,80 @@ def capture_viewport(
             if "FINISHED" not in bpy.ops.view3d.view_selected(use_all_regions=False):
                 raise ContextOperationError("VIEW_FRAME_FAILED", f"Could not frame {object_name}")
             viewport.space.region_3d.update()
-            handle, path = tempfile.mkstemp(prefix="blender-research-mcp-", suffix=".png")
-            os.close(handle)
-            temporary_path = Path(path)
-            result = bpy.ops.screen.screenshot_area(
-                filepath=str(temporary_path),
-                hide_props_region=True,
-                check_existing=False,
+            width, height = bounded_dimensions(
+                viewport.region.width,
+                viewport.region.height,
+                max_size,
             )
-            if "FINISHED" not in result:
-                raise ContextOperationError("CAPTURE_FAILED", "Viewport screenshot operator failed")
-        data = temporary_path.read_bytes()
-        width, height = _png_size(data)
-        return {
+            view_matrix = viewport.space.region_3d.view_matrix.copy()
+            projection_matrix = viewport.space.region_3d.window_matrix.copy()
+            try:
+                offscreen = gpu.types.GPUOffScreen(width, height, format="RGBA8")
+                with offscreen.bind():
+                    offscreen.draw_view3d(
+                        viewport.window.scene,
+                        viewport.window.view_layer,
+                        viewport.space,
+                        viewport.region,
+                        view_matrix,
+                        projection_matrix,
+                        do_color_management=True,
+                        draw_background=True,
+                    )
+                    framebuffer = gpu.state.active_framebuffer_get()
+                    pixels = framebuffer.read_color(
+                        0,
+                        0,
+                        width,
+                        height,
+                        4,
+                        0,
+                        "UBYTE",
+                    )
+                    rgba = bytes(pixels)
+            except Exception as exc:
+                raise ContextOperationError(
+                    "CAPTURE_GPU_UNAVAILABLE",
+                    f"Off-screen viewport rendering failed: {type(exc).__name__}",
+                    kind="blender_api",
+                    retryable=True,
+                ) from exc
+        if is_blank_rgba(rgba):
+            raise ContextOperationError(
+                "CAPTURE_BLANK",
+                "Off-screen viewport rendering returned an all-black image",
+                kind="blender_api",
+                retryable=True,
+            )
+        data = encode_rgba_png(width, height, rgba, bottom_up=True)
+        png_width, png_height = _png_size(data)
+        result = {
             "object_name": object_name,
             "view": view,
             "viewport_id": viewport.viewport_id,
-            "native_width": width,
-            "native_height": height,
+            "native_width": png_width,
+            "native_height": png_height,
             "max_size": max_size,
             "mime_type": "image/png",
+            "backend": "gpu_offscreen",
+            "focus_requirement": "none_when_window_exists",
+            "native_sha256": hashlib.sha256(data).hexdigest(),
             "png_base64": base64.b64encode(data).decode("ascii"),
         }
     finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
-        restore_context(snapshot)
+        try:
+            if offscreen is not None:
+                offscreen.free()
+        finally:
+            restore_context(snapshot)
+    restored = capture_context(snapshot["viewport_id"])
+    if restored != snapshot:
+        raise ContextOperationError(
+            "OBSERVATION_CONTEXT_DRIFT",
+            "Viewport capture did not restore the original user context",
+            kind="conflict",
+            retryable=True,
+        )
+    assert result is not None
+    result["context_unchanged"] = True
+    return result

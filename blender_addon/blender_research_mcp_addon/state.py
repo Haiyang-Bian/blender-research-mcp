@@ -21,6 +21,7 @@ from .context_ops import (
     restore_context,
     validate_context_snapshot,
 )
+from .generation import has_persistent_scene_update
 from .runtime import ADDON_VERSION, ListenerRuntime
 from .transaction_model import (
     IdempotencyCache,
@@ -45,6 +46,13 @@ CAPABILITIES = [
     "transaction.rollback",
     "object.transform",
 ]
+CAPABILITY_VERSIONS = {
+    "transport": 1,
+    "context": 1,
+    "viewport_capture": 2,
+    "transactions": 1,
+    "object_transform_scale": 1,
+}
 MUTATION_COMMANDS = {
     "transaction.begin",
     "transaction.commit",
@@ -62,6 +70,7 @@ class AddonState:
         self.active_command = ""
         self.last_command_ms = 0.0
         self.last_error = ""
+        self.last_capture_backend = "gpu_offscreen"
         self.snapshots: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.transactions = TransactionBook()
         self.idempotency = IdempotencyCache()
@@ -119,8 +128,8 @@ class AddonState:
         self._disconnect_rollback_deadline = None
         self.scene_generation += 1
 
-    def on_depsgraph_update(self) -> None:
-        if self._suppress_generation == 0:
+    def on_depsgraph_update(self, depsgraph: Any) -> None:
+        if self._suppress_generation == 0 and has_persistent_scene_update(depsgraph):
             self.scene_generation += 1
 
     @contextlib.contextmanager
@@ -181,7 +190,14 @@ class AddonState:
             return response
         except ContextOperationError as exc:
             self.last_error = f"{exc.code}: {exc}"
-            return self._error(request_id, exc.kind, exc.code, str(exc))
+            return self._error(
+                request_id,
+                exc.kind,
+                exc.code,
+                str(exc),
+                retryable=exc.retryable,
+                details=exc.details,
+            )
         except TransactionModelError as exc:
             self.last_error = f"{exc.code}: {exc}"
             kind = "conflict" if exc.code != "TRANSACTION_NOT_FOUND" else "not_found"
@@ -226,6 +242,7 @@ class AddonState:
                 "blender_version": bpy.app.version_string,
                 "addon_version": ADDON_VERSION,
                 "capabilities": CAPABILITIES,
+                "capability_versions": CAPABILITY_VERSIONS,
             }
         if command == "connection.ping":
             return {
@@ -234,6 +251,9 @@ class AddonState:
                 "blender_version": bpy.app.version_string,
                 "addon_version": ADDON_VERSION,
                 "capabilities": CAPABILITIES,
+                "capability_versions": CAPABILITY_VERSIONS,
+                "capture_backend": self.last_capture_backend,
+                "capture_focus_requirement": "none_when_window_exists",
                 "heartbeat": self.heartbeat,
                 "last_command_ms": self.last_command_ms,
             }
@@ -279,12 +299,14 @@ class AddonState:
                     kind="validation",
                 )
             with self.suppress_generation():
-                return capture_viewport(
+                result = capture_viewport(
                     object_name,
                     str(params.get("view", "CURRENT")),
                     int(params.get("max_size", 800)),
                     params.get("viewport_id"),
                 )
+            self.last_capture_backend = str(result["backend"])
+            return result
         if command == "transaction.begin":
             self._require_scene_generation(request)
             with self.suppress_generation():
@@ -507,6 +529,9 @@ class AddonState:
         kind: str,
         code: str,
         message: str,
+        *,
+        retryable: bool = False,
+        details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return {
             "protocol": PROTOCOL_VERSION,
@@ -517,7 +542,7 @@ class AddonState:
                 "kind": kind,
                 "code": code,
                 "message": message,
-                "retryable": False,
-                "details": {},
+                "retryable": retryable,
+                "details": details or {},
             },
         }

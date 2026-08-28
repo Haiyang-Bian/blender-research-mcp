@@ -9,7 +9,7 @@ from .state import AddonState
 bl_info = {
     "name": "Blender Research MCP",
     "author": "Blender Research MCP contributors",
-    "version": (0, 2, 0),
+    "version": (0, 3, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Research MCP",
     "description": "Local semantic, observable, and reversible MCP bridge",
@@ -67,6 +67,7 @@ class BRMCP_PT_status(bpy.types.Panel):
         layout.label(text=f"Connected: {'yes' if runtime.connected else 'no'}")
         layout.label(text=f"Heartbeat: {STATE.heartbeat}")
         layout.label(text=f"Scene generation: {STATE.scene_generation}")
+        layout.label(text=f"Capture: {STATE.last_capture_backend}")
         layout.label(text=f"Transaction: {STATE.transactions.last_status}")
         if STATE.active_command:
             layout.label(text=f"Running: {STATE.active_command}")
@@ -87,9 +88,9 @@ def _timer() -> float | None:
 
 
 @persistent
-def _depsgraph_update(_scene: bpy.types.Scene, _depsgraph: bpy.types.Depsgraph) -> None:
+def _depsgraph_update(_scene: bpy.types.Scene, depsgraph: bpy.types.Depsgraph) -> None:
     if STATE is not None:
-        STATE.on_depsgraph_update()
+        STATE.on_depsgraph_update(depsgraph)
 
 
 @persistent

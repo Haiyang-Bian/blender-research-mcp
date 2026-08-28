@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from blender_research_mcp.errors import ErrorInfo, ErrorKind
-from blender_research_mcp.protocol import RequestEnvelope, ResponseEnvelope
+from blender_research_mcp.protocol import CapabilityVersions, RequestEnvelope, ResponseEnvelope
 
 
 def test_request_rejects_unknown_fields_and_invalid_deadline() -> None:
@@ -47,3 +47,9 @@ def test_response_requires_an_error_on_failure() -> None:
     )
     assert response.error is not None
     assert response.error.code == "STALE_SCENE"
+
+
+def test_capability_versions_default_to_incompatible_zeroes() -> None:
+    versions = CapabilityVersions()
+
+    assert versions.viewport_capture == 0

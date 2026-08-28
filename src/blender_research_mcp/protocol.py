@@ -16,6 +16,16 @@ from blender_research_mcp.constants import (
 from blender_research_mcp.errors import ErrorInfo
 
 
+class CapabilityVersions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transport: int = Field(default=0, ge=0)
+    context: int = Field(default=0, ge=0)
+    viewport_capture: int = Field(default=0, ge=0)
+    transactions: int = Field(default=0, ge=0)
+    object_transform_scale: int = Field(default=0, ge=0)
+
+
 class RequestEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -60,3 +70,4 @@ class HandshakeResult(BaseModel):
     blender_version: str
     addon_version: str
     capabilities: list[str]
+    capability_versions: CapabilityVersions = Field(default_factory=CapabilityVersions)

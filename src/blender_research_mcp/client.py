@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -15,7 +16,13 @@ from blender_research_mcp.constants import (
     MAX_RESPONSE_BYTES,
     PROTOCOL_VERSION,
 )
-from blender_research_mcp.errors import BridgeError, TransportError, transport_error
+from blender_research_mcp.errors import (
+    BridgeError,
+    ErrorInfo,
+    ErrorKind,
+    TransportError,
+    transport_error,
+)
 from blender_research_mcp.framing import FramingError, encode_frame, read_frame
 from blender_research_mcp.protocol import HandshakeResult, RequestEnvelope, ResponseEnvelope
 from blender_research_mcp.session import SessionManifest, load_manifest
@@ -73,7 +80,7 @@ class BridgeClient:
                     session_token=manifest.session_token,
                     command="connection.hello",
                     params={
-                        "server_version": "0.2.0",
+                        "server_version": package_version("blender-research-mcp"),
                         "protocol_min": PROTOCOL_VERSION,
                         "protocol_max": PROTOCOL_VERSION,
                         "expected_instance_id": manifest.instance_id,
@@ -90,6 +97,30 @@ class BridgeClient:
                 "HANDSHAKE_MISMATCH",
                 "Blender handshake did not match the discovered session",
                 retryable=False,
+            )
+        required_versions = {
+            "transport": 1,
+            "context": 1,
+            "viewport_capture": 2,
+            "transactions": 1,
+            "object_transform_scale": 1,
+        }
+        actual_versions = result.capability_versions.model_dump()
+        incompatible = {
+            name: {"required": required, "actual": actual_versions.get(name)}
+            for name, required in required_versions.items()
+            if actual_versions.get(name, 0) < required
+        }
+        if incompatible:
+            await self.close()
+            raise TransportError(
+                ErrorInfo(
+                    kind=ErrorKind.PROTOCOL_VERSION,
+                    code="CAPABILITY_MISMATCH",
+                    message="Blender add-on capabilities are incompatible with this server",
+                    retryable=False,
+                    details={"capabilities": incompatible},
+                )
             )
         self._handshake = result
         return result

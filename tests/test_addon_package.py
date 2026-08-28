@@ -15,5 +15,7 @@ def test_addon_zip_has_an_installable_package_root(tmp_path: Path) -> None:
     with zipfile.ZipFile(output) as archive:
         names = set(archive.namelist())
     assert f"{PACKAGE_NAME}/__init__.py" in names
+    assert f"{PACKAGE_NAME}/capture_codec.py" in names
+    assert f"{PACKAGE_NAME}/generation.py" in names
     assert f"{PACKAGE_NAME}/runtime.py" in names
     assert all(name.startswith(f"{PACKAGE_NAME}/") for name in names)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -166,6 +167,7 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
         image_bytes, sizes = resize_png(base64.b64decode(encoded, validate=True), max_size)
         result.update(sizes)
         result["mime_type"] = "image/png"
+        result["sha256"] = hashlib.sha256(image_bytes).hexdigest()
         return CallToolResult(
             content=[
                 ImageContent(
