@@ -48,6 +48,8 @@ IdempotencyKey = Annotated[str, Field(min_length=1, max_length=128)]
 SceneGeneration = Annotated[int, Field(ge=0)]
 TransactionLabel = Annotated[str, Field(max_length=200)]
 SemanticView = Literal["FRONT", "RIGHT", "TOP", "BACK", "LEFT", "BOTTOM", "CURRENT"]
+DisplayMode = Literal["CURRENT", "WIREFRAME", "SOLID", "MATERIAL", "RENDERED"]
+OverlaysMode = Literal["CURRENT", "ON", "OFF"]
 BundleViews = Annotated[tuple[SemanticView, ...], Field(min_length=1, max_length=3)]
 CaptureId = Annotated[str, Field(min_length=1, max_length=128)]
 NormalizedCoordinate = Annotated[float, Field(ge=0.0, le=1.0)]
@@ -65,6 +67,13 @@ class ScalePatch(BaseModel):
         if self.x is None and self.y is None and self.z is None:
             raise ValueError("at least one scale axis is required")
         return self
+
+
+class OrbitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    yaw_degrees: float = Field(default=0.0, ge=-180.0, le=180.0)
+    pitch_degrees: float = Field(default=0.0, ge=-89.0, le=89.0)
 
 
 def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
@@ -146,6 +155,21 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
         )
 
     @server.tool(
+        name="object.geometry.inspect",
+        description=(
+            "Return a bounded evaluated mesh summary without exposing raw vertex or face arrays."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def object_geometry_inspect(object_name: ObjectName) -> dict[str, Any]:
+        return await client.call(
+            "object.geometry.inspect",
+            {"object_name": object_name},
+            read_only=True,
+        )
+
+    @server.tool(
         name="viewport.capture",
         description=(
             "Temporarily frame an object from a semantic view, capture the 3D editor, "
@@ -159,13 +183,21 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
         view: SemanticView = "CURRENT",
         max_size: CaptureSize = 800,
         viewport_id: str | None = None,
+        display_mode: DisplayMode = "CURRENT",
+        overlays: OverlaysMode = "CURRENT",
+        orbit: OrbitRequest | None = None,
     ) -> CallToolResult:
+        if view == "CURRENT" and orbit is not None:
+            raise ValueError("orbit requires a semantic base view rather than CURRENT")
         image_bytes, result = await capture_image(
             client,
             object_name=object_name,
             view=view,
             max_size=max_size,
             viewport_id=viewport_id,
+            display_mode=display_mode,
+            overlays=overlays,
+            orbit=orbit.model_dump() if orbit is not None else None,
         )
         await settle_capture_generation(client, result)
         return CallToolResult(
@@ -214,6 +246,8 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
         views: BundleViews = ("FRONT", "RIGHT", "TOP"),
         max_size: BundleCaptureSize = 800,
         viewport_id: str | None = None,
+        display_mode: DisplayMode = "CURRENT",
+        overlays: OverlaysMode = "CURRENT",
     ) -> CallToolResult:
         images, result = await collect_observation_bundle(
             client,
@@ -221,6 +255,8 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
             views=views,
             max_size=max_size,
             viewport_id=viewport_id,
+            display_mode=display_mode,
+            overlays=overlays,
         )
         content: list[ContentBlock] = [
             ImageContent(

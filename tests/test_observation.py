@@ -57,9 +57,13 @@ class FakeClient:
             return {
                 "object_name": params["object_name"],
                 "view": view,
+                "capture_id": f"capture-{view}",
+                "capture_scene_generation": 7,
                 "viewport_id": "1:2",
                 "backend": "gpu_offscreen",
                 "focus_requirement": "none_when_window_exists",
+                "display_mode": params["display_mode"],
+                "overlays": params["overlays"],
                 "context_unchanged": True,
                 "png_base64": base64.b64encode(raw).decode("ascii"),
                 "scene_generation": 7,
@@ -117,6 +121,10 @@ def test_bundle_returns_ordered_images_and_consistent_evidence() -> None:
     assert len(images) == 2
     assert [capture["view"] for capture in result["captures"]] == ["FRONT", "RIGHT"]
     assert [capture["content_index"] for capture in result["captures"]] == [0, 1]
+    assert [capture["capture_id"] for capture in result["captures"]] == [
+        "capture-FRONT",
+        "capture-RIGHT",
+    ]
     assert result["context_unchanged"] is True
     assert result["object_unchanged"] is True
     assert result["scene_generation"] == 7

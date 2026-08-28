@@ -13,6 +13,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "context.snapshot",
         "context.restore",
         "object.inspect",
+        "object.geometry.inspect",
         "viewport.capture",
         "viewport.raycast",
         "observation.bundle",
@@ -27,6 +28,17 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert capture.annotations.readOnlyHint is True
     assert capture.inputSchema["properties"]["max_size"]["minimum"] == 256
     assert capture.inputSchema["properties"]["max_size"]["maximum"] == 1600
+    assert capture.inputSchema["properties"]["display_mode"]["enum"] == [
+        "CURRENT",
+        "WIREFRAME",
+        "SOLID",
+        "MATERIAL",
+        "RENDERED",
+    ]
+    assert capture.inputSchema["$defs"]["OrbitRequest"]["additionalProperties"] is False
+    geometry = tools_by_name["object.geometry.inspect"]
+    assert geometry.annotations is not None
+    assert geometry.annotations.readOnlyHint is True
     raycast = tools_by_name["viewport.raycast"]
     assert raycast.annotations is not None
     assert raycast.annotations.readOnlyHint is True
@@ -39,6 +51,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert bundle.inputSchema["properties"]["views"]["minItems"] == 1
     assert bundle.inputSchema["properties"]["views"]["maxItems"] == 3
     assert bundle.inputSchema["properties"]["max_size"]["maximum"] == 1200
+    assert "display_mode" in bundle.inputSchema["properties"]
     transform = tools_by_name["object.transform"]
     assert transform.annotations is not None
     assert transform.annotations.readOnlyHint is False

@@ -103,6 +103,7 @@ class BridgeClient:
             "context": 1,
             "viewport_capture": 3,
             "viewport_raycast": 1,
+            "geometry_inspection": 1,
             "transactions": 1,
             "object_transform_scale": 1,
         }

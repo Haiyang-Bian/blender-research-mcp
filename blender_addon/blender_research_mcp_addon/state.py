@@ -18,6 +18,7 @@ from .context_ops import (
     capture_context,
     capture_viewport,
     context_summary,
+    inspect_geometry,
     inspect_object,
     raycast_capture,
     restore_context,
@@ -42,6 +43,7 @@ CAPABILITIES = [
     "context.snapshot",
     "context.restore",
     "object.inspect",
+    "object.geometry.inspect",
     "viewport.capture",
     "viewport.raycast",
     "transaction.begin",
@@ -54,7 +56,7 @@ CAPABILITY_VERSIONS = {
     "context": 1,
     "viewport_capture": 3,
     "viewport_raycast": 1,
-    "geometry_inspection": 0,
+    "geometry_inspection": 1,
     "transactions": 1,
     "object_transform_scale": 1,
 }
@@ -298,6 +300,16 @@ class AddonState:
                     kind="validation",
                 )
             return inspect_object(object_name)
+        if command == "object.geometry.inspect":
+            object_name = params.get("object_name")
+            if not isinstance(object_name, str) or not object_name:
+                raise ContextOperationError(
+                    "OBJECT_NAME_INVALID",
+                    "object_name must be a non-empty string",
+                    kind="validation",
+                )
+            with self.suppress_generation():
+                return inspect_geometry(object_name)
         if command == "viewport.capture":
             object_name = params.get("object_name")
             if not isinstance(object_name, str) or not object_name:
@@ -312,6 +324,9 @@ class AddonState:
                     str(params.get("view", "CURRENT")),
                     int(params.get("max_size", 800)),
                     params.get("viewport_id"),
+                    str(params.get("display_mode", "CURRENT")),
+                    str(params.get("overlays", "CURRENT")),
+                    params.get("orbit"),
                 )
             capture_id = str(uuid.uuid4())
             evidence = CaptureEvidence(

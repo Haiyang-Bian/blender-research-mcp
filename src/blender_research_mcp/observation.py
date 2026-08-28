@@ -94,6 +94,9 @@ async def capture_image(
     view: str,
     max_size: int,
     viewport_id: str | None,
+    display_mode: str = "CURRENT",
+    overlays: str = "CURRENT",
+    orbit: dict[str, float] | None = None,
 ) -> tuple[bytes, dict[str, Any]]:
     result = await client.call(
         "viewport.capture",
@@ -102,6 +105,9 @@ async def capture_image(
             "view": view,
             "max_size": max_size,
             "viewport_id": viewport_id,
+            "display_mode": display_mode,
+            "overlays": overlays,
+            "orbit": orbit,
         },
         deadline_ms=CAPTURE_DEADLINE_MS,
         read_only=True,
@@ -145,6 +151,8 @@ async def collect_observation_bundle(
     views: tuple[str, ...],
     max_size: int,
     viewport_id: str | None,
+    display_mode: str = "CURRENT",
+    overlays: str = "CURRENT",
 ) -> tuple[list[bytes], dict[str, Any]]:
     if len(set(views)) != len(views):
         raise observation_error(
@@ -172,6 +180,8 @@ async def collect_observation_bundle(
             view=view,
             max_size=max_size,
             viewport_id=viewport_id,
+            display_mode=display_mode,
+            overlays=overlays,
         )
         metadata["content_index"] = index
         metadata["elapsed_ms"] = round((time.perf_counter() - capture_started) * 1000, 3)

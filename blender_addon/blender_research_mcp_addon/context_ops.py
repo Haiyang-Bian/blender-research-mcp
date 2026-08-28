@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import math
 import struct
 from dataclasses import dataclass
 from typing import Any
@@ -19,6 +20,7 @@ from .capture_codec import (
     is_blank_rgba,
 )
 from .capture_model import CaptureEvidence, MatrixRows
+from .geometry_model import DETAIL_POLYGON_LIMIT, summarize_polygon_diagnostics
 
 
 class ContextOperationError(RuntimeError):
@@ -285,6 +287,111 @@ def inspect_object(object_name: str) -> dict[str, Any]:
     }
 
 
+def inspect_geometry(object_name: str) -> dict[str, Any]:
+    obj = bpy.data.objects.get(object_name)
+    if obj is None:
+        raise ContextOperationError(
+            "OBJECT_NOT_FOUND",
+            f"Object does not exist: {object_name}",
+            kind="not_found",
+        )
+    if obj.type != "MESH":
+        raise ContextOperationError(
+            "OBJECT_GEOMETRY_UNSUPPORTED",
+            f"Evaluated geometry inspection only supports MESH objects: {object_name}",
+        )
+    try:
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        evaluated = obj.evaluated_get(depsgraph)
+        mesh = evaluated.data
+        mesh.calc_loop_triangles()
+        polygon_count = len(mesh.polygons)
+        material_slots = [
+            {
+                "index": index,
+                "name": slot.material.name if slot.material else None,
+                "polygon_count": None,
+            }
+            for index, slot in enumerate(obj.material_slots)
+        ]
+        warnings: list[dict[str, Any]] = []
+        surface_area_local: float | None = None
+        edge_topology: dict[str, int] | None = None
+        unassigned_polygon_count: int | None = None
+        if polygon_count <= DETAIL_POLYGON_LIMIT:
+            diagnostics = summarize_polygon_diagnostics(
+                edge_count=len(mesh.edges),
+                material_slot_count=len(material_slots),
+                polygons=(
+                    (
+                        (mesh.loops[index].edge_index for index in polygon.loop_indices),
+                        int(polygon.material_index),
+                        float(polygon.area),
+                    )
+                    for polygon in mesh.polygons
+                ),
+            )
+            surface_area_local = float(diagnostics["surface_area_local"])
+            edge_topology = dict(diagnostics["edge_topology"])
+            unassigned_polygon_count = int(diagnostics["unassigned_polygon_count"])
+            for slot, count in zip(
+                material_slots,
+                diagnostics["material_polygon_counts"],
+                strict=True,
+            ):
+                slot["polygon_count"] = int(count)
+        else:
+            warnings.append(
+                {
+                    "code": "GEOMETRY_DIAGNOSTICS_TRUNCATED",
+                    "polygon_limit": DETAIL_POLYGON_LIMIT,
+                    "polygon_count": polygon_count,
+                }
+            )
+        local_bounds = [list(corner) for corner in evaluated.bound_box]
+        world_bounds = [
+            list(evaluated.matrix_world @ Vector(corner)) for corner in evaluated.bound_box
+        ]
+        return {
+            "name": obj.name,
+            "type": obj.type,
+            "session_identity": f"object:{obj.as_pointer():x}",
+            "library": obj.library.filepath if obj.library else None,
+            "counts": {
+                "vertices": len(mesh.vertices),
+                "edges": len(mesh.edges),
+                "polygons": polygon_count,
+                "loop_triangles": len(mesh.loop_triangles),
+            },
+            "dimensions": list(evaluated.dimensions),
+            "local_bounds": local_bounds,
+            "world_bounds": world_bounds,
+            "surface_area_local": surface_area_local,
+            "edge_topology": edge_topology,
+            "material_slots": material_slots,
+            "unassigned_polygon_count": unassigned_polygon_count,
+            "modifiers": [
+                {
+                    "name": modifier.name,
+                    "type": modifier.type,
+                    "show_viewport": bool(modifier.show_viewport),
+                    "show_render": bool(modifier.show_render),
+                }
+                for modifier in obj.modifiers
+            ],
+            "warnings": warnings,
+        }
+    except ContextOperationError:
+        raise
+    except Exception as exc:
+        raise ContextOperationError(
+            "GEOMETRY_EVALUATION_FAILED",
+            f"Could not inspect evaluated geometry for {object_name}: {type(exc).__name__}",
+            kind="blender_api",
+            retryable=True,
+        ) from exc
+
+
 def _png_size(data: bytes) -> tuple[int, int]:
     if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n":
         raise ContextOperationError("CAPTURE_INVALID", "Viewport capture did not produce a PNG")
@@ -302,11 +409,81 @@ def _matrix_rows(matrix: Any) -> MatrixRows:
     return rows  # type: ignore[return-value]
 
 
+def _validate_capture_options(
+    view: str,
+    display_mode: str,
+    overlays: str,
+    orbit: dict[str, Any] | None,
+) -> tuple[float, float] | None:
+    if display_mode not in {"CURRENT", "WIREFRAME", "SOLID", "MATERIAL", "RENDERED"}:
+        raise ContextOperationError(
+            "DISPLAY_MODE_INVALID",
+            f"Unsupported display mode: {display_mode}",
+            kind="validation",
+        )
+    if overlays not in {"CURRENT", "ON", "OFF"}:
+        raise ContextOperationError(
+            "OVERLAYS_INVALID",
+            f"Unsupported overlays mode: {overlays}",
+            kind="validation",
+        )
+    if orbit is None:
+        return None
+    if view == "CURRENT":
+        raise ContextOperationError(
+            "ORBIT_VIEW_INVALID",
+            "orbit requires a semantic base view rather than CURRENT",
+            kind="validation",
+        )
+    if not isinstance(orbit, dict) or set(orbit) - {"yaw_degrees", "pitch_degrees"}:
+        raise ContextOperationError(
+            "ORBIT_INVALID",
+            "orbit must contain only yaw_degrees and pitch_degrees",
+            kind="validation",
+        )
+    yaw = orbit.get("yaw_degrees", 0.0)
+    pitch = orbit.get("pitch_degrees", 0.0)
+    if (
+        isinstance(yaw, bool)
+        or not isinstance(yaw, (int, float))
+        or isinstance(pitch, bool)
+        or not isinstance(pitch, (int, float))
+        or not math.isfinite(float(yaw))
+        or not math.isfinite(float(pitch))
+        or not -180.0 <= float(yaw) <= 180.0
+        or not -89.0 <= float(pitch) <= 89.0
+    ):
+        raise ContextOperationError(
+            "ORBIT_INVALID",
+            "orbit yaw must be -180..180 and pitch must be -89..89 degrees",
+            kind="validation",
+        )
+    return float(yaw), float(pitch)
+
+
+def _apply_orbit(yaw: float, pitch: float) -> None:
+    operations = (
+        (yaw, "ORBITLEFT" if yaw >= 0 else "ORBITRIGHT"),
+        (pitch, "ORBITUP" if pitch >= 0 else "ORBITDOWN"),
+    )
+    for angle, direction in operations:
+        if abs(angle) <= 1e-9:
+            continue
+        if "FINISHED" not in bpy.ops.view3d.view_orbit(
+            angle=math.radians(abs(angle)),
+            type=direction,
+        ):
+            raise ContextOperationError("VIEW_ORBIT_FAILED", "Could not orbit the viewport")
+
+
 def capture_viewport(
     object_name: str,
     view: str,
     max_size: int,
     viewport_id: str | None,
+    display_mode: str = "CURRENT",
+    overlays: str = "CURRENT",
+    orbit: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if view not in {"FRONT", "RIGHT", "TOP", "BACK", "LEFT", "BOTTOM", "CURRENT"}:
         raise ContextOperationError("VIEW_INVALID", f"Unsupported view: {view}", kind="validation")
@@ -316,6 +493,7 @@ def capture_viewport(
             "max_size must be between 256 and 1600",
             kind="validation",
         )
+    orbit_values = _validate_capture_options(view, display_mode, overlays, orbit)
     obj = bpy.data.objects.get(object_name)
     if obj is None:
         raise ContextOperationError(
@@ -351,6 +529,12 @@ def capture_viewport(
                 raise ContextOperationError("VIEW_AXIS_FAILED", f"Could not set view {view}")
             if "FINISHED" not in bpy.ops.view3d.view_selected(use_all_regions=False):
                 raise ContextOperationError("VIEW_FRAME_FAILED", f"Could not frame {object_name}")
+            if orbit_values is not None:
+                _apply_orbit(*orbit_values)
+            if display_mode != "CURRENT":
+                viewport.space.shading.type = display_mode
+            if overlays != "CURRENT":
+                viewport.space.overlay.show_overlays = overlays == "ON"
             viewport.space.region_3d.update()
             width, height = bounded_dimensions(
                 viewport.region.width,
@@ -365,6 +549,8 @@ def capture_viewport(
             projection_rows = _matrix_rows(projection_matrix)
             perspective_rows = _matrix_rows(perspective_matrix)
             projection_kind = "PERSP" if region_3d.is_perspective else "ORTHO"
+            actual_display_mode = str(viewport.space.shading.type)
+            actual_overlays = "ON" if viewport.space.overlay.show_overlays else "OFF"
             try:
                 offscreen = gpu.types.GPUOffScreen(width, height, format="RGBA8")
                 offscreen.draw_view3d(
@@ -408,6 +594,13 @@ def capture_viewport(
         result = {
             "object_name": object_name,
             "view": view,
+            "display_mode": actual_display_mode,
+            "overlays": actual_overlays,
+            "orbit": (
+                {"yaw_degrees": orbit_values[0], "pitch_degrees": orbit_values[1]}
+                if orbit_values is not None
+                else None
+            ),
             "viewport_id": viewport.viewport_id,
             "native_width": png_width,
             "native_height": png_height,
@@ -431,8 +624,8 @@ def capture_viewport(
             "target_identity": f"object:{obj.as_pointer():x}",
             "viewport_id": viewport.viewport_id,
             "view": view,
-            "display_mode": "CURRENT",
-            "overlays": "CURRENT",
+            "display_mode": actual_display_mode,
+            "overlays": actual_overlays,
             "width": png_width,
             "height": png_height,
             "native_sha256": result["native_sha256"],
