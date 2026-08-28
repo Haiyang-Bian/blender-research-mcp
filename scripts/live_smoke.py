@@ -1,4 +1,4 @@
-"""Run the live Blender 4.2 autonomous-observation acceptance through MCP stdio."""
+"""Run the live Blender 4.2 spatial-diagnosis acceptance through MCP stdio."""
 
 from __future__ import annotations
 
@@ -91,6 +91,27 @@ async def call_structured(
     return result.structuredContent, result
 
 
+async def call_expected_error(
+    session: ClientSession,
+    name: str,
+    arguments: dict[str, Any],
+    expected_code: str,
+) -> str:
+    result = await session.call_tool(
+        name,
+        arguments,
+        read_timeout_seconds=timedelta(seconds=40),
+    )
+    text = result_text(result)
+    if not result.isError:
+        raise RuntimeError(f"{name} unexpectedly succeeded; expected {expected_code}")
+    if expected_code not in text:
+        raise RuntimeError(
+            f"{name} failed without expected code {expected_code}: {text}"
+        )
+    return text
+
+
 def save_image(result: types.CallToolResult, path: Path) -> str:
     image = next(
         (block for block in result.content if isinstance(block, types.ImageContent)),
@@ -169,6 +190,87 @@ def images_match_within_render_noise(statistics: dict[str, float | int]) -> bool
     )
 
 
+def _finite_vector(value: Any, *, length: int, label: str) -> list[float]:
+    if not isinstance(value, list) or len(value) != length:
+        raise RuntimeError(f"{label} is not a {length}-component vector: {value!r}")
+    vector = [float(component) for component in value]
+    if not all(math.isfinite(component) for component in vector):
+        raise RuntimeError(f"{label} contains a non-finite component: {value!r}")
+    return vector
+
+
+def validate_raycast(result: dict[str, Any], *, require_hit: bool = True) -> None:
+    ray = result.get("ray")
+    if not isinstance(ray, dict):
+        raise RuntimeError("raycast result has no ray metadata")
+    _finite_vector(ray.get("origin"), length=3, label="ray origin")
+    direction = _finite_vector(ray.get("direction"), length=3, label="ray direction")
+    if not math.isclose(math.sqrt(sum(value * value for value in direction)), 1.0, abs_tol=1e-5):
+        raise RuntimeError("raycast direction is not unit length")
+    if not math.isfinite(float(ray.get("max_distance", math.nan))):
+        raise RuntimeError("raycast max distance is not finite")
+    if not result.get("hit"):
+        if require_hit:
+            raise RuntimeError("raycast did not hit evaluated geometry")
+        return
+    hit_object = result.get("hit_object")
+    if not isinstance(hit_object, dict) or not hit_object.get("name"):
+        raise RuntimeError("raycast hit did not identify an object")
+    _finite_vector(result.get("location"), length=3, label="hit location")
+    normal = _finite_vector(result.get("normal"), length=3, label="hit normal")
+    if not math.isclose(math.sqrt(sum(value * value for value in normal)), 1.0, abs_tol=1e-4):
+        raise RuntimeError("raycast hit normal is not unit length")
+    if int(result.get("face_index", -1)) < 0:
+        raise RuntimeError("raycast hit has an invalid face index")
+    if not math.isfinite(float(result.get("distance", math.nan))):
+        raise RuntimeError("raycast hit distance is not finite")
+
+
+async def find_raycast_hit(
+    session: ClientSession,
+    capture_id: str,
+) -> dict[str, Any]:
+    coordinates = (
+        (0.5, 0.5),
+        (0.4, 0.5),
+        (0.6, 0.5),
+        (0.5, 0.4),
+        (0.5, 0.6),
+        (0.4, 0.4),
+        (0.6, 0.4),
+        (0.4, 0.6),
+        (0.6, 0.6),
+    )
+    misses: list[dict[str, Any]] = []
+    for x, y in coordinates:
+        result, _ = await call_structured(
+            session,
+            "viewport.raycast",
+            {"capture_id": capture_id, "x": x, "y": y},
+        )
+        validate_raycast(result, require_hit=False)
+        if result.get("hit"):
+            validate_raycast(result)
+            return result
+        misses.append(result)
+    raise RuntimeError(f"raycast grid did not hit evaluated geometry: {misses}")
+
+
+def validate_geometry_summary(result: dict[str, Any]) -> None:
+    counts = result.get("counts")
+    if not isinstance(counts, dict) or int(counts.get("polygons", 0)) <= 0:
+        raise RuntimeError("geometry inspection returned no evaluated polygons")
+    for key in ("vertices", "edges", "polygons", "loop_triangles"):
+        if int(counts.get(key, -1)) < 0:
+            raise RuntimeError(f"geometry inspection returned invalid {key} count")
+    for bound_name in ("local_bounds", "world_bounds"):
+        bounds = result.get(bound_name)
+        if not isinstance(bounds, list) or len(bounds) != 8:
+            raise RuntimeError(f"geometry inspection returned invalid {bound_name}")
+        for index, corner in enumerate(bounds):
+            _finite_vector(corner, length=3, label=f"{bound_name}[{index}]")
+
+
 def foreground_process_id() -> int | None:
     if not hasattr(ctypes, "WinDLL"):
         return None
@@ -244,7 +346,9 @@ async def run(args: argparse.Namespace) -> None:
                 "context.snapshot",
                 "context.restore",
                 "object.inspect",
+                "object.geometry.inspect",
                 "viewport.capture",
+                "viewport.raycast",
                 "observation.bundle",
                 "transaction.begin",
                 "object.transform",
@@ -260,8 +364,17 @@ async def run(args: argparse.Namespace) -> None:
             }
 
             ping_before, _ = await call_structured(session, "connection.ping")
-            if int(ping_before["capability_versions"]["viewport_capture"]) < 2:
-                raise RuntimeError("Blender add-on does not advertise off-screen capture v2")
+            capabilities = ping_before["capability_versions"]
+            required_capabilities = {
+                "viewport_capture": 3,
+                "viewport_raycast": 1,
+                "geometry_inspection": 1,
+            }
+            for capability, minimum in required_capabilities.items():
+                if int(capabilities.get(capability, 0)) < minimum:
+                    raise RuntimeError(
+                        f"Blender add-on does not advertise {capability} v{minimum}"
+                    )
             context_before, _ = await call_structured(session, "context.get")
             if Path(context_before["blend_file"]).resolve() != temporary_blend:
                 raise RuntimeError(
@@ -323,6 +436,20 @@ async def run(args: argparse.Namespace) -> None:
             else:
                 report["restart"] = {"mode": "skipped"}
 
+            if args.verify_ui:
+                confirmation = await anyio.to_thread.run_sync(
+                    input,
+                    "Confirm compact N-panel and full Scene Properties panel are visible, "
+                    "and no Area was split; type YES: ",
+                )
+                if confirmation.strip().upper() != "YES":
+                    raise RuntimeError("Blender native UI checkpoint was not confirmed")
+                report["ui_confirmation"] = {
+                    "compact_n_panel": True,
+                    "scene_properties_panel": True,
+                    "area_layout_unchanged": True,
+                }
+
             foreground_reference_hash: str | None = None
             if args.verify_background:
                 await anyio.to_thread.run_sync(
@@ -340,7 +467,13 @@ async def run(args: argparse.Namespace) -> None:
                 reference_metadata, reference_capture = await call_structured(
                     session,
                     "viewport.capture",
-                    {"object_name": args.capture_object, "view": "FRONT", "max_size": 1000},
+                    {
+                        "object_name": args.capture_object,
+                        "view": "FRONT",
+                        "max_size": 1000,
+                        "display_mode": "SOLID",
+                        "overlays": "OFF",
+                    },
                 )
                 foreground_reference_hash = save_image(
                     reference_capture,
@@ -359,6 +492,160 @@ async def run(args: argparse.Namespace) -> None:
                     raise RuntimeError("Blender still owns foreground focus")
                 report["background_foreground_pid"] = background_pid
 
+            diagnostic_captures: dict[str, dict[str, Any]] = {}
+            diagnostic_hashes: dict[str, str] = {}
+            for display_mode in ("RENDERED", "SOLID", "WIREFRAME"):
+                metadata, capture_result = await call_structured(
+                    session,
+                    "viewport.capture",
+                    {
+                        "object_name": args.capture_object,
+                        "view": "FRONT",
+                        "max_size": 1000,
+                        "display_mode": display_mode,
+                        "overlays": "OFF",
+                    },
+                )
+                if metadata.get("display_mode") != display_mode:
+                    raise RuntimeError(f"capture did not apply {display_mode} shading")
+                if metadata.get("overlays") is not False:
+                    raise RuntimeError("capture did not disable overlays")
+                if metadata.get("projection_kind") != "ORTHO":
+                    raise RuntimeError("semantic FRONT capture was not orthographic")
+                diagnostic_captures[display_mode] = metadata
+                diagnostic_hashes[display_mode] = save_image(
+                    capture_result,
+                    artifact_directory / f"diagnostic-front-{display_mode.lower()}.png",
+                )
+            if len(set(diagnostic_hashes.values())) != len(diagnostic_hashes):
+                raise RuntimeError("diagnostic display modes returned duplicate images")
+
+            diagnostic_differences = {
+                mode: image_difference_statistics(
+                    artifact_directory / "diagnostic-front-solid.png",
+                    artifact_directory / f"diagnostic-front-{mode.lower()}.png",
+                )
+                for mode in ("RENDERED", "WIREFRAME")
+            }
+            if any(
+                images_match_within_render_noise(statistics)
+                for statistics in diagnostic_differences.values()
+            ):
+                raise RuntimeError(
+                    "diagnostic display modes did not produce visible differences: "
+                    f"{diagnostic_differences}"
+                )
+
+            orbit_metadata, orbit_capture = await call_structured(
+                session,
+                "viewport.capture",
+                {
+                    "object_name": args.capture_object,
+                    "view": "FRONT",
+                    "max_size": 1000,
+                    "display_mode": "SOLID",
+                    "overlays": "OFF",
+                    "orbit": {"yaw_degrees": 30.0, "pitch_degrees": 15.0},
+                },
+            )
+            orbit_hash = save_image(
+                orbit_capture,
+                artifact_directory / "diagnostic-front-orbit.png",
+            )
+            orbit_difference = image_difference_statistics(
+                artifact_directory / "diagnostic-front-solid.png",
+                artifact_directory / "diagnostic-front-orbit.png",
+            )
+            if images_match_within_render_noise(orbit_difference):
+                raise RuntimeError("absolute yaw/pitch orbit did not visibly change the capture")
+            if orbit_metadata.get("orbit") != {
+                "yaw_degrees": 30.0,
+                "pitch_degrees": 15.0,
+            }:
+                raise RuntimeError("capture did not report the requested absolute orbit")
+
+            front_raycast = await find_raycast_hit(
+                session,
+                str(diagnostic_captures["SOLID"]["capture_id"]),
+            )
+            current_metadata, current_capture = await call_structured(
+                session,
+                "viewport.capture",
+                {
+                    "object_name": args.capture_object,
+                    "view": "CURRENT",
+                    "max_size": 1000,
+                    "display_mode": "SOLID",
+                    "overlays": "OFF",
+                },
+            )
+            if current_metadata.get("projection_kind") != "PERSP":
+                raise RuntimeError(
+                    "CURRENT viewport is not perspective; switch the source VIEW_3D to "
+                    "Perspective before running this smoke test"
+                )
+            current_hash = save_image(
+                current_capture,
+                artifact_directory / "diagnostic-current-perspective.png",
+            )
+            current_raycast = await find_raycast_hit(
+                session,
+                str(current_metadata["capture_id"]),
+            )
+
+            geometry_object_name = str(front_raycast["hit_object"]["name"])
+            generation_before_geometry = int(
+                (await call_structured(session, "connection.ping"))[0]["scene_generation"]
+            )
+            geometry_first, _ = await call_structured(
+                session,
+                "object.geometry.inspect",
+                {"object_name": geometry_object_name},
+            )
+            geometry_second, _ = await call_structured(
+                session,
+                "object.geometry.inspect",
+                {"object_name": geometry_object_name},
+            )
+            validate_geometry_summary(geometry_first)
+            validate_geometry_summary(geometry_second)
+            generation_after_geometry = int(
+                (await call_structured(session, "connection.ping"))[0]["scene_generation"]
+            )
+            if generation_after_geometry != generation_before_geometry:
+                raise RuntimeError("geometry inspection advanced the scene generation")
+            stable_geometry_keys = (
+                "session_identity",
+                "counts",
+                "local_bounds",
+                "world_bounds",
+                "surface_area_local",
+                "edge_topology",
+                "material_slots",
+                "modifiers",
+                "warnings",
+            )
+            if any(
+                geometry_first.get(key) != geometry_second.get(key)
+                for key in stable_geometry_keys
+            ):
+                raise RuntimeError("repeated geometry inspection was not stable")
+            report["diagnostic_captures"] = diagnostic_captures
+            report["diagnostic_capture_sha256"] = diagnostic_hashes
+            report["diagnostic_differences"] = diagnostic_differences
+            report["orbit_capture"] = orbit_metadata
+            report["orbit_capture_sha256"] = orbit_hash
+            report["orbit_difference"] = orbit_difference
+            report["front_ortho_raycast"] = front_raycast
+            report["current_perspective_capture"] = current_metadata
+            report["current_perspective_capture_sha256"] = current_hash
+            report["current_perspective_raycast"] = current_raycast
+            report["geometry_inspection"] = geometry_first
+            report["geometry_inspection_generation"] = {
+                "before": generation_before_geometry,
+                "after": generation_after_geometry,
+            }
+
             bundle_before, bundle_before_result = await call_structured(
                 session,
                 "observation.bundle",
@@ -366,6 +653,8 @@ async def run(args: argparse.Namespace) -> None:
                     "object_name": args.capture_object,
                     "views": ["FRONT", "RIGHT", "TOP"],
                     "max_size": 1000,
+                    "display_mode": "SOLID",
+                    "overlays": "OFF",
                 },
             )
             before_image_hashes = save_bundle_images(
@@ -418,6 +707,16 @@ async def run(args: argparse.Namespace) -> None:
                     "idempotency_key": str(uuid.uuid4()),
                 },
             )
+            stale_error = await call_expected_error(
+                session,
+                "viewport.raycast",
+                {
+                    "capture_id": diagnostic_captures["SOLID"]["capture_id"],
+                    "x": 0.5,
+                    "y": 0.5,
+                },
+                "CAPTURE_STALE",
+            )
             after_metadata, after_capture = await call_structured(
                 session,
                 "observation.bundle",
@@ -425,6 +724,8 @@ async def run(args: argparse.Namespace) -> None:
                     "object_name": args.capture_object,
                     "views": ["FRONT"],
                     "max_size": 1000,
+                    "display_mode": "SOLID",
+                    "overlays": "OFF",
                 },
             )
             report["capture_after_transform_sha256"] = save_bundle_images(
@@ -440,6 +741,7 @@ async def run(args: argparse.Namespace) -> None:
             if images_match_within_render_noise(transform_image_difference):
                 raise RuntimeError("scale preview did not produce visible image evidence")
             report["transform_image_difference"] = transform_image_difference
+            report["stale_capture_error"] = stale_error
             rolled_back, _ = await call_structured(
                 session,
                 "transaction.rollback",
@@ -468,6 +770,8 @@ async def run(args: argparse.Namespace) -> None:
                     "object_name": args.capture_object,
                     "views": ["FRONT"],
                     "max_size": 1000,
+                    "display_mode": "SOLID",
+                    "overlays": "OFF",
                 },
             )
             report["capture_after_rollback_sha256"] = save_bundle_images(
@@ -486,6 +790,9 @@ async def run(args: argparse.Namespace) -> None:
                     f"{rollback_image_difference}"
                 )
             report["rollback_image_difference"] = rollback_image_difference
+            rollback_capture_id = str(rollback_metadata["captures"][0]["capture_id"])
+            rollback_raycast = await find_raycast_hit(session, rollback_capture_id)
+            report["rollback_raycast"] = rollback_raycast
             context_after, _ = await call_structured(session, "context.get")
             if context_identity(context_after) != context_identity(context_before):
                 raise RuntimeError("user context was not restored exactly")
@@ -572,6 +879,11 @@ def main() -> int:
         "--verify-background",
         action="store_true",
         help="require explicit foreground and obscured-window capture checkpoints",
+    )
+    parser.add_argument(
+        "--verify-ui",
+        action="store_true",
+        help="require manual confirmation of the compact and Scene Properties panels",
     )
     parser.add_argument(
         "--restart-evidence",

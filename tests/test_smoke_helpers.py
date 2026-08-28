@@ -1,6 +1,7 @@
 import base64
 import importlib.util
 import io
+import math
 import sys
 from pathlib import Path
 
@@ -108,3 +109,57 @@ def test_image_difference_statistics_ignore_alpha_and_report_structure(
     assert smoke.images_match_within_render_noise(
         smoke.image_difference_statistics(first, identical)
     ) is True
+
+
+def test_validate_raycast_accepts_finite_unit_vectors() -> None:
+    smoke = load_smoke_module()
+    result = {
+        "ray": {
+            "origin": [1.0, 2.0, 3.0],
+            "direction": [0.0, 0.0, -1.0],
+            "max_distance": 100.0,
+        },
+        "hit": True,
+        "hit_object": {"name": "网格", "type": "MESH"},
+        "location": [1.0, 2.0, 0.0],
+        "normal": [0.0, 0.0, 1.0],
+        "face_index": 4,
+        "distance": 3.0,
+    }
+
+    smoke.validate_raycast(result)
+
+
+def test_validate_raycast_rejects_non_finite_data() -> None:
+    smoke = load_smoke_module()
+    result = {
+        "ray": {
+            "origin": [0.0, 0.0, 0.0],
+            "direction": [0.0, math.nan, 1.0],
+            "max_distance": 100.0,
+        },
+        "hit": False,
+    }
+
+    try:
+        smoke.validate_raycast(result, require_hit=False)
+    except RuntimeError as exc:
+        assert "non-finite" in str(exc)
+    else:
+        raise AssertionError("non-finite raycast vectors must be rejected")
+
+
+def test_validate_geometry_summary_checks_counts_and_bounds() -> None:
+    smoke = load_smoke_module()
+    result = {
+        "counts": {
+            "vertices": 8,
+            "edges": 12,
+            "polygons": 6,
+            "loop_triangles": 12,
+        },
+        "local_bounds": [[float(index), 0.0, 0.0] for index in range(8)],
+        "world_bounds": [[float(index), 1.0, 0.0] for index in range(8)],
+    }
+
+    smoke.validate_geometry_summary(result)
