@@ -1,11 +1,13 @@
 [project]
 name = "blender-research-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "A local-first semantic MCP bridge for observable and reversible Blender research."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "mcp>=1.0,<2",
+    "pillow>=11,<13",
+    "pydantic>=2.10,<3",
 ]
 
 [project.scripts]

@@ -1,5 +1,5 @@
 """Semantic MCP bridge for observable and reversible Blender research."""
 
-PROTOCOL_VERSION = 1
+from blender_research_mcp.constants import PROTOCOL_VERSION
 
 __all__ = ["PROTOCOL_VERSION"]
