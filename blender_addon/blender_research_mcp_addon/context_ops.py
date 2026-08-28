@@ -310,9 +310,12 @@ def capture_viewport(
         raise ContextOperationError("OBJECT_HIDDEN", f"Object is not visible: {object_name}")
     snapshot = capture_context(viewport_id)
     viewport = _find_viewport(snapshot)
+    preferences_view = bpy.context.preferences.view
+    smooth_view = preferences_view.smooth_view
     result: dict[str, Any] | None = None
     offscreen: Any | None = None
     try:
+        preferences_view.smooth_view = 0
         _ensure_object_mode(viewport)
         with bpy.context.temp_override(
             window=viewport.window,
@@ -396,14 +399,23 @@ def capture_viewport(
             if offscreen is not None:
                 offscreen.free()
         finally:
-            restore_context(snapshot)
+            try:
+                restore_context(snapshot)
+            finally:
+                preferences_view.smooth_view = smooth_view
     restored = capture_context(snapshot["viewport_id"])
     if restored != snapshot:
+        changed_fields = {
+            key: {"before": snapshot.get(key), "after": restored.get(key)}
+            for key in sorted(snapshot.keys() | restored.keys())
+            if snapshot.get(key) != restored.get(key)
+        }
         raise ContextOperationError(
             "OBSERVATION_CONTEXT_DRIFT",
             "Viewport capture did not restore the original user context",
             kind="conflict",
             retryable=True,
+            details={"changed_fields": changed_fields},
         )
     assert result is not None
     result["context_unchanged"] = True

@@ -4,6 +4,7 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy.props import IntProperty
 
+from .runtime import ADDON_VERSION
 from .state import AddonState
 
 bl_info = {
@@ -62,6 +63,7 @@ class BRMCP_PT_status(bpy.types.Panel):
             return
         runtime = STATE.runtime
         icon = "CHECKMARK" if runtime.status in {"listening", "connected"} else "ERROR"
+        layout.label(text=f"Add-on: {ADDON_VERSION}")
         layout.label(text=f"Status: {runtime.status}", icon=icon)
         layout.label(text=f"Endpoint: 127.0.0.1:{runtime.port}")
         layout.label(text=f"Connected: {'yes' if runtime.connected else 'no'}")
