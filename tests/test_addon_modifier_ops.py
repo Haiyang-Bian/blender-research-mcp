@@ -61,6 +61,14 @@ class FakeModifier:
             self.use_hole_tolerant = False
             self.double_threshold = 0.000001
             self.object = None
+        elif modifier_type == "SOLIDIFY":
+            self.thickness = 0.01
+            self.offset = -1.0
+            self.use_even_offset = False
+            self.use_quality_normals = False
+            self.use_rim = True
+            self.use_rim_only = False
+            self.use_flip_normals = False
 
     def as_pointer(self) -> int:
         return id(self)
@@ -73,6 +81,70 @@ class FakeModifier:
 
     def get(self, name: str, default: object = None) -> object:
         return self._custom.get(name, default)
+
+    def __setitem__(self, name: str, value: object) -> None:
+        self._custom[name] = value
+
+    def __delitem__(self, name: str) -> None:
+        del self._custom[name]
+
+    def __contains__(self, name: str) -> bool:
+        return name in self._custom
+
+
+class FailingBevel(FakeModifier):
+    def __init__(self, *, restore_fails: bool = False) -> None:
+        self._width = 0.1
+        self._armed = False
+        self._restore_fails = restore_fails
+        self._broken = False
+        super().__init__("Soft Edges", "BEVEL")
+        self._armed = True
+
+    @property
+    def width(self) -> float:
+        return self._width
+
+    @width.setter
+    def width(self, value: float) -> None:
+        if self._armed and value == 0.25:
+            self._width = value
+            self._broken = True
+            raise RuntimeError("injected setting failure")
+        if self._armed and self._broken and self._restore_fails:
+            raise RuntimeError("injected restore failure")
+        self._width = value
+
+
+class FakeModifiers:
+    def __init__(self, values: list[FakeModifier]) -> None:
+        self._values = values
+
+    def __iter__(self):
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __getitem__(self, index: int) -> FakeModifier:
+        return self._values[index]
+
+    def get(self, name: str) -> FakeModifier | None:
+        return next((value for value in self._values if value.name == name), None)
+
+    def new(self, *, name: str, type: str) -> FakeModifier:
+        modifier = FakeModifier(name, type)
+        self._values.append(modifier)
+        return modifier
+
+    def remove(self, modifier: FakeModifier) -> None:
+        self._values.remove(modifier)
+
+    def move(self, before: int, after: int) -> None:
+        self._values.insert(after, self._values.pop(before))
+
+    def reverse(self) -> None:
+        self._values.reverse()
 
 
 class FakeID:
@@ -87,13 +159,13 @@ class FakeID:
 
 
 class FakeObject:
-    def __init__(self, modifiers: list[FakeModifier]) -> None:
-        self.name = "Mesh"
+    def __init__(self, modifiers: list[FakeModifier], name: str = "Mesh") -> None:
+        self.name = name
         self.type = "MESH"
         self.library = None
         self.override_library = None
         self.data = FakeID("Mesh Data")
-        self.modifiers = modifiers
+        self.modifiers = FakeModifiers(modifiers)
         self.animation_data = None
 
     def as_pointer(self) -> int:
@@ -120,6 +192,7 @@ def _load_modules(obj: FakeObject):
 
     bpy = types.ModuleType("bpy")
     bpy.data = SimpleNamespace(objects={obj.name: obj})
+    bpy.context = SimpleNamespace(view_layer=SimpleNamespace(update=lambda: None))
     sys.modules["bpy"] = bpy
 
     authoring = types.ModuleType(f"{PACKAGE}.authoring_ops")
@@ -222,3 +295,259 @@ def test_modifier_stack_guard_verifies_full_baseline_after_restore() -> None:
 
     modifier.width = 0.1
     ops.validate_restored_modifier_stacks(transaction)
+
+
+def _base_params(ops, obj: FakeObject) -> dict[str, object]:
+    return {
+        "object_name": obj.name,
+        "expected_object_identity": f"object:{id(obj)}",
+        "expected_stack_fingerprint": ops.modifier_stack_fingerprint(obj),
+    }
+
+
+def _target_params(ops, obj: FakeObject, modifier: FakeModifier) -> dict[str, object]:
+    result = _base_params(ops, obj)
+    result.update(
+        {
+            "modifier_name": modifier.name,
+            "expected_modifier_identity": f"modifier:{id(modifier)}",
+            "expected_modifier_type": modifier.type,
+            "expected_stack_index": list(obj.modifiers).index(modifier),
+        }
+    )
+    return result
+
+
+@pytest.mark.parametrize(
+    ("modifier_type", "definition", "field", "expected"),
+    [
+        ("BEVEL", {"width": 0.25, "segments": 3}, "width", 0.25),
+        ("SUBSURF", {"levels": 1, "render_levels": 1}, "levels", 1),
+        ("SOLIDIFY", {"thickness": 0.2}, "thickness", 0.2),
+    ],
+)
+def test_create_supported_modifiers_and_rollback_identity(
+    modifier_type: str,
+    definition: dict[str, object],
+    field: str,
+    expected: object,
+) -> None:
+    obj = FakeObject([])
+    ops, model = _load_modules(obj)
+    transaction = _transaction(model)
+    baseline = ops.modifier_stack_fingerprint(obj)
+    params = _base_params(ops, obj)
+    params["definition"] = {
+        "type": modifier_type,
+        "name": "Authored",
+        **definition,
+    }
+
+    result = ops.create_modifier(transaction, params)
+    created = obj.modifiers.get("Authored")
+    assert created is not None
+    assert getattr(created, field) == expected
+    assert result["delta_type"] == "modifier_create"
+
+    ops.restore_modifier_delta(transaction.deltas[-1])
+    ops.validate_restored_modifier_stacks(transaction)
+    assert obj.modifiers.get("Authored") is None
+    assert ops.modifier_stack_fingerprint(obj) == baseline
+
+
+def test_set_modifier_is_atomic_noop_aware_and_reversible() -> None:
+    modifier = FakeModifier("Soft Edges", "BEVEL")
+    obj = FakeObject([modifier])
+    ops, model = _load_modules(obj)
+    transaction = _transaction(model)
+    params = _target_params(ops, obj, modifier)
+    params["settings"] = {"type": "BEVEL", "width": 0.25, "segments": 4}
+
+    result = ops.set_modifier(transaction, params)
+    assert [item["path"] for item in result["changes"]] == ["segments", "width"]
+    assert modifier.width == 0.25
+    assert modifier.segments == 4
+
+    next_params = _target_params(ops, obj, modifier)
+    next_params["settings"] = {"type": "BEVEL", "width": 0.25}
+    noop = ops.set_modifier(transaction, next_params)
+    assert noop["changed"] is False
+    assert len(transaction.deltas) == 1
+
+    ops.restore_modifier_delta(transaction.deltas[-1])
+    ops.validate_restored_modifier_stacks(transaction)
+    assert modifier.width == 0.1
+    assert modifier.segments == 2
+
+
+@pytest.mark.parametrize(
+    ("restore_fails", "expected_code"),
+    [
+        (False, "MODIFIER_SETTINGS_APPLY_FAILED"),
+        (True, "MODIFIER_SETTINGS_RESTORE_FAILED"),
+    ],
+)
+def test_set_modifier_restores_partial_application_or_reports_restore_failure(
+    restore_fails: bool,
+    expected_code: str,
+) -> None:
+    modifier = FailingBevel(restore_fails=restore_fails)
+    obj = FakeObject([modifier])
+    ops, model = _load_modules(obj)
+    transaction = _transaction(model)
+    params = _target_params(ops, obj, modifier)
+    params["settings"] = {"type": "BEVEL", "segments": 4, "width": 0.25}
+
+    with pytest.raises(OperationError) as error:
+        ops.set_modifier(transaction, params)
+
+    assert error.value.code == expected_code
+    assert transaction.deltas == []
+    if not restore_fails:
+        assert modifier.width == 0.1
+        assert modifier.segments == 2
+
+
+def test_move_crosses_unsupported_modifier_and_restores_same_identity() -> None:
+    bevel = FakeModifier("Soft Edges", "BEVEL")
+    unsupported = FakeModifier("Mirror", "MIRROR")
+    subsurf = FakeModifier("Smooth", "SUBSURF")
+    obj = FakeObject([bevel, unsupported, subsurf])
+    ops, model = _load_modules(obj)
+    transaction = _transaction(model)
+    params = _target_params(ops, obj, subsurf)
+    params["target_stack_index"] = 0
+
+    result = ops.move_modifier(transaction, params)
+    assert result["changed"] is True
+    assert list(obj.modifiers) == [subsurf, bevel, unsupported]
+
+    ops.restore_modifier_delta(transaction.deltas[-1])
+    ops.validate_restored_modifier_stacks(transaction)
+    assert list(obj.modifiers) == [bevel, unsupported, subsurf]
+
+
+def test_create_uses_exact_position_rejects_duplicate_name_and_checks_capacity() -> None:
+    existing = FakeModifier("Existing", "MIRROR")
+    obj = FakeObject([existing])
+    ops, model = _load_modules(obj)
+    transaction = _transaction(model)
+    params = _base_params(ops, obj)
+    params["definition"] = {
+        "type": "BEVEL",
+        "name": "First",
+        "stack_index": 0,
+    }
+    ops.create_modifier(transaction, params)
+    assert [modifier.name for modifier in obj.modifiers] == ["First", "Existing"]
+
+    duplicate_params = _base_params(ops, obj)
+    duplicate_params["definition"] = {"type": "BEVEL", "name": "First"}
+    with pytest.raises(OperationError) as duplicate_error:
+        ops.create_modifier(transaction, duplicate_params)
+    assert duplicate_error.value.code == "MODIFIER_NAME_CONFLICT"
+
+    full = _transaction(model)
+    full.deltas.extend(
+        model.ScaleDelta("Other", "object:other", {"x": 1.0}, {"x": 2.0})
+        for _index in range(256)
+    )
+    capacity_params = _base_params(ops, obj)
+    capacity_params["definition"] = {"type": "SOLIDIFY", "name": "Too Late"}
+    with pytest.raises(model.TransactionModelError) as capacity_error:
+        ops.create_modifier(full, capacity_params)
+    assert capacity_error.value.code == "TRANSACTION_DELTA_LIMIT"
+    assert obj.modifiers.get("Too Late") is None
+
+
+def test_delete_is_pending_until_commit_and_rollback_restores_state() -> None:
+    modifier = FakeModifier("Shell", "SOLIDIFY")
+    obj = FakeObject([modifier])
+    ops, model = _load_modules(obj)
+    transaction = _transaction(model)
+
+    result = ops.delete_modifier(transaction, _target_params(ops, obj, modifier))
+    assert result["modifier"]["pending_delete"] is True
+    assert modifier.show_viewport is False
+    assert obj.modifiers.get("Shell") is modifier
+
+    ops.restore_modifier_delta(transaction.deltas[-1])
+    ops.validate_restored_modifier_stacks(transaction)
+    assert modifier.show_viewport is True
+    assert ops.modifier_pending_delete(modifier) is False
+
+    committed = _transaction(model)
+    ops.delete_modifier(committed, _target_params(ops, obj, modifier))
+    assert ops.finalize_modifier_delta(committed.deltas[-1]) is not None
+    assert obj.modifiers.get("Shell") is None
+
+
+def test_subdivision_budget_and_boolean_cycles_are_rejected_before_writes() -> None:
+    subsurf = FakeModifier("Smooth", "SUBSURF")
+    source = FakeObject([subsurf], name="Source")
+    source.data.polygons = [object()] * 200_000
+    ops, model = _load_modules(source)
+    transaction = _transaction(model)
+    params = _target_params(ops, source, subsurf)
+    params["settings"] = {"type": "SUBSURF", "levels": 2, "render_levels": 2}
+    with pytest.raises(OperationError) as budget_error:
+        ops.set_modifier(transaction, params)
+    assert budget_error.value.code == "SUBDIVISION_BUDGET_EXCEEDED"
+    assert transaction.deltas == []
+
+    source.data.polygons = [object()] * 12
+    operand = FakeObject([], name="Operand")
+    loop = FakeModifier("Back To Source", "BOOLEAN")
+    loop.object = source
+    operand.modifiers = FakeModifiers([loop])
+    sys.modules["bpy"].data.objects[operand.name] = operand
+    create_params = _base_params(ops, source)
+    create_params["definition"] = {
+        "type": "BOOLEAN",
+        "name": "Cycle",
+        "operand": {
+            "object_name": operand.name,
+            "expected_object_identity": f"object:{id(operand)}",
+        },
+    }
+    with pytest.raises(OperationError) as cycle_error:
+        ops.create_modifier(transaction, create_params)
+    assert cycle_error.value.code == "BOOLEAN_CYCLE"
+    assert source.modifiers.get("Cycle") is None
+
+
+def test_boolean_create_requires_exact_mesh_operand_and_respects_solver_options() -> None:
+    source = FakeObject([], name="Source")
+    operand = FakeObject([], name="Operand")
+    ops, model = _load_modules(source)
+    sys.modules["bpy"].data.objects[operand.name] = operand
+    transaction = _transaction(model)
+    params = _base_params(ops, source)
+    params["definition"] = {
+        "type": "BOOLEAN",
+        "name": "Cut",
+        "solver": "EXACT",
+        "operation": "DIFFERENCE",
+        "operand": {
+            "object_name": operand.name,
+            "expected_object_identity": f"object:{id(operand)}",
+        },
+    }
+
+    result = ops.create_modifier(transaction, params)
+    modifier = source.modifiers.get("Cut")
+    assert modifier is not None
+    assert modifier.object is operand
+    assert result["modifier"]["settings"]["operand"]["object_identity"] == (
+        f"object:{id(operand)}"
+    )
+
+    set_params = _target_params(ops, source, modifier)
+    set_params["settings"] = {
+        "type": "BOOLEAN",
+        "solver": "FAST",
+        "use_self": True,
+    }
+    with pytest.raises(OperationError) as solver_error:
+        ops.set_modifier(transaction, set_params)
+    assert solver_error.value.code == "BOOLEAN_SOLVER_CONFLICT"

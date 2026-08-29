@@ -41,6 +41,10 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "object.transform",
         "object.visibility.set",
         "modifier.set_state",
+        "modifier.create",
+        "modifier.set",
+        "modifier.move",
+        "modifier.delete",
         "shape_key.set_value",
         "material.set_input",
         "material.create",
@@ -186,6 +190,23 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert modifier.annotations is not None
     assert modifier.annotations.idempotentHint is True
     assert modifier.inputSchema["properties"]["expected_modifier_identity"]["maxLength"] == 128
+    modifier_create = tools_by_name["modifier.create"]
+    assert modifier_create.annotations is not None
+    assert modifier_create.annotations.destructiveHint is True
+    modifier_definition = modifier_create.inputSchema["properties"]["definition"]
+    assert modifier_definition["discriminator"]["propertyName"] == "type"
+    assert len(modifier_definition["oneOf"]) == 4
+    modifier_set = tools_by_name["modifier.set"]
+    modifier_settings = modifier_set.inputSchema["properties"]["settings"]
+    assert modifier_settings["discriminator"]["propertyName"] == "type"
+    assert len(modifier_settings["oneOf"]) == 4
+    for name in ("modifier.set", "modifier.move", "modifier.delete"):
+        tool = tools_by_name[name]
+        assert tool.annotations is not None
+        assert tool.annotations.readOnlyHint is False
+        assert tool.annotations.destructiveHint is True
+        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.openWorldHint is False
     shape_key = tools_by_name["shape_key.set_value"]
     assert shape_key.annotations is not None
     assert shape_key.annotations.destructiveHint is True

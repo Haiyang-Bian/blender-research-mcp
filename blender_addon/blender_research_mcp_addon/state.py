@@ -64,7 +64,18 @@ from .material_authoring_ops import (
     load_image,
     material_result,
 )
-from .modifier_ops import inspect_modifiers, validate_modifier_stack_guards
+from .modifier_ops import (
+    create_modifier,
+    delete_modifier,
+    finalize_modifier_delta,
+    inspect_modifiers,
+    move_modifier,
+    restore_modifier_delta,
+    set_modifier,
+    set_modifier_state_compat,
+    validate_modifier_stack_guards,
+    validate_restored_modifier_stacks,
+)
 from .object_settings_ops import apply_object_settings
 from .project_ops import (
     ProjectOperationError,
@@ -87,6 +98,10 @@ from .structural_ops import (
 from .transaction_model import (
     IdempotencyCache,
     MaterialInputDelta,
+    ModifierCreateDelta,
+    ModifierDeleteDelta,
+    ModifierMoveDelta,
+    ModifierSettingsDelta,
     ModifierStateDelta,
     ShapeKeyDelta,
     StructuralDelta,
@@ -124,6 +139,10 @@ CAPABILITIES = [
     "object.delete",
     "object.visibility.set",
     "modifier.set_state",
+    "modifier.create",
+    "modifier.set",
+    "modifier.move",
+    "modifier.delete",
     "shape_key.set_value",
     "material.set_input",
     "material.create",
@@ -178,6 +197,10 @@ MUTATION_COMMANDS = {
     "object.delete",
     "object.visibility.set",
     "modifier.set_state",
+    "modifier.create",
+    "modifier.set",
+    "modifier.move",
+    "modifier.delete",
     "shape_key.set_value",
     "material.set_input",
     "material.create",
@@ -838,6 +861,9 @@ class AddonState:
         if command == "modifier.set_state":
             transaction = self._require_transaction(params, request)
             return self._set_modifier_state(transaction, params)
+        if command in {"modifier.create", "modifier.set", "modifier.move", "modifier.delete"}:
+            transaction = self._require_transaction(params, request)
+            return self._run_modifier_write(transaction, command, params)
         if command == "shape_key.set_value":
             transaction = self._require_transaction(params, request)
             return self._set_shape_key_value(transaction, params)
@@ -963,6 +989,10 @@ class AddonState:
             result = self._transaction_result(transaction)
             finalized: list[dict[str, Any]] = []
             with self.suppress_generation():
+                for delta in transaction.deltas:
+                    item = finalize_modifier_delta(delta)
+                    if item is not None:
+                        finalized.append(item)
                 for delta in transaction.structural_deltas():
                     item = finalize_structural_delta(delta)
                     if item is not None:
@@ -1301,8 +1331,8 @@ class AddonState:
                         "actual": current,
                     },
                 )
-        validate_structural_transaction(transaction)
         validate_modifier_stack_guards(transaction)
+        validate_structural_transaction(transaction)
 
     def _set_object_settings(
         self,
@@ -1484,13 +1514,41 @@ class AddonState:
             "delta_kinds": result["delta_kinds"],
         }
 
+    def _run_modifier_write(
+        self,
+        transaction: Transaction,
+        command: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._validate_transaction_guards(transaction)
+        handlers = {
+            "modifier.create": create_modifier,
+            "modifier.set": set_modifier,
+            "modifier.move": move_modifier,
+            "modifier.delete": delete_modifier,
+        }
+        previous_count = len(transaction.deltas)
+        with self.suppress_generation():
+            result = handlers[command](transaction, params)
+        if len(transaction.deltas) > previous_count:
+            self.scene_generation += 1
+            transaction.status = "active"
+            transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+        result.update(
+            {
+                "status": transaction.status,
+                "delta_count": len(transaction.deltas),
+                "delta_kinds": transaction.delta_kinds(),
+            }
+        )
+        return result
+
     def _set_modifier_state(
         self,
         transaction: Transaction,
         params: dict[str, Any],
     ) -> dict[str, Any]:
         self._validate_transaction_guards(transaction)
-        transaction.ensure_capacity()
         object_name = params.get("object_name")
         modifier_name = params.get("modifier_name")
         if not isinstance(object_name, str) or not object_name:
@@ -1528,25 +1586,18 @@ class AddonState:
             modifier_identity,
         )
         self._require_mutable_object(obj)
-        before = {attribute: bool(getattr(modifier, attribute)) for attribute in patch}
-        after = {attribute: bool(value) for attribute, value in patch.items()}
-        changed = sorted(attribute for attribute in after if before[attribute] != after[attribute])
-        if changed:
-            with self.suppress_generation():
-                for attribute in changed:
-                    setattr(modifier, attribute, after[attribute])
-                bpy.context.view_layer.update()
-            self._record_delta(
+        previous_count = len(transaction.deltas)
+        with self.suppress_generation():
+            before, after, changed = set_modifier_state_compat(
                 transaction,
-                ModifierStateDelta(
-                    object_name=object_name,
-                    object_identity=object_identity,
-                    modifier_name=modifier_name,
-                    modifier_identity=modifier_identity,
-                    before={attribute: before[attribute] for attribute in changed},
-                    after={attribute: after[attribute] for attribute in changed},
-                ),
+                obj,
+                modifier,
+                {attribute: bool(value) for attribute, value in patch.items()},
             )
+        if len(transaction.deltas) > previous_count:
+            self.scene_generation += 1
+            transaction.status = "active"
+            transaction.context_fingerprint = self._current_context_fingerprint(transaction)
         return {
             "transaction_id": transaction.transaction_id,
             "object_name": object_name,
@@ -1861,8 +1912,22 @@ class AddonState:
         self._validate_transaction_guards(transaction)
         validate_context_snapshot(transaction.context_snapshot)
         restored: list[dict[str, Any]] = []
+        modifier_delta_types = (
+            ModifierStateDelta,
+            ModifierSettingsDelta,
+            ModifierCreateDelta,
+            ModifierMoveDelta,
+            ModifierDeleteDelta,
+        )
         with self.suppress_generation():
             for delta in reversed(transaction.deltas):
+                if isinstance(delta, modifier_delta_types):
+                    restored.append(restore_modifier_delta(delta))
+            bpy.context.view_layer.update()
+            validate_restored_modifier_stacks(transaction)
+            for delta in reversed(transaction.deltas):
+                if isinstance(delta, modifier_delta_types):
+                    continue
                 if isinstance(delta, StructuralDelta):
                     restored.append(restore_structural_delta(delta))
                 else:

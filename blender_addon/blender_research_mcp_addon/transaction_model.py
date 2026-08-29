@@ -59,8 +59,8 @@ class ModifierSettingsDelta:
     modifier_name: str
     modifier_identity: str
     modifier_type: str
-    before: dict[str, PropertyValue]
-    after: dict[str, PropertyValue]
+    before: dict[str, Any]
+    after: dict[str, Any]
 
 
 @dataclass
