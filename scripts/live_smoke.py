@@ -375,27 +375,15 @@ async def run(args: argparse.Namespace) -> None:
                     raise RuntimeError(
                         f"Blender add-on does not advertise {capability} v{minimum}"
                     )
-            context_before, _ = await call_structured(session, "context.get")
-            if Path(context_before["blend_file"]).resolve() != temporary_blend:
+            setup_context, _ = await call_structured(session, "context.get")
+            if Path(setup_context["blend_file"]).resolve() != temporary_blend:
                 raise RuntimeError(
                     "Blender is not displaying the prepared temporary blend file: "
-                    f"{context_before['blend_file']}"
+                    f"{setup_context['blend_file']}"
                 )
-            non_ascii_name = args.unicode_object or find_non_ascii_object(context_before)
-            unicode_object, _ = await call_structured(
-                session,
-                "object.inspect",
-                {"object_name": non_ascii_name},
-            )
-            capture_object_before, _ = await call_structured(
-                session,
-                "object.inspect",
-                {"object_name": args.capture_object},
-            )
+            non_ascii_name = args.unicode_object or find_non_ascii_object(setup_context)
             report["ping_before"] = ping_before
-            report["context_before"] = context_before
-            report["unicode_object"] = unicode_object
-            report["capture_object_before"] = capture_object_before
+            report["setup_context"] = setup_context
             heartbeat_baseline = ping_before
 
             if args.restart_evidence is not None:
@@ -492,6 +480,23 @@ async def run(args: argparse.Namespace) -> None:
                     raise RuntimeError("Blender still owns foreground focus")
                 report["background_foreground_pid"] = background_pid
 
+            # Manual UI, focus, and perspective setup belongs outside the state-preservation
+            # interval. From this point onward the user is asked not to touch Blender.
+            context_before, _ = await call_structured(session, "context.get")
+            unicode_object, _ = await call_structured(
+                session,
+                "object.inspect",
+                {"object_name": non_ascii_name},
+            )
+            capture_object_before, _ = await call_structured(
+                session,
+                "object.inspect",
+                {"object_name": args.capture_object},
+            )
+            report["context_before"] = context_before
+            report["unicode_object"] = unicode_object
+            report["capture_object_before"] = capture_object_before
+
             diagnostic_captures: dict[str, dict[str, Any]] = {}
             diagnostic_hashes: dict[str, str] = {}
             for display_mode in ("RENDERED", "SOLID", "WIREFRAME"):
@@ -508,7 +513,7 @@ async def run(args: argparse.Namespace) -> None:
                 )
                 if metadata.get("display_mode") != display_mode:
                     raise RuntimeError(f"capture did not apply {display_mode} shading")
-                if metadata.get("overlays") is not False:
+                if metadata.get("overlays") != "OFF":
                     raise RuntimeError("capture did not disable overlays")
                 if metadata.get("projection_kind") != "ORTHO":
                     raise RuntimeError("semantic FRONT capture was not orthographic")
@@ -795,7 +800,18 @@ async def run(args: argparse.Namespace) -> None:
             report["rollback_raycast"] = rollback_raycast
             context_after, _ = await call_structured(session, "context.get")
             if context_identity(context_after) != context_identity(context_before):
-                raise RuntimeError("user context was not restored exactly")
+                changed_fields = {
+                    key: {
+                        "before": context_identity(context_before).get(key),
+                        "after": context_identity(context_after).get(key),
+                    }
+                    for key in CONTEXT_KEYS
+                    if context_identity(context_before).get(key)
+                    != context_identity(context_after).get(key)
+                }
+                raise RuntimeError(
+                    f"user context was not restored exactly: {changed_fields}"
+                )
             unicode_object_after, _ = await call_structured(
                 session,
                 "object.inspect",

@@ -1,6 +1,6 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.3.1 autonomous observation validated; 0.4.0 spatial diagnosis implemented
+- Status: 0.4.0 spatial diagnosis implemented and live-validated
 - Primary Blender target: 4.2.23 LTS
 - Package and add-on version: 0.4.0
 - Protocol version: 1
@@ -256,8 +256,7 @@ Status: completed and live-validated on 2026-08-28.
 
 ### Phase 1 — active observation
 
-Status: implemented for context-safe active observation in 0.4.0; live validation is
-the remaining release gate.
+Status: completed and live-validated on Blender 4.2.23 in 0.4.0.
 
 - Implement context read/snapshot/restore.
 - Implement temporary selection, frame, absolute orbit, capture-bound raycast, and

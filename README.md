@@ -11,10 +11,12 @@
 上下文观察、事务化局部缩放、显式/断线回退，以及 Microsoft Store 版
 Blender 会话发现。0.4.0 在不依赖窗口像素的 GPU 离屏捕获上增加了诊断
 着色、绝对 orbit、捕获绑定的 `viewport.raycast` 和有界 evaluated geometry
-摘要。0.3.1 的后台捕获已经通过 Blender 被 Codex 完全遮挡时的真实烟测；
-0.4.0 的空间诊断等待本分支最终烟测。验收记录见
+摘要。0.4.0 已通过 Blender 被 Codex 完全遮挡时的真实空间诊断烟测，
+包括诊断着色、绝对 orbit、正交/透视 raycast、geometry inspect、旧证据
+拒绝和事务回退。验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
-[0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)。
+[0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
+[0.4.0 空间诊断](docs/validation/2026-08-29-spatial-diagnosis.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)。
