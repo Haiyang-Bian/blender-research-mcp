@@ -46,6 +46,7 @@ def test_client_handshake_ping_and_read_only_reconnect(tmp_path) -> None:
                         "object_visibility": 1,
                         "modifier_state": 1,
                         "shape_key_value": 1,
+                        "material_input": 1,
                     },
                 },
             }

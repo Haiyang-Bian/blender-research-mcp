@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from importlib.metadata import version as package_version
@@ -11,7 +12,16 @@ from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, ContentBlock, ImageContent, TextContent, ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    WithJsonSchema,
+    model_validator,
+)
 
 from blender_research_mcp.client import BridgeClient
 from blender_research_mcp.constants import DEFAULT_PORT
@@ -57,6 +67,56 @@ SessionIdentity = Annotated[str, Field(min_length=1, max_length=128)]
 ModifierName = Annotated[str, Field(min_length=1, max_length=255)]
 ShapeKeyName = Annotated[str, Field(min_length=1, max_length=255)]
 FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
+MaterialSlotIndex = Annotated[StrictInt, Field(ge=0, le=63)]
+MaterialName = Annotated[str, Field(min_length=1, max_length=255)]
+NodeName = Annotated[str, Field(min_length=1, max_length=255)]
+SocketIdentifier = Annotated[str, Field(min_length=1, max_length=255)]
+MaterialUsers = Annotated[StrictInt, Field(ge=1)]
+
+
+def _validate_material_input_value(value: Any) -> Any:
+    if type(value) in {bool, int}:
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError("material scalar values must be finite")
+        return value
+    if (
+        isinstance(value, (list, tuple))
+        and len(value) in {3, 4}
+        and all(type(component) is float and math.isfinite(component) for component in value)
+    ):
+        return value
+    raise ValueError(
+        "value must be a boolean, integer, finite float, or 3/4 finite-float components"
+    )
+
+
+MaterialInputValue = Annotated[
+    Any,
+    BeforeValidator(_validate_material_input_value),
+    WithJsonSchema(
+        {
+            "oneOf": [
+                {"type": "boolean"},
+                {"type": "integer"},
+                {"type": "number"},
+                {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                },
+                {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 4,
+                    "maxItems": 4,
+                },
+            ]
+        }
+    ),
+]
 
 
 class ScalePatch(BaseModel):
@@ -186,6 +246,28 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
         return await client.call(
             "object.lookdev.inspect",
             {"object_name": object_name},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="material.inspect",
+        description=(
+            "Inspect one exact material slot and list bounded node input identities, values, "
+            "ranges, links, drivers, and write eligibility."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def material_inspect(
+        object_name: ObjectName,
+        material_slot_index: MaterialSlotIndex,
+    ) -> dict[str, Any]:
+        return await client.call(
+            "material.inspect",
+            {
+                "object_name": object_name,
+                "material_slot_index": material_slot_index,
+            },
             read_only=True,
         )
 
@@ -456,6 +538,54 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
                 "shape_key_name": shape_key_name,
                 "expected_shape_key_identity": expected_shape_key_identity,
                 "value": value,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="material.set_input",
+        description=(
+            "Set one exact unlinked, undriven scalar/vector/color material input inside "
+            "the active transaction. Shared materials require explicit confirmation."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def material_set_input(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        material_slot_index: MaterialSlotIndex,
+        material_name: MaterialName,
+        expected_material_identity: SessionIdentity,
+        expected_material_users: MaterialUsers,
+        node_name: NodeName,
+        expected_node_identity: SessionIdentity,
+        socket_identifier: SocketIdentifier,
+        expected_socket_identity: SessionIdentity,
+        value: MaterialInputValue,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        allow_shared: StrictBool = False,
+    ) -> dict[str, Any]:
+        return await client.call(
+            "material.set_input",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "material_slot_index": material_slot_index,
+                "material_name": material_name,
+                "expected_material_identity": expected_material_identity,
+                "expected_material_users": expected_material_users,
+                "node_name": node_name,
+                "expected_node_identity": expected_node_identity,
+                "socket_identifier": socket_identifier,
+                "expected_socket_identity": expected_socket_identity,
+                "value": value,
+                "allow_shared": allow_shared,
             },
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,

@@ -1,6 +1,9 @@
 import asyncio
 
-from blender_research_mcp.server import create_server
+import pytest
+from pydantic import TypeAdapter, ValidationError
+
+from blender_research_mcp.server import MaterialInputValue, create_server
 
 
 def test_first_mcp_tool_uses_documented_dotted_name() -> None:
@@ -15,6 +18,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "object.inspect",
         "object.geometry.inspect",
         "object.lookdev.inspect",
+        "material.inspect",
         "viewport.capture",
         "viewport.raycast",
         "observation.bundle",
@@ -23,6 +27,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "object.visibility.set",
         "modifier.set_state",
         "shape_key.set_value",
+        "material.set_input",
         "transaction.commit",
         "transaction.rollback",
     ]
@@ -46,6 +51,10 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     lookdev = tools_by_name["object.lookdev.inspect"]
     assert lookdev.annotations is not None
     assert lookdev.annotations.readOnlyHint is True
+    material_inspect = tools_by_name["material.inspect"]
+    assert material_inspect.annotations is not None
+    assert material_inspect.annotations.readOnlyHint is True
+    assert material_inspect.inputSchema["properties"]["material_slot_index"]["maximum"] == 63
     raycast = tools_by_name["viewport.raycast"]
     assert raycast.annotations is not None
     assert raycast.annotations.readOnlyHint is True
@@ -78,3 +87,22 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert shape_key.annotations is not None
     assert shape_key.annotations.destructiveHint is True
     assert shape_key.inputSchema["properties"]["expected_shape_key_identity"]["maxLength"] == 128
+    material_input = tools_by_name["material.set_input"]
+    assert material_input.annotations is not None
+    assert material_input.annotations.destructiveHint is True
+    assert material_input.annotations.idempotentHint is True
+    assert material_input.inputSchema["properties"]["expected_material_users"]["minimum"] == 1
+    assert len(material_input.inputSchema["properties"]["value"]["oneOf"]) == 5
+
+
+def test_material_input_value_preserves_json_types() -> None:
+    adapter = TypeAdapter(MaterialInputValue)
+
+    assert adapter.validate_python(True) is True
+    assert adapter.validate_python(3) == 3
+    assert adapter.validate_python(0.25) == 0.25
+    assert adapter.validate_python([0.1, 0.2, 0.3]) == [0.1, 0.2, 0.3]
+    with pytest.raises(ValidationError):
+        adapter.validate_python([1, 0.2, 0.3])
+    with pytest.raises(ValidationError):
+        adapter.validate_python(float("inf"))

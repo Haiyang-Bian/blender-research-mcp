@@ -22,6 +22,14 @@ AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 MODIFIER_LIMIT = 256
 SHAPE_KEY_LIMIT = 256
 MATERIAL_SLOT_LIMIT = 64
+MATERIAL_SOCKET_LIMIT = 256
+MATERIAL_SOCKET_KINDS = {
+    "VALUE": "FLOAT",
+    "INT": "INT",
+    "BOOLEAN": "BOOLEAN",
+    "VECTOR": "VECTOR",
+    "RGBA": "COLOR",
+}
 
 
 def session_identity(kind: str, value: Any) -> str:
@@ -39,6 +47,171 @@ def shape_key_is_driven(shape_keys: Any, key_block: Any) -> bool:
         return False
     data_path = key_block.path_from_id("value")
     return any(driver.data_path == data_path for driver in animation_data.drivers)
+
+
+def material_socket_kind(socket: Any) -> str | None:
+    return MATERIAL_SOCKET_KINDS.get(str(socket.type))
+
+
+def material_socket_is_driven(node_tree: Any, socket: Any) -> bool:
+    animation_data = node_tree.animation_data
+    if animation_data is None:
+        return False
+    try:
+        data_path = socket.path_from_id("default_value")
+    except (TypeError, ValueError):
+        return False
+    return any(driver.data_path == data_path for driver in animation_data.drivers)
+
+
+def material_affected_objects(material: Any) -> list[str]:
+    return sorted(
+        {
+            obj.name
+            for obj in bpy.data.objects
+            if any(slot.material == material for slot in obj.material_slots)
+        }
+    )
+
+
+def material_socket_range(
+    socket: Any,
+    socket_kind: str | None,
+) -> tuple[float | None, float | None]:
+    if socket_kind == "BOOLEAN":
+        return None, None
+    minimum = getattr(socket, "min_value", None)
+    maximum = getattr(socket, "max_value", None)
+    return (
+        float(minimum) if minimum is not None else None,
+        float(maximum) if maximum is not None else None,
+    )
+
+
+def material_socket_readonly(socket: Any) -> bool:
+    try:
+        return bool(socket.is_property_readonly("default_value"))
+    except (AttributeError, TypeError):
+        return False
+
+
+def material_socket_value(socket: Any, socket_kind: str) -> PropertyValue:
+    value = socket.default_value
+    if socket_kind in {"VECTOR", "COLOR"}:
+        return tuple(float(component) for component in value)
+    if socket_kind == "BOOLEAN":
+        return bool(value)
+    if socket_kind == "INT":
+        return int(value)
+    return float(value)
+
+
+def inspect_material(object_name: str, material_slot_index: int) -> dict[str, Any]:
+    obj = bpy.data.objects.get(object_name)
+    if obj is None:
+        raise ContextOperationError(
+            "OBJECT_NOT_FOUND",
+            f"Object does not exist: {object_name}",
+            kind="not_found",
+        )
+    if not 0 <= material_slot_index < min(len(obj.material_slots), MATERIAL_SLOT_LIMIT):
+        raise ContextOperationError(
+            "MATERIAL_SLOT_NOT_FOUND",
+            f"Material slot does not exist: {object_name}[{material_slot_index}]",
+            kind="not_found",
+            details={"slot_count": len(obj.material_slots), "slot_limit": MATERIAL_SLOT_LIMIT},
+        )
+    material = obj.material_slots[material_slot_index].material
+    if material is None:
+        raise ContextOperationError(
+            "MATERIAL_NOT_FOUND",
+            f"Material slot is empty: {object_name}[{material_slot_index}]",
+            kind="not_found",
+        )
+    node_tree = material.node_tree if material.use_nodes else None
+    warnings: list[dict[str, Any]] = []
+    socket_results: list[dict[str, Any]] = []
+    socket_count = 0
+    if node_tree is not None:
+        for node in node_tree.nodes:
+            for socket in node.inputs:
+                socket_count += 1
+                if len(socket_results) >= MATERIAL_SOCKET_LIMIT:
+                    continue
+                socket_kind = material_socket_kind(socket)
+                linked = bool(socket.is_linked)
+                driven = material_socket_is_driven(node_tree, socket)
+                readonly = material_socket_readonly(socket) or not hasattr(
+                    socket, "default_value"
+                )
+                identifier = str(socket.identifier)
+                blocked_reasons: list[str] = []
+                if socket_kind is None:
+                    blocked_reasons.append("unsupported_type")
+                if linked:
+                    blocked_reasons.append("linked")
+                if driven:
+                    blocked_reasons.append("driven")
+                if readonly:
+                    blocked_reasons.append("readonly")
+                if not identifier:
+                    blocked_reasons.append("missing_identifier")
+                if material.library is not None or node_tree.library is not None:
+                    blocked_reasons.append("linked_library")
+                minimum, maximum = material_socket_range(socket, socket_kind)
+                socket_results.append(
+                    {
+                        "node_name": node.name,
+                        "node_type": node.type,
+                        "node_identity": session_identity("node", node),
+                        "socket_name": socket.name,
+                        "socket_identifier": identifier,
+                        "socket_identity": session_identity("socket", socket),
+                        "socket_type": str(socket.type),
+                        "socket_kind": socket_kind,
+                        "value": (
+                            material_socket_value(socket, socket_kind)
+                            if socket_kind is not None and hasattr(socket, "default_value")
+                            else None
+                        ),
+                        "minimum": minimum,
+                        "maximum": maximum,
+                        "linked": linked,
+                        "driven": driven,
+                        "readonly": readonly,
+                        "writable": not blocked_reasons,
+                        "blocked_reasons": blocked_reasons,
+                    }
+                )
+    if socket_count > MATERIAL_SOCKET_LIMIT:
+        warnings.append(
+            {
+                "code": "LOOKDEV_DIAGNOSTICS_TRUNCATED",
+                "section": "material_sockets",
+                "limit": MATERIAL_SOCKET_LIMIT,
+                "count": socket_count,
+            }
+        )
+    affected_objects = material_affected_objects(material)
+    return {
+        "object_name": obj.name,
+        "object_identity": session_identity("object", obj),
+        "material_slot_index": material_slot_index,
+        "material_name": material.name,
+        "material_identity": session_identity("material", material),
+        "material_users": int(material.users),
+        "material_library": _library_path(material),
+        "affected_objects": affected_objects,
+        "use_nodes": bool(material.use_nodes),
+        "node_tree_name": node_tree.name if node_tree is not None else None,
+        "node_tree_identity": (
+            session_identity("node_tree", node_tree) if node_tree is not None else None
+        ),
+        "node_tree_library": _library_path(node_tree) if node_tree is not None else None,
+        "sockets": socket_results,
+        "counts": {"sockets": socket_count, "returned_sockets": len(socket_results)},
+        "warnings": warnings,
+    }
 
 
 def inspect_object_lookdev(object_name: str) -> dict[str, Any]:
@@ -206,19 +379,17 @@ def require_shape_key(
     return obj, key_block
 
 
-def require_material_socket(target: tuple[str, ...]) -> tuple[Any, Any, Any, Any]:
-    (
-        object_name,
-        object_identity,
-        raw_slot_index,
-        material_name,
-        material_identity,
-        node_name,
-        node_identity,
-        socket_identifier,
-        socket_identity,
-        _socket_kind,
-    ) = target
+def resolve_material_socket(
+    object_name: str,
+    object_identity: str,
+    raw_slot_index: str,
+    material_name: str,
+    material_identity: str,
+    node_name: str,
+    node_identity: str,
+    socket_identifier: str,
+    socket_identity: str,
+) -> tuple[Any, Any, Any, Any]:
     obj = require_object(object_name, object_identity)
     slot_index = int(raw_slot_index)
     if not 0 <= slot_index < len(obj.material_slots):
@@ -258,6 +429,20 @@ def require_material_socket(target: tuple[str, ...]) -> tuple[Any, Any, Any, Any
     return obj, material, node, socket
 
 
+def require_material_socket(target: tuple[str, ...]) -> tuple[Any, Any, Any, Any]:
+    *identity_target, expected_socket_kind = target
+    obj, material, node, socket = resolve_material_socket(*identity_target)
+    actual_socket_kind = material_socket_kind(socket)
+    if actual_socket_kind != expected_socket_kind:
+        raise ContextOperationError(
+            "TARGET_IDENTITY_CONFLICT",
+            "The material socket type changed after it was inspected",
+            kind="conflict",
+            details={"expected": expected_socket_kind, "actual": actual_socket_kind},
+        )
+    return obj, material, node, socket
+
+
 def read_property(reference: PropertyRef) -> PropertyValue:
     if reference.kind in {"object_scale", "object_visibility"}:
         obj = require_object(*reference.target)
@@ -272,14 +457,7 @@ def read_property(reference: PropertyRef) -> PropertyValue:
         return float(key_block.value)
     if reference.kind == "material_input":
         _obj, _material, _node, socket = require_material_socket(reference.target)
-        value = socket.default_value
-        if reference.target[-1] in {"VECTOR", "COLOR"}:
-            return tuple(float(component) for component in value)
-        if reference.target[-1] == "BOOLEAN":
-            return bool(value)
-        if reference.target[-1] == "INT":
-            return int(value)
-        return float(value)
+        return material_socket_value(socket, reference.target[-1])
     raise ContextOperationError(
         "TRANSACTION_DELTA_INVALID",
         f"Unsupported transaction property kind: {reference.kind}",

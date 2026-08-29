@@ -41,9 +41,11 @@ def test_addon_registers_bounded_object_local_write_commands() -> None:
 
     for command in (
         "object.lookdev.inspect",
+        "material.inspect",
         "object.visibility.set",
         "modifier.set_state",
         "shape_key.set_value",
+        "material.set_input",
     ):
         assert command in source
 
@@ -58,5 +60,6 @@ def test_addon_zip_has_an_installable_package_root(tmp_path: Path) -> None:
     assert f"{PACKAGE_NAME}/generation.py" in names
     assert f"{PACKAGE_NAME}/geometry_model.py" in names
     assert f"{PACKAGE_NAME}/lookdev_ops.py" in names
+    assert f"{PACKAGE_NAME}/lookdev_model.py" in names
     assert f"{PACKAGE_NAME}/runtime.py" in names
     assert all(name.startswith(f"{PACKAGE_NAME}/") for name in names)

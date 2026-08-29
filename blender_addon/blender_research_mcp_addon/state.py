@@ -25,12 +25,21 @@ from .context_ops import (
     validate_context_snapshot,
 )
 from .generation import has_persistent_scene_update
+from .lookdev_model import LookdevModelError, normalize_material_value
 from .lookdev_ops import (
+    inspect_material,
     inspect_object_lookdev,
+    material_affected_objects,
+    material_socket_is_driven,
+    material_socket_kind,
+    material_socket_range,
+    material_socket_readonly,
+    material_socket_value,
     read_property,
     require_modifier,
     require_object,
     require_shape_key,
+    resolve_material_socket,
     restore_delta,
     session_identity,
     shape_key_is_driven,
@@ -38,6 +47,7 @@ from .lookdev_ops import (
 from .runtime import ADDON_VERSION, ListenerRuntime
 from .transaction_model import (
     IdempotencyCache,
+    MaterialInputDelta,
     ModifierStateDelta,
     ScaleDelta,
     ShapeKeyDelta,
@@ -59,6 +69,7 @@ CAPABILITIES = [
     "object.inspect",
     "object.geometry.inspect",
     "object.lookdev.inspect",
+    "material.inspect",
     "viewport.capture",
     "viewport.raycast",
     "transaction.begin",
@@ -68,6 +79,7 @@ CAPABILITIES = [
     "object.visibility.set",
     "modifier.set_state",
     "shape_key.set_value",
+    "material.set_input",
 ]
 CAPABILITY_VERSIONS = {
     "transport": 1,
@@ -81,6 +93,7 @@ CAPABILITY_VERSIONS = {
     "object_visibility": 1,
     "modifier_state": 1,
     "shape_key_value": 1,
+    "material_input": 1,
 }
 MUTATION_COMMANDS = {
     "transaction.begin",
@@ -90,6 +103,7 @@ MUTATION_COMMANDS = {
     "object.visibility.set",
     "modifier.set_state",
     "shape_key.set_value",
+    "material.set_input",
 }
 AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 
@@ -345,6 +359,27 @@ class AddonState:
                 )
             with self.suppress_generation():
                 return inspect_object_lookdev(object_name)
+        if command == "material.inspect":
+            object_name = params.get("object_name")
+            material_slot_index = params.get("material_slot_index")
+            if not isinstance(object_name, str) or not object_name:
+                raise ContextOperationError(
+                    "OBJECT_NAME_INVALID",
+                    "object_name must be a non-empty string",
+                    kind="validation",
+                )
+            if (
+                isinstance(material_slot_index, bool)
+                or not isinstance(material_slot_index, int)
+                or not 0 <= material_slot_index < 64
+            ):
+                raise ContextOperationError(
+                    "MATERIAL_SLOT_INDEX_INVALID",
+                    "material_slot_index must be an integer between 0 and 63",
+                    kind="validation",
+                )
+            with self.suppress_generation():
+                return inspect_material(object_name, material_slot_index)
         if command == "viewport.capture":
             object_name = params.get("object_name")
             if not isinstance(object_name, str) or not object_name:
@@ -455,6 +490,9 @@ class AddonState:
         if command == "shape_key.set_value":
             transaction = self._require_transaction(params, request)
             return self._set_shape_key_value(transaction, params)
+        if command == "material.set_input":
+            transaction = self._require_transaction(params, request)
+            return self._set_material_input(transaction, params)
         if command == "transaction.commit":
             transaction = self._require_transaction(params, request)
             self._validate_transaction_guards(transaction)
@@ -893,6 +931,188 @@ class AddonState:
             "value": float(key_block.value),
             "slider_min": minimum,
             "slider_max": maximum,
+            "status": transaction.status,
+            "delta_count": len(transaction.deltas),
+            "delta_kinds": transaction.delta_kinds(),
+        }
+
+    def _set_material_input(
+        self,
+        transaction: Transaction,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._validate_transaction_guards(transaction)
+        object_name = params.get("object_name")
+        material_slot_index = params.get("material_slot_index")
+        material_name = params.get("material_name")
+        node_name = params.get("node_name")
+        socket_identifier = params.get("socket_identifier")
+        for parameter_name, value in {
+            "object_name": object_name,
+            "material_name": material_name,
+            "node_name": node_name,
+            "socket_identifier": socket_identifier,
+        }.items():
+            if not isinstance(value, str) or not value:
+                raise ContextOperationError(
+                    "MATERIAL_TARGET_INVALID",
+                    f"{parameter_name} must be a non-empty string",
+                    kind="validation",
+                )
+        if (
+            isinstance(material_slot_index, bool)
+            or not isinstance(material_slot_index, int)
+            or not 0 <= material_slot_index < 64
+        ):
+            raise ContextOperationError(
+                "MATERIAL_SLOT_INDEX_INVALID",
+                "material_slot_index must be an integer between 0 and 63",
+                kind="validation",
+            )
+        expected_material_users = params.get("expected_material_users")
+        if (
+            isinstance(expected_material_users, bool)
+            or not isinstance(expected_material_users, int)
+            or expected_material_users < 1
+        ):
+            raise ContextOperationError(
+                "MATERIAL_USERS_INVALID",
+                "expected_material_users must be a positive integer",
+                kind="validation",
+            )
+        allow_shared = params.get("allow_shared", False)
+        if type(allow_shared) is not bool:
+            raise ContextOperationError(
+                "MATERIAL_SHARED_FLAG_INVALID",
+                "allow_shared must be a boolean",
+                kind="validation",
+            )
+        object_identity = self._required_identity(params, "expected_object_identity")
+        material_identity = self._required_identity(params, "expected_material_identity")
+        node_identity = self._required_identity(params, "expected_node_identity")
+        socket_identity = self._required_identity(params, "expected_socket_identity")
+        obj, material, node, socket = resolve_material_socket(
+            object_name,
+            object_identity,
+            str(material_slot_index),
+            material_name,
+            material_identity,
+            node_name,
+            node_identity,
+            socket_identifier,
+            socket_identity,
+        )
+        node_tree = material.node_tree
+        if material.library is not None or node_tree is None or node_tree.library is not None:
+            raise ContextOperationError(
+                "MATERIAL_LINKED",
+                f"Linked or unavailable material node data cannot be modified: {material_name}",
+                kind="precondition",
+            )
+        actual_users = int(material.users)
+        if actual_users != expected_material_users:
+            raise ContextOperationError(
+                "MATERIAL_USERS_CONFLICT",
+                "Material user count changed after it was inspected",
+                kind="conflict",
+                details={"expected": expected_material_users, "actual": actual_users},
+            )
+        affected_objects = material_affected_objects(material)
+        if actual_users > 1 and not allow_shared:
+            raise ContextOperationError(
+                "SHARED_MATERIAL_CONFIRMATION_REQUIRED",
+                "Shared material writes require allow_shared=true and an exact user count",
+                kind="precondition",
+                details={
+                    "material_users": actual_users,
+                    "affected_objects": affected_objects,
+                },
+            )
+        socket_kind = material_socket_kind(socket)
+        if socket_kind is None or not hasattr(socket, "default_value"):
+            raise ContextOperationError(
+                "MATERIAL_SOCKET_UNSUPPORTED",
+                f"Unsupported material input socket: {node_name}.{socket_identifier}",
+                kind="precondition",
+            )
+        if socket.is_linked:
+            raise ContextOperationError(
+                "MATERIAL_SOCKET_LINKED",
+                f"Linked material input cannot be assigned: {node_name}.{socket_identifier}",
+                kind="precondition",
+            )
+        if material_socket_is_driven(node_tree, socket):
+            raise ContextOperationError(
+                "MATERIAL_SOCKET_DRIVEN",
+                f"Driven material input cannot be assigned: {node_name}.{socket_identifier}",
+                kind="precondition",
+            )
+        if material_socket_readonly(socket):
+            raise ContextOperationError(
+                "MATERIAL_SOCKET_READONLY",
+                f"Read-only material input cannot be assigned: {node_name}.{socket_identifier}",
+                kind="precondition",
+            )
+        minimum, maximum = material_socket_range(socket, socket_kind)
+        try:
+            after = normalize_material_value(
+                socket_kind,
+                params.get("value"),
+                minimum=minimum,
+                maximum=maximum,
+            )
+        except LookdevModelError as exc:
+            raise ContextOperationError(
+                exc.code,
+                str(exc),
+                kind="validation",
+                details=exc.details,
+            ) from exc
+        before = material_socket_value(socket, socket_kind)
+        changed = not values_equal(before, after)
+        if changed:
+            with self.suppress_generation():
+                socket.default_value = after
+                node_tree.update_tag()
+                bpy.context.view_layer.update()
+            self._record_delta(
+                transaction,
+                MaterialInputDelta(
+                    object_name=object_name,
+                    object_identity=object_identity,
+                    material_slot_index=material_slot_index,
+                    material_name=material_name,
+                    material_identity=material_identity,
+                    node_name=node_name,
+                    node_identity=node_identity,
+                    socket_identifier=socket_identifier,
+                    socket_identity=socket_identity,
+                    socket_kind=socket_kind,
+                    before=before,
+                    after=after,
+                ),
+            )
+        return {
+            "transaction_id": transaction.transaction_id,
+            "object_name": obj.name,
+            "object_identity": object_identity,
+            "material_slot_index": material_slot_index,
+            "material_name": material.name,
+            "material_identity": material_identity,
+            "material_users": actual_users,
+            "shared_material": actual_users > 1,
+            "affected_objects": affected_objects,
+            "node_name": node.name,
+            "node_identity": node_identity,
+            "socket_identifier": socket.identifier,
+            "socket_identity": socket_identity,
+            "socket_kind": socket_kind,
+            "changed": changed,
+            "before": before,
+            "after": after,
+            "value": material_socket_value(socket, socket_kind),
+            "minimum": minimum,
+            "maximum": maximum,
             "status": transaction.status,
             "delta_count": len(transaction.deltas),
             "delta_kinds": transaction.delta_kinds(),

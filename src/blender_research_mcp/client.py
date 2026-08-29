@@ -110,6 +110,7 @@ class BridgeClient:
             "object_visibility": 1,
             "modifier_state": 1,
             "shape_key_value": 1,
+            "material_input": 1,
         }
         actual_versions = result.capability_versions.model_dump()
         incompatible = {
