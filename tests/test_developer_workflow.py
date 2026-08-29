@@ -44,26 +44,46 @@ def test_quality_gate_uses_authoritative_uv_commands() -> None:
 
 
 def test_shared_pycharm_run_configurations_are_uv_backed() -> None:
-    configurations: dict[str, str] = {}
+    configurations: dict[str, tuple[str, str]] = {}
     for path in (ROOT / ".run").glob("*.run.xml"):
         configuration = ET.parse(path).getroot().find("configuration")
         assert configuration is not None
         name = configuration.attrib["name"]
         script = next(
-            option.attrib["value"]
-            for option in configuration.findall("option")
-            if option.attrib.get("name") == "SCRIPT_TEXT"
+            (
+                option.attrib["value"]
+                for option in configuration.findall("option")
+                if option.attrib.get("name") == "SCRIPT_TEXT"
+            ),
+            "",
         )
-        configurations[name] = script
+        configurations[name] = (configuration.attrib["type"], script)
 
     assert configurations == {
         "Build - Add-on (version)": (
-            'uv run --no-sync python scripts/build_addon.py --version '
-            '"$Prompt:Release version (for example 0.5.1)$"'
+            "ShConfigurationType",
+            (
+                'uv run --no-sync python scripts/build_addon.py --version '
+                '"$Prompt:Release version (for example 0.5.1)$"'
+            ),
         ),
-        "Tests - Focused (target)": (
-            'uv run --no-sync pytest '
-            '"$Prompt:Pytest path or node id (for example tests/test_server.py)$"'
+        "Tests - Pytest": ("tests", ""),
+        "Tests - Full Quality Gate": (
+            "ShConfigurationType",
+            "uv run --no-sync python scripts/quality_gate.py",
         ),
-        "Tests - Full Quality Gate": "uv run --no-sync python scripts/quality_gate.py",
     }
+
+    pytest_configuration = ET.parse(ROOT / ".run" / "Tests_Pytest.run.xml").getroot().find(
+        "configuration"
+    )
+    assert pytest_configuration is not None
+    options = {
+        option.attrib["name"]: option.attrib["value"]
+        for option in pytest_configuration.findall("option")
+        if "name" in option.attrib and "value" in option.attrib
+    }
+    assert pytest_configuration.attrib["factoryName"] == "py.test"
+    assert options["SDK_HOME"] == "$PROJECT_DIR$/.venv/Scripts/python.exe"
+    assert options["WORKING_DIRECTORY"] == "$PROJECT_DIR$"
+    assert options["_new_target"] == '"$PROJECT_DIR$/tests"'

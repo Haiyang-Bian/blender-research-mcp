@@ -66,11 +66,12 @@ uv run --no-sync python scripts/quality_gate.py
 仓库还提供三个可共享的 PyCharm Run Configuration：
 
 - **Build - Add-on (version)**：启动时询问版本号并执行上述受校验构建；
-- **Tests - Focused (target)**：启动时询问 pytest 文件路径或 node id；
+- **Tests - Pytest**：使用 PyCharm 原生 pytest runner，提供测试树、定位与调试；
 - **Tests - Full Quality Gate**：依次执行 pytest、Ruff 和 mypy，首项失败即停止。
 
-配置保存在 `.run/`，不依赖 PyCharm 的项目 Python SDK，也不会修改个人
-`.idea/workspace.xml`。若刚拉取配置后列表尚未刷新，重新加载项目即可。
+配置保存在 `.run/`，pytest runner 明确使用由 `uv sync` 管理的项目 `.venv`，
+不会读取或修改个人 `.idea/workspace.xml` 中的旧 SDK 设置。若刚拉取配置后
+列表尚未刷新，重新加载项目即可。
 
 外部 MCP 服务无参数时通过 stdio 启动，并自动发现端口 9877 的本地
 Blender 插件会话。它不提供任意 Python 或保存 `.blend` 文件的工具。
