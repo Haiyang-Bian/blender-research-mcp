@@ -53,6 +53,51 @@ class ModifierStateDelta:
 
 
 @dataclass
+class ModifierSettingsDelta:
+    object_name: str
+    object_identity: str
+    modifier_name: str
+    modifier_identity: str
+    modifier_type: str
+    before: dict[str, PropertyValue]
+    after: dict[str, PropertyValue]
+
+
+@dataclass
+class ModifierCreateDelta:
+    object_name: str
+    object_identity: str
+    modifier_name: str
+    modifier_identity: str
+    modifier_type: str
+    stack_index: int
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ModifierMoveDelta:
+    object_name: str
+    object_identity: str
+    modifier_name: str
+    modifier_identity: str
+    before_index: int
+    after_index: int
+
+
+@dataclass
+class ModifierDeleteDelta:
+    object_name: str
+    object_identity: str
+    modifier_name: str
+    modifier_identity: str
+    modifier_type: str
+    stack_index: int
+    before: dict[str, bool]
+    after: dict[str, bool]
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class ShapeKeyDelta:
     object_name: str
     object_identity: str
@@ -105,6 +150,16 @@ class StructureGuard:
 
 
 @dataclass
+class ModifierStackGuard:
+    """Baseline and latest expected state for one object-local Modifier stack."""
+
+    object_name: str
+    object_identity: str
+    baseline_fingerprint: str
+    expected_fingerprint: str
+
+
+@dataclass
 class StructuralDelta:
     """A reversible structural change interpreted by the Blender-side authoring layer.
 
@@ -125,6 +180,10 @@ TransactionDelta = (
     | ObjectTransformDelta
     | VisibilityDelta
     | ModifierStateDelta
+    | ModifierSettingsDelta
+    | ModifierCreateDelta
+    | ModifierMoveDelta
+    | ModifierDeleteDelta
     | ShapeKeyDelta
     | MaterialInputDelta
     | ObjectDataDelta
@@ -266,6 +325,11 @@ def delta_properties(
             )
             for attribute, value in delta.after.items()
         ]
+    if isinstance(
+        delta,
+        (ModifierSettingsDelta, ModifierCreateDelta, ModifierMoveDelta, ModifierDeleteDelta),
+    ):
+        return []
     if isinstance(delta, StructuralDelta):
         return []
     raise TypeError(f"Unsupported transaction delta: {type(delta).__name__}")
@@ -295,6 +359,9 @@ class Transaction:
     started_generation: int
     status: str = "active"
     deltas: list[TransactionDelta] = field(default_factory=list)
+    modifier_stack_guards: dict[tuple[str, str], ModifierStackGuard] = field(
+        default_factory=dict
+    )
 
     def ensure_capacity(self, additional: int = 1) -> None:
         if isinstance(additional, bool) or additional < 0:
@@ -344,6 +411,41 @@ class Transaction:
             if isinstance(delta, ObjectDataDelta) and delta.data_identity == data_identity:
                 delta.expected_users = users
 
+    def ensure_modifier_stack_guard(
+        self,
+        *,
+        object_name: str,
+        object_identity: str,
+        fingerprint: str,
+    ) -> ModifierStackGuard:
+        key = (object_name, object_identity)
+        guard = self.modifier_stack_guards.get(key)
+        if guard is None:
+            guard = ModifierStackGuard(
+                object_name=object_name,
+                object_identity=object_identity,
+                baseline_fingerprint=fingerprint,
+                expected_fingerprint=fingerprint,
+            )
+            self.modifier_stack_guards[key] = guard
+        return guard
+
+    def refresh_modifier_stack_guard(
+        self,
+        *,
+        object_name: str,
+        object_identity: str,
+        fingerprint: str,
+    ) -> None:
+        key = (object_name, object_identity)
+        guard = self.modifier_stack_guards.get(key)
+        if guard is None:
+            raise TransactionModelError(
+                "MODIFIER_STACK_GUARD_NOT_FOUND",
+                f"No Modifier stack guard exists for {object_name}",
+            )
+        guard.expected_fingerprint = fingerprint
+
     def expected_properties(self) -> dict[PropertyRef, PropertyValue]:
         expected: dict[PropertyRef, PropertyValue] = {}
         for delta in self.deltas:
@@ -358,6 +460,15 @@ class Transaction:
             for reference, _, _ in delta_properties(delta)
         }
         kinds.update(delta.kind for delta in self.structural_deltas())
+        for delta in self.deltas:
+            if isinstance(delta, ModifierSettingsDelta):
+                kinds.add("modifier_settings")
+            elif isinstance(delta, ModifierCreateDelta):
+                kinds.add("modifier_create")
+            elif isinstance(delta, ModifierMoveDelta):
+                kinds.add("modifier_move")
+            elif isinstance(delta, ModifierDeleteDelta):
+                kinds.add("modifier_delete")
         return sorted(kinds)
 
 

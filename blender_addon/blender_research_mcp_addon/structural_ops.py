@@ -97,6 +97,8 @@ def structure_summary(kind: str, resource: Any) -> dict[str, Any]:
         "users": int(resource.users),
     }
     if kind == "object":
+        from .modifier_ops import modifier_stack_summary
+
         summary.update(
             {
                 "type": resource.type,
@@ -116,6 +118,7 @@ def structure_summary(kind: str, resource: Any) -> dict[str, Any]:
                     session_identity("material", material) if material is not None else None
                     for material in getattr(resource.data, "materials", ())
                 ],
+                "modifiers": modifier_stack_summary(resource),
             }
         )
     elif kind == "mesh":

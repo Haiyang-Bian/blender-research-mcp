@@ -307,3 +307,35 @@ def test_object_data_delta_guards_identity_users_and_typed_values() -> None:
         ("Key Light", "object:1", "Key Light Data", "light:1", "3"),
         "shape",
     ) in refreshed
+
+
+def test_modifier_stack_guard_keeps_baseline_and_refreshes_latest_expected_state() -> None:
+    model = load_transaction_model()
+    transaction = model.Transaction("tx-modifiers", None, {}, "context", 0)
+
+    guard = transaction.ensure_modifier_stack_guard(
+        object_name="Hull",
+        object_identity="object:hull",
+        fingerprint="baseline",
+    )
+    transaction.refresh_modifier_stack_guard(
+        object_name="Hull",
+        object_identity="object:hull",
+        fingerprint="after-agent-write",
+    )
+    transaction.record(
+        model.ModifierSettingsDelta(
+            "Hull",
+            "object:hull",
+            "Soft Edges",
+            "modifier:bevel",
+            "BEVEL",
+            {"width": 0.1},
+            {"width": 0.25},
+        )
+    )
+
+    assert guard.baseline_fingerprint == "baseline"
+    assert guard.expected_fingerprint == "after-agent-write"
+    assert transaction.expected_properties() == {}
+    assert transaction.delta_kinds() == ["modifier_settings"]

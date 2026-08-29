@@ -420,6 +420,23 @@ def create_server(
         )
 
     @server.tool(
+        name="modifier.inspect",
+        description=(
+            "Inspect the exact ordered Modifier stack for one mesh object, including typed "
+            "settings, session identities, drivers, write ranges, and a guarded fingerprint."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def modifier_inspect(object_name: ObjectName) -> dict[str, Any]:
+        await require_capability(client, "modifier_authoring")
+        return await client.call(
+            "modifier.inspect",
+            {"object_name": object_name},
+            read_only=True,
+        )
+
+    @server.tool(
         name="material.inspect",
         description=(
             "Inspect one exact material slot and list bounded node input identities, values, "

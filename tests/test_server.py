@@ -26,6 +26,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "object.inspect",
         "object.geometry.inspect",
         "object.lookdev.inspect",
+        "modifier.inspect",
         "material.inspect",
         "image.inspect",
         "viewport.capture",
@@ -104,6 +105,9 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     lookdev = tools_by_name["object.lookdev.inspect"]
     assert lookdev.annotations is not None
     assert lookdev.annotations.readOnlyHint is True
+    modifier_inspect = tools_by_name["modifier.inspect"]
+    assert modifier_inspect.annotations is not None
+    assert modifier_inspect.annotations.readOnlyHint is True
     material_inspect = tools_by_name["material.inspect"]
     assert material_inspect.annotations is not None
     assert material_inspect.annotations.readOnlyHint is True

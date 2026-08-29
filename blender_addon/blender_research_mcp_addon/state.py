@@ -64,6 +64,7 @@ from .material_authoring_ops import (
     load_image,
     material_result,
 )
+from .modifier_ops import inspect_modifiers, validate_modifier_stack_guards
 from .object_settings_ops import apply_object_settings
 from .project_ops import (
     ProjectOperationError,
@@ -108,6 +109,7 @@ CAPABILITIES = [
     "scene.inspect",
     "object.geometry.inspect",
     "object.lookdev.inspect",
+    "modifier.inspect",
     "material.inspect",
     "image.inspect",
     "viewport.capture",
@@ -159,6 +161,7 @@ CAPABILITY_VERSIONS = {
     "render_export": 1,
     "object_visibility": 1,
     "modifier_state": 1,
+    "modifier_authoring": 1,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -609,6 +612,16 @@ class AddonState:
                 )
             with self.suppress_generation():
                 return inspect_object_lookdev(object_name)
+        if command == "modifier.inspect":
+            object_name = params.get("object_name")
+            if not isinstance(object_name, str) or not object_name:
+                raise AuthoringOperationError(
+                    "OBJECT_NAME_INVALID",
+                    "object_name must be a non-empty string",
+                    kind="validation",
+                )
+            with self.suppress_generation():
+                return inspect_modifiers(object_name, self.scene_generation)
         if command == "material.inspect":
             object_name = params.get("object_name")
             material_slot_index = params.get("material_slot_index")
@@ -1289,6 +1302,7 @@ class AddonState:
                     },
                 )
         validate_structural_transaction(transaction)
+        validate_modifier_stack_guards(transaction)
 
     def _set_object_settings(
         self,
