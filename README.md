@@ -21,6 +21,8 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 随后按用户意图保存、打开、重载或关闭项目；该闭环已通过真实 Blender 4.2.23
 验收。0.8.0 新增从空项目创建对象、Principled 材质、本地图像、World、Camera，
 再以 Eevee Next 预览/导出的语义场景创作闭环；自动化门禁和真实月光水面验收
+均已通过。0.9.0 新增统一且封闭类型的 `object.set`，可在一次原子调用中设置同一
+对象的 TRS、可见性与 Light/Camera 数据；自动化门禁和真实 Blender 4.2.23 验收
 均已通过。既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -28,6 +30,9 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 [0.5.1 受限 LookDev 写入](docs/validation/2026-08-29-bounded-lookdev-writes.md)，以及
 [0.7.0 托管生命周期](docs/validation/2026-08-29-managed-lifecycle.md)，以及
 [0.8.0 语义场景创作](docs/validation/2026-08-29-semantic-scene-authoring.md)。
+独立比较预览回归见
+[0.6.0 比较预览](docs/validation/2026-08-30-comparative-previews.md)，统一对象设置见
+[0.9.0 对象设置](docs/validation/2026-08-30-unified-object-settings.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -80,6 +85,20 @@ Cycles 或网络资产下载。`transaction.commit` 只保留内存状态；只�
 或交付 `.blend` 时才调用 `project.save`。详细契约见
 [0.8.0 路线图](docs/roadmap/0.8.0-semantic-scene-authoring.md)。
 
+## 0.9.0 统一对象设置
+
+`object.set` 是同一对象属性的统一公共入口，支持 1–4 个不重复的 transform、
+visibility、Light、Camera patch。请求在写入前完成全部校验和事务容量预留，固定
+按“变换 → 可见性 → 对象数据”应用，整个调用只推进一次 generation；全为 no-op
+时不记录 delta。共享 Light/Camera data 必须携带检查所得 identity、用户数和显式
+共享范围。
+
+内部仍按类型分派，不开放任意 RNA。对象创建/复制/删除、活动 Camera、材质、
+World、Modifier 和渲染继续使用各自工具。`lookdev.compare` 同时增加
+`object_setting` target，可比较变换轴、可见性、灯光颜色/形状/数值和相机参数。
+详细契约见
+[0.9.0 路线图](docs/roadmap/0.9.0-unified-object-settings.md)。
+
 ## 目录
 
 ~~~text
@@ -110,7 +129,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.8.0
+uv run --no-sync python scripts/build_addon.py --version 0.9.0
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认
@@ -160,6 +179,7 @@ socket，并标明类型、范围、链接、驱动和可写原因。
 所有写入都必须位于事务中，并携带检查结果里的精确身份、最新
 `scene_generation` 和独立幂等键：
 
+- `object.set` 统一设置同一对象的 TRS、可见性与有类型的 Light/Camera 数据；
 - `object.visibility.set` 只设置 `hide_viewport` / `hide_render`；
 - `modifier.set_state` 只设置 `show_viewport` / `show_render`；
 - `shape_key.set_value` 只设置非 Basis、无驱动且位于现有 slider 范围内的值；
@@ -175,6 +195,10 @@ commit 仅保留 Blender 内存状态，仍不会保存 `.blend`。
 基线，再按请求顺序为每个候选执行独立的 begin、单次写入、capture 和 rollback。
 只有全部候选都恢复成功时才返回完整图集和差异统计；工具不会给候选排名，也
 不会 commit。选定方向后仍应通过普通事务显式应用。
+
+0.9 的 `object_setting` 比较 locator 复用 `object.set`，支持单个 transform axis、
+visibility、Light 或 Camera 字段。十六进制灯光颜色会在线性 RGB 中验证恢复，
+但报告保留调用者提交的原始 JSON 值。
 
 ## Blender 控制区域
 

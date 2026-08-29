@@ -48,6 +48,17 @@ def target(target_type: str) -> dict[str, object]:
             "socket_identifier": "Roughness",
             "expected_socket_identity": "socket-id",
         }
+    if target_type == "object_setting":
+        return {
+            **common,
+            "locator": {
+                "type": "camera",
+                "expected_data_identity": "camera-id",
+                "expected_data_users": 1,
+                "expected_camera_type": "PERSP",
+                "property": "lens",
+            },
+        }
     raise AssertionError(target_type)
 
 
@@ -59,6 +70,7 @@ def target(target_type: str) -> dict[str, object]:
         "modifier_state",
         "shape_key_value",
         "material_input",
+        "object_setting",
     ],
 )
 def test_comparison_target_is_a_closed_discriminated_union(target_type: str) -> None:
@@ -120,6 +132,85 @@ def test_target_specific_candidate_types_are_strict() -> None:
         ComparisonRequest.model_validate(request("shape_key_value", (1,)))
     with pytest.raises(ValidationError):
         ComparisonRequest.model_validate(request("material_input", ([0.1, 1, 0.3],)))
+    ComparisonRequest.model_validate(request("object_setting", (35.0, 85.0)))
+    with pytest.raises(ValidationError, match="floating-point"):
+        ComparisonRequest.model_validate(request("object_setting", (35,)))
+
+
+def test_object_setting_locators_validate_typed_candidates_and_color_equivalence() -> None:
+    base = target("object_setting")
+    transform = {
+        **base,
+        "locator": {"type": "transform", "channel": "rotation_euler_degrees", "axis": "y"},
+    }
+    visibility = {
+        **base,
+        "locator": {"type": "visibility", "property": "hide_render"},
+    }
+    light = {
+        **base,
+        "locator": {
+            "type": "light",
+            "expected_data_identity": "pointlight:1",
+            "expected_data_users": 1,
+            "expected_light_type": "POINT",
+            "property": "color",
+        },
+    }
+    ComparisonRequest.model_validate(
+        {**request(), "target": transform, "candidates": [{"label": "A", "value": 45.0}]}
+    )
+    ComparisonRequest.model_validate(
+        {**request(), "target": visibility, "candidates": [{"label": "A", "value": True}]}
+    )
+    ComparisonRequest.model_validate(
+        {**request(), "target": light, "candidates": [{"label": "A", "value": "#C9DeE5"}]}
+    )
+    with pytest.raises(ValidationError, match="values must be unique"):
+        ComparisonRequest.model_validate(
+            {
+                **request(),
+                "target": light,
+                "candidates": [
+                    {"label": "A", "value": "#c9dee5"},
+                    {"label": "B", "value": "#C9DEE5"},
+                ],
+            }
+        )
+    with pytest.raises(ValidationError):
+        ComparisonRequest.model_validate(
+            {**request(), "target": light, "candidates": [{"label": "A", "value": "blue"}]}
+        )
+
+
+def test_object_setting_locator_rejects_properties_for_the_wrong_data_type() -> None:
+    base = target("object_setting")
+    with pytest.raises(ValidationError):
+        TypeAdapter(ComparisonTarget).validate_python(
+            {
+                **base,
+                "locator": {
+                    "type": "light",
+                    "expected_data_identity": "sunlight:1",
+                    "expected_data_users": 1,
+                    "expected_light_type": "SUN",
+                    "property": "radius",
+                },
+            }
+        )
+    with pytest.raises(ValidationError):
+        TypeAdapter(ComparisonTarget).validate_python(
+            {
+                **base,
+                "locator": {
+                    "type": "camera",
+                    "expected_data_identity": "camera:1",
+                    "expected_data_users": 1,
+                    "expected_camera_type": "ORTHO",
+                    "property": "lens",
+                },
+            }
+        )
 
 
 def png(color: tuple[int, int, int, int], *, size: tuple[int, int] = (16, 8)) -> bytes:

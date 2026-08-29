@@ -11,6 +11,7 @@ from .lookdev_model import resolve_material_range
 from .transaction_model import (
     MaterialInputDelta,
     ModifierStateDelta,
+    ObjectDataDelta,
     ObjectTransformDelta,
     PropertyRef,
     PropertyValue,
@@ -579,6 +580,14 @@ def read_property(reference: PropertyRef) -> PropertyValue:
         if reference.kind == "object_scale":
             return float(obj.scale[AXIS_INDEX[reference.attribute]])
         return bool(getattr(obj, reference.attribute))
+    if reference.kind in {"light_setting", "camera_setting"}:
+        from .object_settings_ops import read_object_data_property
+
+        return read_object_data_property(
+            reference.kind.removesuffix("_setting"),
+            reference.target,
+            reference.attribute,
+        )
     if reference.kind == "modifier_state":
         _obj, modifier = require_modifier(*reference.target)
         return bool(getattr(modifier, reference.attribute))
@@ -621,6 +630,10 @@ def restore_delta(delta: TransactionDelta) -> dict[str, Any]:
             "object_name": delta.object_name,
             "values": delta.before,
         }
+    if isinstance(delta, ObjectDataDelta):
+        from .object_settings_ops import restore_object_data_delta
+
+        return restore_object_data_delta(delta)
     if isinstance(delta, ModifierStateDelta):
         _obj, modifier = require_modifier(
             delta.object_name,

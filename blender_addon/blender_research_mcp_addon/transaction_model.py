@@ -62,7 +62,19 @@ class ShapeKeyDelta:
     after: float
 
 
-PropertyValue = bool | int | float | tuple[float, ...]
+PropertyValue = bool | int | float | str | tuple[float, ...]
+
+
+@dataclass
+class ObjectDataDelta:
+    object_name: str
+    object_identity: str
+    data_name: str
+    data_identity: str
+    data_kind: str
+    expected_users: int
+    before: dict[str, PropertyValue]
+    after: dict[str, PropertyValue]
 
 
 @dataclass
@@ -115,6 +127,7 @@ TransactionDelta = (
     | ModifierStateDelta
     | ShapeKeyDelta
     | MaterialInputDelta
+    | ObjectDataDelta
     | StructuralDelta
 )
 
@@ -234,6 +247,25 @@ def delta_properties(
                 delta.after,
             )
         ]
+    if isinstance(delta, ObjectDataDelta):
+        return [
+            (
+                PropertyRef(
+                    kind=f"{delta.data_kind}_setting",
+                    target=(
+                        delta.object_name,
+                        delta.object_identity,
+                        delta.data_name,
+                        delta.data_identity,
+                        str(delta.expected_users),
+                    ),
+                    attribute=attribute,
+                ),
+                delta.before[attribute],
+                value,
+            )
+            for attribute, value in delta.after.items()
+        ]
     if isinstance(delta, StructuralDelta):
         return []
     raise TypeError(f"Unsupported transaction delta: {type(delta).__name__}")
@@ -248,6 +280,8 @@ def values_equal(left: PropertyValue, right: PropertyValue) -> bool:
         pairs = zip(left, right, strict=True)
         return all(values_equal(left_value, right_value) for left_value, right_value in pairs)
     if isinstance(left, int) or isinstance(right, int):
+        return type(left) is type(right) and left == right
+    if isinstance(left, str) or isinstance(right, str):
         return type(left) is type(right) and left == right
     return abs(float(left) - float(right)) <= 1e-7
 
@@ -304,6 +338,11 @@ class Transaction:
                 "STRUCTURE_GUARD_NOT_FOUND",
                 f"No structural guard exists for {guard.kind} {guard.name}",
             )
+
+    def refresh_object_data_users(self, data_identity: str, users: int) -> None:
+        for delta in self.deltas:
+            if isinstance(delta, ObjectDataDelta) and delta.data_identity == data_identity:
+                delta.expected_users = users
 
     def expected_properties(self) -> dict[PropertyRef, PropertyValue]:
         expected: dict[PropertyRef, PropertyValue] = {}

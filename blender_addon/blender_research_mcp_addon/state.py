@@ -64,6 +64,7 @@ from .material_authoring_ops import (
     load_image,
     material_result,
 )
+from .object_settings_ops import apply_object_settings
 from .project_ops import (
     ProjectOperationError,
     normalized_path,
@@ -86,13 +87,11 @@ from .transaction_model import (
     IdempotencyCache,
     MaterialInputDelta,
     ModifierStateDelta,
-    ObjectTransformDelta,
     ShapeKeyDelta,
     StructuralDelta,
     Transaction,
     TransactionBook,
     TransactionModelError,
-    VisibilityDelta,
     context_fingerprint,
     request_fingerprint,
     values_equal,
@@ -116,6 +115,7 @@ CAPABILITIES = [
     "transaction.begin",
     "transaction.commit",
     "transaction.rollback",
+    "object.set",
     "object.transform",
     "object.create",
     "object.duplicate",
@@ -149,6 +149,7 @@ CAPABILITY_VERSIONS = {
     "transactions": 3,
     "object_transform_scale": 1,
     "object_transform": 1,
+    "object_settings": 1,
     "scene_inspection": 1,
     "object_authoring": 1,
     "material_authoring": 1,
@@ -167,6 +168,7 @@ MUTATION_COMMANDS = {
     "transaction.begin",
     "transaction.commit",
     "transaction.rollback",
+    "object.set",
     "object.transform",
     "object.create",
     "object.duplicate",
@@ -442,6 +444,68 @@ class AddonState:
                 "object_identity": session_identity("object", obj),
                 "location": list(obj.location),
             }
+        if command == "_test.property.touch":
+            if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":
+                raise ContextOperationError(
+                    "COMMAND_NOT_FOUND",
+                    f"Unsupported command: {command}",
+                    kind="not_found",
+                )
+            target = params.get("target")
+            value = params.get("value")
+            if (
+                not isinstance(target, dict)
+                or isinstance(value, bool)
+                or not isinstance(value, (int, float))
+            ):
+                raise ContextOperationError(
+                    "TEST_PROPERTY_TOUCH_INVALID",
+                    "target and a finite numeric value are required",
+                    kind="validation",
+                )
+            value = float(value)
+            if not math.isfinite(value):
+                raise ContextOperationError(
+                    "TEST_PROPERTY_TOUCH_INVALID",
+                    "value must be finite",
+                    kind="validation",
+                )
+            target_type = target.get("type")
+            if target_type == "shape_key_value":
+                _obj, property_target = require_shape_key(
+                    str(target.get("object_name")),
+                    str(target.get("expected_object_identity")),
+                    str(target.get("shape_key_name")),
+                    str(target.get("expected_shape_key_identity")),
+                )
+                attribute = "value"
+            elif target_type == "material_input":
+                _obj, _material, _node, property_target = resolve_material_socket(
+                    str(target.get("object_name")),
+                    str(target.get("expected_object_identity")),
+                    int(target.get("material_slot_index")),
+                    str(target.get("material_name")),
+                    str(target.get("expected_material_identity")),
+                    str(target.get("node_name")),
+                    str(target.get("expected_node_identity")),
+                    str(target.get("socket_identifier")),
+                    str(target.get("expected_socket_identity")),
+                )
+                attribute = "default_value"
+            else:
+                raise ContextOperationError(
+                    "TEST_PROPERTY_TOUCH_INVALID",
+                    f"Unsupported test target: {target_type}",
+                    kind="validation",
+                )
+            with self.suppress_generation():
+                setattr(property_target, attribute, value)
+                bpy.context.view_layer.update()
+            return {
+                "test_hook": "property_touch",
+                "target_type": target_type,
+                "value": value,
+            }
         if command == "context.get":
             with self.suppress_generation():
                 return context_summary()
@@ -681,6 +745,9 @@ class AddonState:
                 scene_generation=self.scene_generation,
             )
             return self._transaction_result(transaction)
+        if command == "object.set":
+            transaction = self._require_transaction(params, request)
+            return self._set_object_settings(transaction, params)
         if command == "object.transform":
             transaction = self._require_transaction(params, request)
             return self._transform_object(transaction, params)
@@ -1223,13 +1290,33 @@ class AddonState:
                 )
         validate_structural_transaction(transaction)
 
-    def _transform_object(
+    def _set_object_settings(
         self,
         transaction: Transaction,
         params: dict[str, Any],
     ) -> dict[str, Any]:
         self._validate_transaction_guards(transaction)
-        transaction.ensure_capacity()
+        previous_count = len(transaction.deltas)
+        with self.suppress_generation():
+            result = apply_object_settings(transaction, params)
+        if len(transaction.deltas) > previous_count:
+            self.scene_generation += 1
+            transaction.status = "active"
+            transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+        result.update(
+            {
+                "status": transaction.status,
+                "delta_count": len(transaction.deltas),
+                "delta_kinds": transaction.delta_kinds(),
+            }
+        )
+        return result
+
+    def _transform_object(
+        self,
+        transaction: Transaction,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
         object_name = params.get("object_name")
         if not isinstance(object_name, str) or not object_name:
             raise ContextOperationError(
@@ -1237,31 +1324,19 @@ class AddonState:
                 "object_name must be a non-empty string",
                 kind="validation",
             )
-        raw_patches = {
-            "location": params.get("location"),
-            "rotation_euler": params.get("rotation_euler_degrees"),
-            "scale": params.get("scale"),
+        public_patches = {
+            name: params.get(name)
+            for name in ("location", "rotation_euler_degrees", "scale")
+            if params.get(name) is not None
         }
-        patches = {name: value for name, value in raw_patches.items() if value is not None}
-        if not patches:
+        if not public_patches:
             raise ContextOperationError(
                 "TRANSFORM_PATCH_INVALID",
                 "location, rotation_euler_degrees, and/or scale is required",
                 kind="validation",
             )
-        if any(
-            not isinstance(patch, dict)
-            or not patch
-            or set(patch) - set(AXIS_INDEX)
-            for patch in patches.values()
-        ):
-            raise ContextOperationError(
-                "TRANSFORM_PATCH_INVALID",
-                "Each transform patch must contain one or more of x, y, and z",
-                kind="validation",
-            )
         object_identity = params.get("expected_object_identity")
-        if "location" in patches or "rotation_euler" in patches:
+        if "location" in public_patches or "rotation_euler_degrees" in public_patches:
             object_identity = self._required_identity(params, "expected_object_identity")
         if object_identity is not None:
             if not isinstance(object_identity, str) or not object_identity:
@@ -1279,79 +1354,43 @@ class AddonState:
                     f"Object does not exist: {object_name}",
                     kind="not_found",
                 )
-        self._require_mutable_object(obj)
+        result = self._set_object_settings(
+            transaction,
+            {
+                "object_name": object_name,
+                "expected_object_identity": session_identity("object", obj),
+                "patches": [{"type": "transform", **public_patches}],
+            },
+        )
+        changed: dict[str, list[str]] = {}
         before: dict[str, dict[str, float]] = {}
         after: dict[str, dict[str, float]] = {}
-        for channel, patch in patches.items():
-            before[channel] = {}
-            after[channel] = {}
-            target = getattr(obj, channel)
-            for axis, raw_value in patch.items():
-                if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
-                    raise ContextOperationError(
-                        "TRANSFORM_VALUE_INVALID",
-                        f"Transform {channel}.{axis} must be a number",
-                        kind="validation",
-                    )
-                value = float(raw_value)
-                if not math.isfinite(value):
-                    raise ContextOperationError(
-                        "TRANSFORM_VALUE_INVALID",
-                        f"Transform {channel}.{axis} must be finite",
-                        kind="validation",
-                    )
-                if channel == "scale" and not 0.000001 <= value <= 1000.0:
-                    raise ContextOperationError(
-                        "SCALE_VALUE_INVALID",
-                        f"Scale {axis} must be between 0.000001 and 1000",
-                        kind="validation",
-                    )
-                if channel == "location" and abs(value) > 1_000_000:
-                    raise ContextOperationError(
-                        "LOCATION_VALUE_INVALID",
-                        f"Location {axis} must be between -1000000 and 1000000",
-                        kind="validation",
-                    )
-                if channel == "rotation_euler" and abs(value) > 360_000:
-                    raise ContextOperationError(
-                        "ROTATION_VALUE_INVALID",
-                        f"Rotation {axis} must be between -360000 and 360000 degrees",
-                        kind="validation",
-                    )
-                index = AXIS_INDEX[axis]
-                before[channel][axis] = float(target[index])
-                after[channel][axis] = math.radians(value) if channel == "rotation_euler" else value
-        with self.suppress_generation():
-            for channel, patch in after.items():
-                target = getattr(obj, channel)
-                for axis, value in patch.items():
-                    target[AXIS_INDEX[axis]] = value
-            bpy.context.view_layer.update()
-            refresh_structure_guard_if_present(transaction, "object", obj)
-        self._record_delta(
-            transaction,
-            ObjectTransformDelta(
-                object_name=object_name,
-                object_identity=session_identity("object", obj),
-                before=before,
-                after=after,
-            ),
-        )
+        for item in result["changes"]:
+            _prefix, public_channel, axis = item["path"].split(".")
+            channel = (
+                "rotation_euler" if public_channel == "rotation_euler_degrees" else public_channel
+            )
+            before_value = float(item["before"])
+            after_value = float(item["after"])
+            if channel == "rotation_euler":
+                before_value = math.radians(before_value)
+                after_value = math.radians(after_value)
+            before.setdefault(channel, {})[axis] = before_value
+            after.setdefault(channel, {})[axis] = after_value
+            changed.setdefault(channel, []).append(axis)
         return {
-            "transaction_id": transaction.transaction_id,
+            "transaction_id": result["transaction_id"],
             "object_name": object_name,
-            "object_identity": session_identity("object", obj),
-            "changed": {channel: sorted(values) for channel, values in after.items()},
+            "object_identity": result["object_identity"],
+            "changed": {channel: sorted(axes) for channel, axes in changed.items()},
             "before": before,
             "after": after,
-            "location": list(obj.location),
-            "rotation_euler_degrees": [
-                math.degrees(float(value)) for value in obj.rotation_euler
-            ],
-            "scale": list(obj.scale),
-            "status": transaction.status,
-            "delta_count": len(transaction.deltas),
-            "delta_kinds": transaction.delta_kinds(),
+            "location": result["object"]["location"],
+            "rotation_euler_degrees": result["object"]["rotation_euler_degrees"],
+            "scale": result["object"]["scale"],
+            "status": result["status"],
+            "delta_count": result["delta_count"],
+            "delta_kinds": result["delta_kinds"],
         }
 
     @staticmethod
@@ -1384,8 +1423,6 @@ class AddonState:
         transaction: Transaction,
         params: dict[str, Any],
     ) -> dict[str, Any]:
-        self._validate_transaction_guards(transaction)
-        transaction.ensure_capacity()
         object_name = params.get("object_name")
         if not isinstance(object_name, str) or not object_name:
             raise ContextOperationError(
@@ -1409,48 +1446,28 @@ class AddonState:
                 kind="validation",
             )
         obj = require_object(object_name, object_identity)
-        self._require_mutable_object(obj)
-        if patch.get("hide_viewport") is True and (
-            obj.select_get() or bpy.context.view_layer.objects.active == obj
-        ):
-            raise ContextOperationError(
-                "VISIBILITY_CONTEXT_CONFLICT",
-                "Cannot hide the active or selected object without changing user context",
-                kind="precondition",
-            )
         before = {attribute: bool(getattr(obj, attribute)) for attribute in patch}
         after = {attribute: bool(value) for attribute, value in patch.items()}
-        changed = sorted(
-            attribute for attribute in after if before[attribute] != after[attribute]
+        result = self._set_object_settings(
+            transaction,
+            {
+                "object_name": object_name,
+                "expected_object_identity": object_identity,
+                "patches": [{"type": "visibility", **patch}],
+            },
         )
-        if changed:
-            with self.suppress_generation():
-                for attribute in changed:
-                    setattr(obj, attribute, after[attribute])
-                bpy.context.view_layer.update()
-            self._record_delta(
-                transaction,
-                VisibilityDelta(
-                    object_name=object_name,
-                    object_identity=object_identity,
-                    before={attribute: before[attribute] for attribute in changed},
-                    after={attribute: after[attribute] for attribute in changed},
-                ),
-            )
+        changed = sorted(item["path"].removeprefix("visibility.") for item in result["changes"])
         return {
-            "transaction_id": transaction.transaction_id,
+            "transaction_id": result["transaction_id"],
             "object_name": object_name,
             "object_identity": object_identity,
             "changed_fields": changed,
             "before": before,
             "after": after,
-            "visibility": {
-                "hide_viewport": bool(obj.hide_viewport),
-                "hide_render": bool(obj.hide_render),
-            },
-            "status": transaction.status,
-            "delta_count": len(transaction.deltas),
-            "delta_kinds": transaction.delta_kinds(),
+            "visibility": result["object"]["visibility"],
+            "status": result["status"],
+            "delta_count": result["delta_count"],
+            "delta_kinds": result["delta_kinds"],
         }
 
     def _set_modifier_state(
@@ -1499,9 +1516,7 @@ class AddonState:
         self._require_mutable_object(obj)
         before = {attribute: bool(getattr(modifier, attribute)) for attribute in patch}
         after = {attribute: bool(value) for attribute, value in patch.items()}
-        changed = sorted(
-            attribute for attribute in after if before[attribute] != after[attribute]
-        )
+        changed = sorted(attribute for attribute in after if before[attribute] != after[attribute])
         if changed:
             with self.suppress_generation():
                 for attribute in changed:

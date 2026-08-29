@@ -5,26 +5,32 @@ in this order when starting a new implementation task:
 
 1. [Design and handoff](design.md) — architecture, safety boundaries, implemented
    phases, and open decisions.
-2. [Using Blender Research MCP](usage.md) — current 0.8.0 operator workflow and error
+2. [Using Blender Research MCP](usage.md) — current 0.9.0 operator workflow and error
    recovery.
-3. [0.8.0 semantic scene authoring roadmap](roadmap/0.8.0-semantic-scene-authoring.md) —
+3. [0.9.0 unified object settings roadmap](roadmap/0.9.0-unified-object-settings.md) —
+   typed object, Light, Camera, and comparison settings.
+4. [0.8.0 semantic scene authoring roadmap](roadmap/0.8.0-semantic-scene-authoring.md) —
    structural transactions, objects, materials, local images, World/Camera, and renders.
-4. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
+5. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
    launch, project switching, implementation, and completed live evidence.
-5. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
-   implemented comparison contract and its separately pending real Blender gate.
-6. [Architecture decisions](decisions/README.md) — accepted protocol and authority
+6. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
+   implemented and live-validated comparison contract.
+7. [Architecture decisions](decisions/README.md) — accepted protocol and authority
    decisions.
-7. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
+8. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
 
 ## Current release
 
-Version 0.8.0 adds bounded semantic static-scene authoring and reviewed Eevee output on
-top of the live-validated 0.7 application/project lifecycle. Structural transaction v3
+Version 0.9.0 adds a closed typed `object.set` entry for coherent transform,
+visibility, Light, and Camera settings on top of the live-validated 0.8 static-scene
+authoring surface. Structural transaction v3
 supports exact create, unlink/delete, material-slot, node-link, World, and Camera
 rollback. The automated suite and real Blender moonlit-water gate have both passed; see
-[the 0.8 validation record](validation/2026-08-29-semantic-scene-authoring.md). The older
-independent 0.6 real comparison gate remains pending.
+[the 0.8 validation record](validation/2026-08-29-semantic-scene-authoring.md). The 0.9
+automated and real Blender gates have both passed; see
+[the 0.9 validation record](validation/2026-08-30-unified-object-settings.md). The
+independent 0.6 real comparison gate has also passed; see
+[its validation record](validation/2026-08-30-comparative-previews.md).
 
 The public repository is
 [Haiyang-Bian/blender-research-mcp](https://github.com/Haiyang-Bian/blender-research-mcp).

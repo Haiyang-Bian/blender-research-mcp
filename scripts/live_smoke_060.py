@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import json
 import math
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -27,6 +29,7 @@ from PIL import Image
 from blender_research_mcp.client import BridgeClient
 from blender_research_mcp.comparison import ComparisonRequest, run_lookdev_comparison
 from blender_research_mcp.errors import BridgeError
+from blender_research_mcp.lifecycle import ApplicationManager
 from blender_research_mcp.observation import settle_scene_generation
 from blender_research_mcp.session import load_manifest
 
@@ -325,13 +328,15 @@ async def initialize_session(
         raise RuntimeError(f"MCP tool list is incomplete: {sorted(tools)}")
     annotation = tools["lookdev.compare"].annotations
     if annotation is None or annotation.model_dump(exclude_none=True) != {
-        "title": "Reversible preview mutation",
         "readOnlyHint": False,
         "destructiveHint": False,
         "idempotentHint": True,
         "openWorldHint": False,
     }:
-        raise RuntimeError("lookdev.compare annotations do not match the preview contract")
+        raise RuntimeError(
+            "lookdev.compare annotations do not match the preview contract: "
+            f"{annotation.model_dump(exclude_none=True) if annotation else None}"
+        )
     ping, _ = await call_structured(session, "connection.ping")
     report["mcp"] = {
         "protocol_version": initialized.protocolVersion,
@@ -394,6 +399,7 @@ async def verify_property_conflict(
     transaction_id: str | None = None
     first_value = float(request.candidates[0].value)
     ui_confirmed = False
+    touches: list[dict[str, Any]] = []
 
     async def phase_hook(
         phase: str,
@@ -404,17 +410,15 @@ async def verify_property_conflict(
         if phase != "after_write" or label != request.candidates[0].label:
             return
         transaction_id = str(details["writer"]["transaction_id"])
-        prefix = ""
-        if verify_ui:
-            prefix = (
-                f"First confirm the Scene Properties label is compare:{label}. "
-                "Then "
+        touches.append(
+            await client.call(
+                "_test.property.touch",
+                {
+                    "target": request.target.model_dump(mode="json"),
+                    "value": conflict_value,
+                },
+                read_only=False,
             )
-        await anyio.to_thread.run_sync(
-            input,
-            prefix
-            + "edit the same visible Blender property to the exact value "
-            f"{conflict_value:.9g}, then press Enter: ",
         )
         actual = await current_target_value(client, request.target.model_dump(mode="json"))
         if not math.isclose(actual, conflict_value, rel_tol=0.0, abs_tol=1e-7):
@@ -437,10 +441,15 @@ async def verify_property_conflict(
     preserved = await current_target_value(client, request.target.model_dump(mode="json"))
     if not math.isclose(preserved, conflict_value, rel_tol=0.0, abs_tol=1e-7):
         raise RuntimeError("comparison overwrote the manual conflict value")
-    await anyio.to_thread.run_sync(
-        input,
-        "Conflict was preserved. Set the same Blender property back to the active "
-        f"transaction value {first_value:.9g}, then press Enter so rollback can clear it: ",
+    touches.append(
+        await client.call(
+            "_test.property.touch",
+            {
+                "target": request.target.model_dump(mode="json"),
+                "value": first_value,
+            },
+            read_only=False,
+        )
     )
     guard = await current_target_value(client, request.target.model_dump(mode="json"))
     if not math.isclose(guard, first_value, rel_tol=0.0, abs_tol=1e-7):
@@ -463,6 +472,7 @@ async def verify_property_conflict(
         "recovery_rollback": rollback,
         "restored_value": restored,
         "ui_confirmed": ui_confirmed,
+        "test_hook_touches": touches,
     }
 
 
@@ -471,8 +481,10 @@ async def verify_disconnect_rollback(
     baseline: float,
     baseline_context: dict[str, Any],
     report: dict[str, Any],
+    *,
+    port: int,
 ) -> BridgeClient:
-    client = BridgeClient()
+    client = BridgeClient(port=port)
     disconnected = False
 
     async def phase_hook(
@@ -497,7 +509,7 @@ async def verify_disconnect_rollback(
         await client.close()
 
     await anyio.sleep(0.5)
-    verification = BridgeClient()
+    verification = BridgeClient(port=port)
     restored = await current_target_value(
         verification,
         request.target.model_dump(mode="json"),
@@ -532,7 +544,10 @@ async def verify_disconnect_rollback(
     return verification
 
 
-async def run(args: argparse.Namespace) -> None:
+async def run_connected(
+    args: argparse.Namespace,
+    managed_session: dict[str, Any],
+) -> None:
     artifact_directory = args.artifact_directory.resolve(strict=True)
     temporary_blend = args.blend_file.resolve(strict=True)
     source_blend = args.source_file.resolve(strict=True)
@@ -556,10 +571,17 @@ async def run(args: argparse.Namespace) -> None:
         "source_git_status_before": preparation["source_git_status"],
         "temporary_blend_file": str(temporary_blend),
         "temporary_sha256_before": temporary_hash_before,
+        "managed_session": managed_session,
     }
     server_parameters = StdioServerParameters(
         command="uv",
-        args=["run", "--no-sync", "blender-research-mcp"],
+        args=[
+            "run",
+            "--no-sync",
+            "blender-research-mcp",
+            "--port",
+            str(args.port),
+        ],
         cwd=ROOT,
     )
     target: dict[str, Any]
@@ -574,7 +596,13 @@ async def run(args: argparse.Namespace) -> None:
         ) as session:
             ping_before = await initialize_session(session, report)
             report["ping_before"] = ping_before
-            if ping_before["addon_version"] not in {"0.5.1", "0.6.0", "0.7.0", "0.8.0"}:
+            if ping_before["addon_version"] not in {
+                "0.5.1",
+                "0.6.0",
+                "0.7.0",
+                "0.8.0",
+                "0.9.0",
+            }:
                 raise RuntimeError(
                     f"unexpected compatible add-on version: {ping_before['addon_version']}"
                 )
@@ -582,6 +610,7 @@ async def run(args: argparse.Namespace) -> None:
                 "0.6.0",
                 "0.7.0",
                 "0.8.0",
+                "0.9.0",
             }:
                 raise RuntimeError("UI verification requires the 0.6.0+ add-on")
             baseline_context, _ = await call_structured(session, "context.get")
@@ -610,7 +639,7 @@ async def run(args: argparse.Namespace) -> None:
                     "Briefly cover Blender with another window without changing Blender state, "
                     "then press Enter: ",
                 )
-                if foreground_process_id() == load_manifest().pid:
+                if foreground_process_id() == load_manifest(args.port).pid:
                     raise RuntimeError("Blender still owns foreground focus")
                 report["non_focus_capture_regression"] = True
             result = await session.call_tool(
@@ -643,7 +672,7 @@ async def run(args: argparse.Namespace) -> None:
                 raise RuntimeError("public lookdev.compare did not restore the target")
 
     await anyio.sleep(0.5)
-    direct = BridgeClient()
+    direct = BridgeClient(port=args.port)
     try:
         if args.verify_conflict:
             conflict_values = values[:2]
@@ -708,9 +737,10 @@ async def run(args: argparse.Namespace) -> None:
             baseline,
             baseline_context,
             report,
+            port=args.port,
         )
     else:
-        final_client = BridgeClient()
+        final_client = BridgeClient(port=args.port)
     try:
         ping_after = await settle_scene_generation(final_client)
         context_after = await final_client.call("context.get", read_only=True)
@@ -753,11 +783,53 @@ async def run(args: argparse.Namespace) -> None:
     print(report_path)
 
 
+async def run(args: argparse.Namespace) -> None:
+    previous_test_hooks = os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS")
+    os.environ["BLENDER_RESEARCH_MCP_TEST_HOOKS"] = "1"
+    client = BridgeClient(port=args.port)
+    manager = ApplicationManager(
+        client,
+        blender_executable=str(args.blender_executable),
+        launch_timeout=args.timeout,
+    )
+    launched = False
+    try:
+        status = await manager.status()
+        if status.get("running"):
+            raise RuntimeError(f"smoke port is already in use: {args.port}")
+        launch = await manager.launch()
+        launched = launch.get("status") == "launched"
+        if not launched:
+            raise RuntimeError(f"managed Blender launch was not cold: {launch}")
+        opened = await manager.project_open(
+            str(args.blend_file.resolve(strict=True)),
+            save_current=False,
+        )
+        if opened.get("status") not in {"opened", "already_open"}:
+            raise RuntimeError(f"prepared comparison project did not open: {opened}")
+        # The Blender add-on accepts one authenticated bridge stream at a time. Release
+        # the lifecycle client's idle stream before starting the MCP stdio client.
+        await manager.close()
+        await run_connected(args, {"launch": launch, "project_open": opened})
+    finally:
+        if launched:
+            with contextlib.suppress(Exception):
+                await manager.quit(save_current=False)
+        await manager.close()
+        if previous_test_hooks is None:
+            os.environ.pop("BLENDER_RESEARCH_MCP_TEST_HOOKS", None)
+        else:
+            os.environ["BLENDER_RESEARCH_MCP_TEST_HOOKS"] = previous_test_hooks
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifact-directory", type=Path, required=True)
     parser.add_argument("--blend-file", type=Path, required=True)
     parser.add_argument("--source-file", type=Path, required=True)
+    parser.add_argument("--blender-executable", type=Path, required=True)
+    parser.add_argument("--port", type=int, default=9881)
+    parser.add_argument("--timeout", type=float, default=90.0)
     parser.add_argument("--target-object", action="append", default=[])
     parser.add_argument("--capture-object")
     parser.add_argument("--candidate-count", type=int, choices=(2, 3), default=3)

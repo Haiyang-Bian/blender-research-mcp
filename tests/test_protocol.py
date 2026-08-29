@@ -58,6 +58,7 @@ def test_capability_versions_default_to_incompatible_zeroes() -> None:
     assert versions.lookdev_inspection == 0
     assert versions.object_visibility == 0
     assert versions.object_transform == 0
+    assert versions.object_settings == 0
     assert versions.scene_inspection == 0
     assert versions.object_authoring == 0
     assert versions.material_authoring == 0
