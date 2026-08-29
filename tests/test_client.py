@@ -32,7 +32,7 @@ def test_client_handshake_ping_and_read_only_reconnect(tmp_path) -> None:
                     "protocol": 1,
                     "instance_id": "instance-1",
                     "blender_version": "4.2.23",
-                    "addon_version": "0.5.0",
+                    "addon_version": "0.5.1",
                     "capabilities": ["connection.ping"],
                     "capability_versions": {
                         "transport": 1,
@@ -85,7 +85,7 @@ def test_client_handshake_ping_and_read_only_reconnect(tmp_path) -> None:
                     "pid": os.getpid(),
                     "instance_id": "instance-1",
                     "session_token": "t" * 43,
-                    "addon_version": "0.5.0",
+                    "addon_version": "0.5.1",
                     "created_at": datetime.now(UTC).isoformat(),
                 }
             ),

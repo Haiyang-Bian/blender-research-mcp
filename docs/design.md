@@ -1,8 +1,8 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.5.0 bounded LookDev writes implemented; live validation pending
+- Status: 0.5.1 bounded LookDev writes implemented; live validation pending
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.5.0
+- Package and add-on version: 0.5.1
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -281,9 +281,9 @@ context, avoiding persistent viewport debt.
 
 ### Phase 2 — transactions
 
-Status: typed reversible property transactions implemented in 0.5.0; the original
+Status: typed reversible property transactions implemented in 0.5.1; the original
 absolute object-scale path was live-validated on 2026-08-28 and the expanded delta
-types await the 0.5.0 smoke test.
+types await the 0.5.1 smoke test.
 
 - Implement property deltas and rollback tokens.
 - Change one eye-aperture parameter, capture evidence, and roll it back.
@@ -292,13 +292,13 @@ types await the 0.5.0 smoke test.
 ### Phase 3 — bounded LookDev operations
 
 Status: object visibility, modifier state, shape-key value, and material input preview
-tools implemented in 0.5.0; live validation pending.
+tools implemented in 0.5.1; live validation pending.
 
 - Inspect writable targets before mutation and require exact session identities.
 - Keep each write absolute, typed, transaction-scoped, and reversible.
 - Bound inspection output and reject unsupported, linked, driven, or stale targets.
 - Keep light controls, modifier parameters, node topology, render-region controls, and
-  automatic A/B/C comparison outside the 0.5.0 authority boundary.
+  automatic A/B/C comparison outside the 0.5.1 authority boundary.
 
 ### Phase 4 — adoption
 

@@ -13,9 +13,9 @@ Blender 会话发现。0.4.0 在不依赖窗口像素的 GPU 离屏捕获上增�
 着色、绝对 orbit、捕获绑定的 `viewport.raycast` 和有界 evaluated geometry
 摘要。0.4.0 已通过 Blender 被 Codex 完全遮挡时的真实空间诊断烟测，
 包括诊断着色、绝对 orbit、正交/透视 raycast、geometry inspect、旧证据
-拒绝和事务回退。0.5.0 已实现有类型、可回退的对象可见性、Modifier 状态、
+拒绝和事务回退。0.5.1 已实现有类型、可回退的对象可见性、Modifier 状态、
 Shape Key 值和材质输入预览；自动化测试已通过，真实 Blender 烟测将在安装
-0.5.0 插件后记录。验收记录见
+0.5.1 插件后记录。验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
 [0.4.0 空间诊断](docs/validation/2026-08-29-spatial-diagnosis.md)。
@@ -53,8 +53,24 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py
+uv run --no-sync python scripts/build_addon.py --version 0.5.1
 ~~~
+
+`--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认
+输出对应版本号的 ZIP；任何不一致都会终止构建。统一质量门可以在命令行运行：
+
+~~~powershell
+uv run --no-sync python scripts/quality_gate.py
+~~~
+
+仓库还提供三个可共享的 PyCharm Run Configuration：
+
+- **Build - Add-on (version)**：启动时询问版本号并执行上述受校验构建；
+- **Tests - Focused (target)**：启动时询问 pytest 文件路径或 node id；
+- **Tests - Full Quality Gate**：依次执行 pytest、Ruff 和 mypy，首项失败即停止。
+
+配置保存在 `.run/`，不依赖 PyCharm 的项目 Python SDK，也不会修改个人
+`.idea/workspace.xml`。若刚拉取配置后列表尚未刷新，重新加载项目即可。
 
 外部 MCP 服务无参数时通过 stdio 启动，并自动发现端口 9877 的本地
 Blender 插件会话。它不提供任意 Python 或保存 `.blend` 文件的工具。
@@ -106,7 +122,7 @@ Workspace；用户可以手动把任意现有 Area 切换为 Properties Editor�
 | 事务、受限 LookDev 写入、回退 | 否 |
 | 捕获、bundle、raycast、geometry inspect | 否；Blender 可被其他窗口遮挡 |
 
-Blender 必须保持运行并存在至少一个 `VIEW_3D`。最小化不是 0.5.0 的兼容
+Blender 必须保持运行并存在至少一个 `VIEW_3D`。最小化不是 0.5.1 的兼容
 保证；GPU 上下文不可用时捕获返回 `CAPTURE_GPU_UNAVAILABLE`，不会把黑图
 作为证据。捕获后端和焦点契约可通过 `connection.ping` 查看。
 
