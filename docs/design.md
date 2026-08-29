@@ -1,8 +1,8 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.4.0 spatial diagnosis implemented and live-validated
+- Status: 0.5.0 bounded LookDev writes implemented; live validation pending
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.4.0
+- Package and add-on version: 0.5.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -191,6 +191,8 @@ single socket recv call must never be treated as one complete JSON message.
 - context.restore
 - object.inspect
 - object.geometry.inspect
+- object.lookdev.inspect
+- material.inspect
 - viewport.capture
 - viewport.raycast
 - observation.bundle
@@ -204,15 +206,22 @@ normalized image coordinates for evaluated-scene raycasts.
 ### Implemented bounded mutation
 
 - object.transform
-
-The 0.3 implementation accepts only absolute partial local `scale.x/y/z` patches.
-
-### Planned mutation
-
 - object.visibility.set
-- modifier.set_input
-- material.set_input
+- modifier.set_state
 - shape_key.set_value
+- material.set_input
+
+The 0.5 implementation accepts only absolute allow-listed fields. Object writes are
+limited to local `scale.x/y/z`, visibility flags, modifier viewport/render state, and
+non-Basis undriven shape-key values. Material writes are limited to unlinked,
+undriven Float, Int, Boolean, Vector, and Color input `default_value` properties.
+Node topology, modifier structure, location, rotation, lights, asset import, arbitrary
+Python, and file saving remain unavailable.
+
+Every new writer requires an active transaction, a current scene generation, a unique
+idempotency key, and exact session identities returned by inspection. Shared materials
+are rejected unless the caller confirms the exact current material user count and sets
+`allow_shared=true`; the bridge does not make implicit single-user copies.
 
 ### Implemented transactions
 
@@ -238,9 +247,12 @@ A context snapshot should record at least:
 Read-only inspection may temporarily change selection or view only when it
 restores the snapshot in a finally path.
 
-Mutation transactions should prefer explicit property deltas. Blender Undo may
-be used as a secondary mechanism, but it is not sufficient as the only rollback
-contract because user actions and agent actions can interleave.
+Mutation transactions use typed property deltas for scale, visibility, modifier state,
+shape-key value, and material input. Repeated writes guard the last agent value while
+reverse rollback restores the original value. Rollback only overwrites a property when
+its current value still matches the agent's last write; identity, context, or property
+conflicts preserve user state. Blender Undo is not the transaction contract because
+user actions and agent actions can interleave.
 
 ## 9. Development phases
 
@@ -269,8 +281,9 @@ context, avoiding persistent viewport debt.
 
 ### Phase 2 — transactions
 
-Status: completed for reversible absolute object-scale previews and live-validated on
-2026-08-28.
+Status: typed reversible property transactions implemented in 0.5.0; the original
+absolute object-scale path was live-validated on 2026-08-28 and the expanded delta
+types await the 0.5.0 smoke test.
 
 - Implement property deltas and rollback tokens.
 - Change one eye-aperture parameter, capture evidence, and roll it back.
@@ -278,8 +291,14 @@ Status: completed for reversible absolute object-scale previews and live-validat
 
 ### Phase 3 — bounded LookDev operations
 
-- Add modifier, material socket, shape-key, light, and render-region tools.
-- Build automatic local A/B/C comparisons.
+Status: object visibility, modifier state, shape-key value, and material input preview
+tools implemented in 0.5.0; live validation pending.
+
+- Inspect writable targets before mutation and require exact session identities.
+- Keep each write absolute, typed, transaction-scoped, and reversible.
+- Bound inspection output and reject unsupported, linked, driven, or stale targets.
+- Keep light controls, modifier parameters, node topology, render-region controls, and
+  automatic A/B/C comparison outside the 0.5.0 authority boundary.
 
 ### Phase 4 — adoption
 

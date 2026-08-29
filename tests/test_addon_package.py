@@ -34,6 +34,9 @@ def test_addon_registers_compact_view3d_and_full_scene_properties_panels() -> No
     source = source_path.read_text(encoding="utf-8")
     assert "area_split" not in source
     assert "session_token" not in source
+    assert "Authorized preview writes" in source
+    assert 'transaction_box.label(text=f"Deltas:' in source
+    assert "Material input default value" in source
 
 
 def test_addon_registers_bounded_object_local_write_commands() -> None:

@@ -2,13 +2,15 @@
 
 ## Start and connect
 
-1. Install `artifacts/blender-research-mcp-addon-0.4.0.zip` in Blender 4.2.23 and
+1. Install `artifacts/blender-research-mcp-addon-0.5.0.zip` in Blender 4.2.23 and
    enable **Blender Research MCP**.
 2. Keep the blend file open with at least one 3D Viewport.
 3. Configure the `blender_research` STDIO MCP as shown in the repository README and
    restart Codex after changing its MCP configuration.
 4. Call `connection.ping`. Protocol 1, `viewport_capture: 3`,
-   `viewport_raycast: 1`, and `geometry_inspection: 1` are required.
+   `viewport_raycast: 1`, `geometry_inspection: 1`, `lookdev_inspection: 1`,
+   `transactions: 2`, and all advertised bounded-write capabilities at version 1 are
+   required.
 
 Blender does not need focus for semantic operations or off-screen capture. It may be
 behind another window. Minimized capture is not guaranteed; restore the Blender window
@@ -57,20 +59,58 @@ omits Python-level per-polygon material, area, and edge-topology diagnostics wit
 Use the compact **Research MCP** N-panel for connection, capture backend, transaction,
 and error status. The complete status panel is under
 **Scene Properties > Blender Research MCP**. Neither panel changes Blender areas or
-workspaces.
+workspaces. The full panel lists authorized write categories and shows the active
+transaction's delta count and kinds without exposing the session token.
 
-## Preview a supported scale change
+## Inspect writable LookDev targets
+
+Call `object.lookdev.inspect` with an exact object name before any new preview. Retain
+the returned object identity and select a target from its bounded results rather than
+guessing names:
+
+- visibility exposes only `hide_viewport` and `hide_render`;
+- modifiers expose identities plus `show_viewport` and `show_render`;
+- shape keys exclude Basis and report slider ranges and driver state;
+- material slots report indices, identities, library state, and current user counts.
+
+For a material target, call `material.inspect(object_name, material_slot_index)` and
+choose a socket whose `writable` field is true. Retain the exact material, node, and
+socket identities, socket identifier, value range, material user count, and affected
+object list. At most 256 shape keys, 64 material slots, and 256 material sockets are
+returned; check `warnings` before assuming the list is complete.
+
+## Preview one supported change
 
 1. Observe or inspect the object and retain the latest `scene_generation`.
 2. Begin a transaction with that generation and a unique idempotency key.
-3. Call `object.transform` with an absolute partial `scale` patch and a new key.
-4. Capture evidence; use the returned settled generation for the final transaction
+3. Call exactly one supported writer with an absolute value, exact inspected identities,
+   the transaction ID, the current generation, and a new idempotency key.
+4. Inspect the structured before/after result and capture the smallest useful visual
+   evidence. Use the returned settled generation for the final transaction
    command.
 5. Roll back unless the result should explicitly remain in Blender memory. Commit does
    not save the blend file.
 
-Only one transaction may be active. Conflicts protect user context and properties; no
-force operation exists.
+Supported writers are `object.transform`, `object.visibility.set`,
+`modifier.set_state`, `shape_key.set_value`, and `material.set_input`. They never
+change object location/rotation, add or reorder modifiers, edit node topology, change
+lights, import assets, or save files.
+
+Shape-key values must be finite and inside the inspected slider range; no clamp occurs.
+Material input values preserve their inspected Boolean, Int, Float, three-component
+Vector, or four-component Color type. Linked, driven, read-only, unsupported, or
+library-linked inputs are rejected.
+
+If `material.users > 1`, the default material write fails. To proceed, provide the
+unchanged `expected_material_users` from inspection and `allow_shared=true`; review the
+returned affected-object list first. This intentionally changes the same material for
+all users. No automatic single-user copy is available.
+
+Only one transaction may be active. If the user changes the same context or property,
+rollback returns `CONTEXT_CONFLICT`, `PROPERTY_CONFLICT`, or
+`TARGET_IDENTITY_CONFLICT` and preserves the user's value. No force operation exists.
+Use a distinct idempotency key for each distinct payload; a replay of the same payload
+returns the cached result.
 
 ## Install the Codex workflow skill
 
@@ -87,7 +127,7 @@ Codex after the first installation so automatic skill discovery can see it.
 
 ## Common failures
 
-- `CAPABILITY_MISMATCH`: install and restart the matching 0.4 add-on.
+- `CAPABILITY_MISMATCH`: install and fully restart the matching 0.5 add-on.
 - `CAPTURE_GPU_UNAVAILABLE`: restore the Blender window and confirm a 3D Viewport exists.
 - `CAPTURE_BLANK`: discard the image; it is not valid evidence.
 - `SCENE_UNSTABLE`: stop playback/loading/editing and restart the observation.
@@ -98,3 +138,9 @@ Codex after the first installation so automatic skill discovery can see it.
   capture again.
 - Transaction conflict: preserve the user's state and inspect before attempting any
   further mutation.
+- `SHARED_MATERIAL_CONFIRMATION_REQUIRED`: inspect the material's users and affected
+  objects; set `allow_shared=true` only when the user intends a shared edit.
+- `MATERIAL_USERS_CONFLICT`: re-inspect; never reuse a user count from stale evidence.
+- Material socket linked/driven/read-only/type/range failure: choose a different
+  inspected writable socket or revise the absolute value. Do not edit node topology or
+  fall back to arbitrary Python.

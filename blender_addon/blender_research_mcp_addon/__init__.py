@@ -86,7 +86,23 @@ def _draw_full_status(layout: Any) -> None:
     layout.label(text=f"Heartbeat: {STATE.heartbeat}")
     layout.label(text=f"Scene generation: {STATE.scene_generation}")
     layout.label(text=f"Capture: {STATE.last_capture_backend}")
-    layout.label(text=f"Transaction: {STATE.transactions.last_status}")
+    transaction = STATE.transactions.active
+    if transaction is None:
+        layout.label(text=f"Transaction: {STATE.transactions.last_status}")
+    else:
+        transaction_box = layout.box()
+        transaction_box.label(text="Active transaction", icon="MODIFIER")
+        transaction_box.label(text=f"ID: {transaction.transaction_id[:8]}")
+        transaction_box.label(text=f"Deltas: {len(transaction.deltas)}")
+        kinds = ", ".join(transaction.delta_kinds()) or "none"
+        transaction_box.label(text=f"Kinds: {kinds}")
+    authority_box = layout.box()
+    authority_box.label(text="Authorized preview writes", icon="LOCKVIEW_ON")
+    authority_box.label(text="Object scale and visibility")
+    authority_box.label(text="Modifier viewport/render state")
+    authority_box.label(text="Shape key value")
+    authority_box.label(text="Material input default value")
+    authority_box.label(text="Commit never saves the blend file")
     if STATE.active_command:
         layout.label(text=f"Running: {STATE.active_command}")
     layout.label(text=f"Last command: {STATE.last_command_ms:.3f} ms")

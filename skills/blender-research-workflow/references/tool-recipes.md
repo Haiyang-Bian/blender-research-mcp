@@ -15,6 +15,11 @@ current blend file and never authorize arbitrary Python.
 6. Check `context_unchanged`, `object_unchanged`, image hashes, warnings, and the final
    `scene_generation` before drawing conclusions.
 
+When the question involves writable LookDev state, call `object.lookdev.inspect` after
+identifying the exact object. It reports authoritative target identities and bounded
+visibility, modifier, shape-key, and material-slot state; names from memory are not
+write authority.
+
 Use `viewport.capture` for one image. Its returned generation is already settled and
 can be passed directly to `transaction.begin`.
 
@@ -51,6 +56,43 @@ incremental viewport operations or leave selection/view changes behind.
 Never reuse an idempotency key for a different payload. Do not convert an absolute
 scale request into an incremental expression.
 
+## Reversible object-local LookDev preview
+
+1. Call `object.lookdev.inspect` and retain the exact object identity plus the chosen
+   modifier or shape-key identity when applicable.
+2. Choose one property and one absolute value. Visibility is limited to
+   `hide_viewport` / `hide_render`; modifier state to `show_viewport` / `show_render`;
+   shape keys to non-Basis, undriven values inside the reported slider range.
+3. Begin a transaction from the latest settled generation and call the matching writer
+   with a separate idempotency key and all inspected identities.
+4. Confirm structured before/after evidence. Capture an image only when the property is
+   expected to have a visual effect.
+5. Roll back by default, then re-inspect the property and user context. Commit only
+   after explicit intent to retain the in-memory preview.
+
+Do not hide an active or selected object, because that would leave context debt. Do not
+add, remove, reorder, or parameterize modifiers, and do not write Basis or driven shape
+keys.
+
+## Reversible material-input preview
+
+1. Use `object.lookdev.inspect` to choose an exact material slot, then call
+   `material.inspect` for that object and slot.
+2. Choose one socket with `writable: true`. Retain the exact object, material, node, and
+   socket identities, socket identifier, type, range, current material user count, and
+   affected object list.
+3. Prefer a single-user material. If `material_users > 1`, stop unless the user intends
+   all affected users to change. Only then pass the exact `expected_material_users` and
+   `allow_shared=true`.
+4. Begin a transaction and call `material.set_input` with a value of the inspected
+   type: Boolean, Int, finite Float, three-float Vector, or four-float Color. Do not
+   clamp or convert it.
+5. Capture the smallest useful evidence, then roll back by default and verify the
+   socket value. Commit retains memory only and does not save the file.
+
+Never write a linked, driven, read-only, unsupported, or library-linked socket. Do not
+rewire nodes or create a single-user material as a workaround.
+
 ## Recovery
 
 - `CAPABILITY_MISMATCH`: install the matching add-on ZIP, re-enable it, restart the
@@ -67,5 +109,10 @@ scale request into an incremental expression.
   mesh arrays or fall back to unrestricted Python.
 - Transaction conflict: preserve user state and report the exact conflict. Never force
   rollback over a value the user changed.
+- `SHARED_MATERIAL_CONFIRMATION_REQUIRED`: report the user count and affected objects;
+  obtain intent before a shared preview.
+- `MATERIAL_USERS_CONFLICT`: re-inspect the material rather than reusing stale scope.
+- Material socket link, driver, read-only, type, or range failure: choose a different
+  inspected writable input or report the boundary; do not rewire nodes or use Python.
 - Connection loss: reconnect and ping. The add-on attempts safe rollback after its
   reconnect grace period; inspect transaction status before further mutation.

@@ -8,7 +8,8 @@ boundaries as numbered files:
 ~~~
 
 Current records cover authenticated transport, reversible transactions,
-focus-independent off-screen observation, and capture-bound spatial diagnosis.
+focus-independent off-screen observation, capture-bound spatial diagnosis, and
+bounded LookDev writes.
 
 Each record should include context, decision, alternatives, consequences, and
 status. Do not use decision records for routine implementation details.

@@ -1,6 +1,6 @@
 ---
 name: blender-research-workflow
-description: Inspect, spatially diagnose, compare, and reversibly preview supported changes in a live Blender 4.2 scene through Blender Research MCP. Use for viewport evidence, capture-bound raycasts, evaluated mesh summaries, supported scale previews, and rollback verification; do not use for arbitrary Python or saving blend files.
+description: Inspect, spatially diagnose, and reversibly preview bounded LookDev changes in a live Blender 4.2 scene through Blender Research MCP. Use for viewport evidence, capture-bound raycasts, evaluated mesh summaries, scale, visibility, modifier-state, shape-key, or material-input previews; do not use for arbitrary Python or saving blend files.
 ---
 
 # Blender Research Workflow
@@ -10,8 +10,9 @@ Use the semantic `blender_research` MCP as the source of truth for live Blender 
 ## Start safely
 
 1. Call `connection.ping` before relying on the tools. Require protocol `1`, add-on
-   `0.4.x`, `viewport_capture >= 3`, `viewport_raycast >= 1`, and
-   `geometry_inspection >= 1`.
+   `0.5.x`, `viewport_capture >= 3`, `viewport_raycast >= 1`,
+   `geometry_inspection >= 1`, `lookdev_inspection >= 1`, and
+   `transactions >= 2`.
 2. Call `context.get` and use exact object names. Never infer live connectivity from
    tool registration alone.
 3. For visual diagnosis, prefer `observation.bundle` with the smallest useful set of
@@ -40,6 +41,14 @@ Use a transaction for every supported scene mutation. Pass the latest returned
 one variable at a time, collect structured and visual evidence, and roll back unless
 the user has explicitly asked to retain or accepted the result. Commit retains only
 the in-memory Blender state and never saves the blend file.
+
+Before a visibility, modifier, shape-key, or material preview, call
+`object.lookdev.inspect` and use its exact target identities. For a material input,
+also call `material.inspect` and choose a socket reported as writable. Do not infer
+slot, node, socket, modifier, or shape-key names. Treat a shared material as a broader
+change: require the user's intent before setting `allow_shared=true`, use the exact
+inspected user count, and review affected objects. Never create a single-user copy,
+edit topology, or substitute another unsupported write.
 
 If a context, property, generation, or idempotency conflict occurs, stop. Do not force
 restore, overwrite user state, open a second transaction, or fall back to unrestricted

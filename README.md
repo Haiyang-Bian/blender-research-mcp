@@ -13,7 +13,9 @@ Blender 会话发现。0.4.0 在不依赖窗口像素的 GPU 离屏捕获上增�
 着色、绝对 orbit、捕获绑定的 `viewport.raycast` 和有界 evaluated geometry
 摘要。0.4.0 已通过 Blender 被 Codex 完全遮挡时的真实空间诊断烟测，
 包括诊断着色、绝对 orbit、正交/透视 raycast、geometry inspect、旧证据
-拒绝和事务回退。验收记录见
+拒绝和事务回退。0.5.0 已实现有类型、可回退的对象可见性、Modifier 状态、
+Shape Key 值和材质输入预览；自动化测试已通过，真实 Blender 烟测将在安装
+0.5.0 插件后记录。验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
 [0.4.0 空间诊断](docs/validation/2026-08-29-spatial-diagnosis.md)。
@@ -69,6 +71,26 @@ Blender 插件会话。它不提供任意 Python 或保存 `.blend` 文件的工
 重新捕获。`object.geometry.inspect` 提供网格计数、bounds、材质使用、modifier
 和有界拓扑摘要，不返回原始网格数组。
 
+## 受限 LookDev 写入
+
+`object.lookdev.inspect` 先枚举对象可见性、Modifier、非 Basis Shape Key 和
+材质槽的会话身份；`material.inspect` 再枚举一个精确材质槽内至多 256 个输入
+socket，并标明类型、范围、链接、驱动和可写原因。
+
+所有写入都必须位于事务中，并携带检查结果里的精确身份、最新
+`scene_generation` 和独立幂等键：
+
+- `object.visibility.set` 只设置 `hide_viewport` / `hide_render`；
+- `modifier.set_state` 只设置 `show_viewport` / `show_render`；
+- `shape_key.set_value` 只设置非 Basis、无驱动且位于现有 slider 范围内的值；
+- `material.set_input` 只设置未链接、无驱动的 Float、Int、Boolean、Vector 或
+  Color `default_value`。
+
+共享材质默认拒绝。只有调用者同时提供准确的 `expected_material_users` 和
+`allow_shared=true` 才会修改，并返回所有可发现的受影响对象。系统不会自动
+复制 single-user 材质，也不会改变节点拓扑。没有明确保留意图时应 rollback；
+commit 仅保留 Blender 内存状态，仍不会保存 `.blend`。
+
 ## Blender 控制区域
 
 3D Viewport 的 **Research MCP** N-panel 只显示紧凑状态。完整 endpoint、
@@ -81,10 +103,10 @@ Workspace；用户可以手动把任意现有 Area 切换为 Properties Editor�
 | 操作 | 是否需要 Blender 在前台 |
 | --- | --- |
 | 连接、上下文、对象检查 | 否 |
-| 事务、局部绝对缩放、回退 | 否 |
+| 事务、受限 LookDev 写入、回退 | 否 |
 | 捕获、bundle、raycast、geometry inspect | 否；Blender 可被其他窗口遮挡 |
 
-Blender 必须保持运行并存在至少一个 `VIEW_3D`。最小化不是 0.4.0 的兼容
+Blender 必须保持运行并存在至少一个 `VIEW_3D`。最小化不是 0.5.0 的兼容
 保证；GPU 上下文不可用时捕获返回 `CAPTURE_GPU_UNAVAILABLE`，不会把黑图
 作为证据。捕获后端和焦点契约可通过 `connection.ping` 查看。
 
@@ -117,7 +139,8 @@ default_tools_approval_mode = "writes"
 ## 安装常用工作流 Skill
 
 仓库中的 `skills/blender-research-workflow` 定义了连接验证、多视图观察、
-单变量事务预览和安全恢复流程。安装到个人 Codex skills：
+二维到三维诊断、受限写入检查、单变量事务预览和安全恢复流程。安装到个人
+Codex skills：
 
 ~~~powershell
 uv run --no-sync python scripts/install_codex_skill.py

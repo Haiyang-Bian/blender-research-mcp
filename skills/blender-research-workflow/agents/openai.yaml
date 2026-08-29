@@ -1,7 +1,7 @@
 interface:
   display_name: "Blender Research Workflow"
-  short_description: "Spatially diagnose and safely preview Blender scenes"
-  default_prompt: "Use $blender-research-workflow to capture, spatially diagnose, and safely preview this Blender scene."
+  short_description: "Diagnose and safely preview bounded Blender LookDev"
+  default_prompt: "Use $blender-research-workflow to diagnose this Blender scene and preview one bounded, reversible LookDev change."
 dependencies:
   tools:
     - type: "mcp"
