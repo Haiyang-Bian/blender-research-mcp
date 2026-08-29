@@ -22,6 +22,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "viewport.capture",
         "viewport.raycast",
         "observation.bundle",
+        "lookdev.compare",
         "transaction.begin",
         "object.transform",
         "object.visibility.set",
@@ -68,6 +69,20 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert bundle.inputSchema["properties"]["views"]["maxItems"] == 3
     assert bundle.inputSchema["properties"]["max_size"]["maximum"] == 1200
     assert "display_mode" in bundle.inputSchema["properties"]
+    comparison = tools_by_name["lookdev.compare"]
+    assert comparison.annotations is not None
+    assert comparison.annotations.readOnlyHint is False
+    assert comparison.annotations.destructiveHint is False
+    assert comparison.annotations.idempotentHint is True
+    assert comparison.annotations.openWorldHint is False
+    assert comparison.inputSchema["properties"]["candidates"]["minItems"] == 1
+    assert comparison.inputSchema["properties"]["candidates"]["maxItems"] == 3
+    assert comparison.inputSchema["$defs"]["ComparisonCapture"]["properties"]["max_size"][
+        "maximum"
+    ] == 1000
+    target_schema = comparison.inputSchema["properties"]["target"]
+    assert target_schema["discriminator"]["propertyName"] == "type"
+    assert len(target_schema["oneOf"]) == 5
     transform = tools_by_name["object.transform"]
     assert transform.annotations is not None
     assert transform.annotations.readOnlyHint is False

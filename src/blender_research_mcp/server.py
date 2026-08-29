@@ -24,6 +24,13 @@ from pydantic import (
 )
 
 from blender_research_mcp.client import BridgeClient
+from blender_research_mcp.comparison import (
+    ComparisonCandidates,
+    ComparisonCapture,
+    ComparisonRequest,
+    ComparisonTarget,
+    run_lookdev_comparison,
+)
 from blender_research_mcp.constants import DEFAULT_PORT
 from blender_research_mcp.observation import (
     capture_image,
@@ -38,6 +45,12 @@ READ_ONLY = ToolAnnotations(
     openWorldHint=False,
 )
 CONTEXT_MUTATION = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+PREVIEW_MUTATION = ToolAnnotations(
     readOnlyHint=False,
     destructiveHint=False,
     idempotentHint=True,
@@ -375,6 +388,35 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
             content=content,
             structuredContent=result,
         )
+
+    @server.tool(
+        name="lookdev.compare",
+        description=(
+            "Capture a baseline and one to three absolute candidates for one inspected "
+            "LookDev property, rolling every candidate back before returning evidence."
+        ),
+        annotations=PREVIEW_MUTATION,
+        structured_output=False,
+    )
+    async def lookdev_compare(
+        target: ComparisonTarget,
+        candidates: ComparisonCandidates,
+        capture: ComparisonCapture,
+    ) -> CallToolResult:
+        request = ComparisonRequest(target=target, candidates=candidates, capture=capture)
+        images, result = await run_lookdev_comparison(client, request)
+        content: list[ContentBlock] = [
+            ImageContent(
+                type="image",
+                data=base64.b64encode(image).decode("ascii"),
+                mimeType="image/png",
+            )
+            for image in images
+        ]
+        content.append(
+            TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))
+        )
+        return CallToolResult(content=content, structuredContent=result)
 
     @server.tool(
         name="transaction.begin",
