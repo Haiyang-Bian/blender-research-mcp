@@ -40,6 +40,12 @@ class ContextOperationError(RuntimeError):
         self.details = details or {}
 
 
+def _stable_view_float(value: Any) -> float:
+    """Canonicalize Blender float32 view state for exact context evidence."""
+
+    return round(float(value), 6)
+
+
 @dataclass
 class ViewportContext:
     window: Any
@@ -105,11 +111,11 @@ def capture_context(viewport_id: str | None = None) -> dict[str, Any]:
         "frame_current": scene.frame_current,
         "active_camera": scene.camera.name if scene.camera else None,
         "view": {
-            "location": list(region_3d.view_location),
-            "rotation": list(region_3d.view_rotation),
-            "distance": region_3d.view_distance,
+            "location": [_stable_view_float(value) for value in region_3d.view_location],
+            "rotation": [_stable_view_float(value) for value in region_3d.view_rotation],
+            "distance": _stable_view_float(region_3d.view_distance),
             "perspective": region_3d.view_perspective,
-            "lens": viewport.space.lens,
+            "lens": _stable_view_float(viewport.space.lens),
             "shading": viewport.space.shading.type,
             "show_overlays": viewport.space.overlay.show_overlays,
         },

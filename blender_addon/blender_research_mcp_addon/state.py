@@ -442,6 +442,66 @@ class AddonState:
                 "object_identity": session_identity("object", obj),
                 "location": list(obj.location),
             }
+        if command == "_test.property.touch":
+            if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":
+                raise ContextOperationError(
+                    "COMMAND_NOT_FOUND",
+                    f"Unsupported command: {command}",
+                    kind="not_found",
+                )
+            target = params.get("target")
+            value = params.get("value")
+            if not isinstance(target, dict) or isinstance(value, bool) or not isinstance(
+                value, (int, float)
+            ):
+                raise ContextOperationError(
+                    "TEST_PROPERTY_TOUCH_INVALID",
+                    "target and a finite numeric value are required",
+                    kind="validation",
+                )
+            value = float(value)
+            if not math.isfinite(value):
+                raise ContextOperationError(
+                    "TEST_PROPERTY_TOUCH_INVALID",
+                    "value must be finite",
+                    kind="validation",
+                )
+            target_type = target.get("type")
+            if target_type == "shape_key_value":
+                _obj, property_target = require_shape_key(
+                    str(target.get("object_name")),
+                    str(target.get("expected_object_identity")),
+                    str(target.get("shape_key_name")),
+                    str(target.get("expected_shape_key_identity")),
+                )
+                attribute = "value"
+            elif target_type == "material_input":
+                _obj, _material, _node, property_target = resolve_material_socket(
+                    str(target.get("object_name")),
+                    str(target.get("expected_object_identity")),
+                    int(target.get("material_slot_index")),
+                    str(target.get("material_name")),
+                    str(target.get("expected_material_identity")),
+                    str(target.get("node_name")),
+                    str(target.get("expected_node_identity")),
+                    str(target.get("socket_identifier")),
+                    str(target.get("expected_socket_identity")),
+                )
+                attribute = "default_value"
+            else:
+                raise ContextOperationError(
+                    "TEST_PROPERTY_TOUCH_INVALID",
+                    f"Unsupported test target: {target_type}",
+                    kind="validation",
+                )
+            with self.suppress_generation():
+                setattr(property_target, attribute, value)
+                bpy.context.view_layer.update()
+            return {
+                "test_hook": "property_touch",
+                "target_type": target_type,
+                "value": value,
+            }
         if command == "context.get":
             with self.suppress_generation():
                 return context_summary()

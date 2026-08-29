@@ -130,6 +130,7 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
         1,
     )[0]
     assert "_test.structure.touch" not in capabilities_source
+    assert "_test.property.touch" not in capabilities_source
     assert 'os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1"' in state
     assert 'self.active_command in MUTATION_COMMANDS' in state
     assert "view_layer.update()" in state

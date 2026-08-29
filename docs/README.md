@@ -12,7 +12,7 @@ in this order when starting a new implementation task:
 4. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
    launch, project switching, implementation, and completed live evidence.
 5. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
-   implemented comparison contract and its separately pending real Blender gate.
+   implemented and live-validated comparison contract.
 6. [Architecture decisions](decisions/README.md) — accepted protocol and authority
    decisions.
 7. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
@@ -23,8 +23,9 @@ Version 0.8.0 adds bounded semantic static-scene authoring and reviewed Eevee ou
 top of the live-validated 0.7 application/project lifecycle. Structural transaction v3
 supports exact create, unlink/delete, material-slot, node-link, World, and Camera
 rollback. The automated suite and real Blender moonlit-water gate have both passed; see
-[the 0.8 validation record](validation/2026-08-29-semantic-scene-authoring.md). The older
-independent 0.6 real comparison gate remains pending.
+[the 0.8 validation record](validation/2026-08-29-semantic-scene-authoring.md). The
+independent 0.6 real comparison gate has also passed; see
+[its validation record](validation/2026-08-30-comparative-previews.md).
 
 The public repository is
 [Haiyang-Bian/blender-research-mcp](https://github.com/Haiyang-Bian/blender-research-mcp).

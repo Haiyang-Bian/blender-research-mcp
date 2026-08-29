@@ -1,8 +1,8 @@
 # Blender Research MCP — design and handoff
 
 - Status: 0.8.0 semantic static-scene authoring implemented and live validated
-- Next milestone: adopt the bounded authoring loop in real projects while keeping the
-  independent 0.6 comparative-preview gate explicit
+- Next milestone: unify typed object, Light, and Camera settings while preserving the
+  reviewed transaction and comparison loop
 - Primary Blender target: 4.2.23 LTS
 - Package and add-on version: 0.8.0
 - Protocol version: 1
@@ -370,7 +370,8 @@ tools implemented and live-validated in 0.5.1.
 
 ### Phase 4 — reversible comparative evidence
 
-Status: implemented with automated coverage in 0.6.0; real Blender acceptance pending.
+Status: implemented and live-validated on Blender 4.2.23; see
+`docs/validation/2026-08-30-comparative-previews.md`.
 
 - Add a typed, closed-world `lookdev.compare` orchestration tool.
 - Accept one inspected target and one to three unique absolute candidate values.
@@ -414,13 +415,11 @@ Status: initial adoption complete. Codex is configured against the new MCP, vers
 0.2 through 0.5.1 have live Blender validation records, and the repository is public
 with its validated history merged into `main`.
 
-- Reuse the validated 0.8 authoring smoke as a regression suite while keeping the 0.6
-  comparative real-Blender gate explicitly pending.
+- Reuse the validated 0.8 authoring and 0.6 comparison smokes as regression suites.
 - Keep any older bridge only as an external fallback; do not copy its unrestricted
   execution surface into this repository.
-- After comparative previews are validated in real work, evaluate bounded light
-  parameters and selected modifier families as separate capability proposals rather
-  than adding a generic RNA writer.
+- Add a closed typed `object.set` surface for object, Light, and Camera settings rather
+  than a generic RNA writer; keep selected Modifier families as a separate proposal.
 
 ## 10. Acceptance criteria for the first milestone
 
