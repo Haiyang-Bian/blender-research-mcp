@@ -54,6 +54,7 @@ from blender_research_mcp.lifecycle import (
     DEFAULT_LAUNCH_TIMEOUT_SECONDS,
     ApplicationManager,
 )
+from blender_research_mcp.object_settings import ObjectSettingPatches
 from blender_research_mcp.observation import (
     capture_image,
     collect_observation_bundle,
@@ -710,6 +711,38 @@ def create_server(
         )
 
     @server.tool(
+        name="object.set",
+        description=(
+            "Atomically apply typed transform, visibility, Light, and Camera settings to "
+            "one exact object inside the active transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def object_set(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        patches: ObjectSettingPatches,
+    ) -> dict[str, Any]:
+        await require_capability(client, "object_settings")
+        client.require_capability("transactions", 3)
+        return await client.call(
+            "object.set",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "patches": [patch.model_dump(exclude_none=True) for patch in patches],
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
         name="object.transform",
         description=(
             "Set one or more local object scale axes to absolute values inside "
@@ -987,9 +1020,7 @@ def create_server(
             or expected_material_identity is None
             or expected_material_users is None
         ):
-            raise ValueError(
-                "append and replace require exact material identity and user count"
-            )
+            raise ValueError("append and replace require exact material identity and user count")
         await require_capability(client, "material_authoring")
         client.require_capability("transactions", 3)
         return await client.call(
@@ -1160,8 +1191,7 @@ def create_server(
         environment_image_name: ImageName | None = None,
         expected_environment_image_identity: SessionIdentity | None = None,
         expected_environment_image_users: Annotated[StrictInt, Field(ge=0)] | None = None,
-        rotation_z_degrees: Annotated[FiniteNumber, Field(ge=-360_000, le=360_000)]
-        | None = None,
+        rotation_z_degrees: Annotated[FiniteNumber, Field(ge=-360_000, le=360_000)] | None = None,
         allow_shared: StrictBool = False,
     ) -> dict[str, Any]:
         if (expected_world_identity is None) != (expected_world_users is None):

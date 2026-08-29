@@ -134,6 +134,8 @@ def test_property_values_compare_without_bool_or_vector_coercion() -> None:
     assert model.values_equal(True, True)
     assert not model.values_equal(True, 1)
     assert not model.values_equal((0.1, 0.2), (0.1, 0.2, 0.3))
+    assert model.values_equal("RECTANGLE", "RECTANGLE")
+    assert not model.values_equal("RECTANGLE", "SQUARE")
 
 
 def test_idempotency_cache_replays_same_input_and_rejects_reuse() -> None:
@@ -265,3 +267,43 @@ def test_object_transform_delta_tracks_location_rotation_and_scale_separately() 
     assert transaction.expected_properties()[
         model.PropertyRef("object_location", ("Moon", "object:moon"), "z")
     ] == 4.0
+
+
+def test_object_data_delta_guards_identity_users_and_typed_values() -> None:
+    model = load_transaction_model()
+    transaction = model.Transaction(
+        transaction_id="tx-data",
+        label=None,
+        context_snapshot={},
+        context_fingerprint="context",
+        started_generation=0,
+    )
+    transaction.record(
+        model.ObjectDataDelta(
+            object_name="Key Light",
+            object_identity="object:1",
+            data_name="Key Light Data",
+            data_identity="light:1",
+            data_kind="light",
+            expected_users=2,
+            before={"shape": "SQUARE", "color": (1.0, 1.0, 1.0)},
+            after={"shape": "RECTANGLE", "color": (0.5, 0.6, 0.7)},
+        )
+    )
+
+    assert transaction.delta_kinds() == ["light_setting"]
+    expected = transaction.expected_properties()
+    reference = model.PropertyRef(
+        "light_setting",
+        ("Key Light", "object:1", "Key Light Data", "light:1", "2"),
+        "shape",
+    )
+    assert expected[reference] == "RECTANGLE"
+
+    transaction.refresh_object_data_users("light:1", 3)
+    refreshed = transaction.expected_properties()
+    assert model.PropertyRef(
+        "light_setting",
+        ("Key Light", "object:1", "Key Light Data", "light:1", "3"),
+        "shape",
+    ) in refreshed

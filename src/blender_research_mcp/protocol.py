@@ -28,6 +28,7 @@ class CapabilityVersions(BaseModel):
     transactions: int = Field(default=0, ge=0)
     object_transform_scale: int = Field(default=0, ge=0)
     object_transform: int = Field(default=0, ge=0)
+    object_settings: int = Field(default=0, ge=0)
     scene_inspection: int = Field(default=0, ge=0)
     object_authoring: int = Field(default=0, ge=0)
     material_authoring: int = Field(default=0, ge=0)

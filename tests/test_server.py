@@ -36,6 +36,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "object.create",
         "object.duplicate",
         "object.delete",
+        "object.set",
         "object.transform",
         "object.visibility.set",
         "modifier.set_state",
@@ -152,6 +153,17 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert object_delete.inputSchema["properties"]["expected_object_identity"][
         "maxLength"
     ] == 128
+    object_set = tools_by_name["object.set"]
+    assert object_set.annotations is not None
+    assert object_set.annotations.readOnlyHint is False
+    assert object_set.annotations.destructiveHint is True
+    assert object_set.annotations.idempotentHint is True
+    assert object_set.annotations.openWorldHint is False
+    patches_schema = object_set.inputSchema["properties"]["patches"]
+    assert patches_schema["minItems"] == 1
+    assert patches_schema["maxItems"] == 4
+    assert patches_schema["items"]["discriminator"]["propertyName"] == "type"
+    assert len(patches_schema["items"]["oneOf"]) == 4
     transform = tools_by_name["object.transform"]
     assert transform.annotations is not None
     assert transform.annotations.readOnlyHint is False

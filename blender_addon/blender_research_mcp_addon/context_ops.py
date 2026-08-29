@@ -265,6 +265,8 @@ def context_summary() -> dict[str, Any]:
 
 
 def inspect_object(object_name: str) -> dict[str, Any]:
+    from .object_settings_ops import object_data_summary
+
     obj = bpy.data.objects.get(object_name)
     if obj is None:
         raise ContextOperationError(
@@ -283,12 +285,18 @@ def inspect_object(object_name: str) -> dict[str, Any]:
         "location": list(obj.location),
         "rotation_mode": obj.rotation_mode,
         "rotation_euler": list(obj.rotation_euler),
+        "rotation_euler_degrees": [math.degrees(float(value)) for value in obj.rotation_euler],
         "rotation_quaternion": list(obj.rotation_quaternion),
         "scale": list(obj.scale),
         "dimensions": list(obj.dimensions),
         "visible": obj.visible_get(),
         "hide_viewport": obj.hide_viewport,
         "hide_render": obj.hide_render,
+        "visibility": {
+            "hide_viewport": bool(obj.hide_viewport),
+            "hide_render": bool(obj.hide_render),
+        },
+        "data": object_data_summary(obj),
         "selected": obj.select_get(),
         "world_bounds": world_bounds,
     }
