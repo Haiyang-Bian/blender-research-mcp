@@ -8,11 +8,16 @@ from blender_research_mcp.server import MaterialInputValue, create_server
 
 def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     server = create_server()
-    assert server._mcp_server.version == "0.6.0"
+    assert server._mcp_server.version == "0.7.0"
     tools = asyncio.run(server.list_tools())
     assert [tool.name for tool in tools] == [
         "application.status",
         "application.launch",
+        "application.quit",
+        "project.status",
+        "project.save",
+        "project.open",
+        "project.reload",
         "connection.ping",
         "context.get",
         "context.snapshot",
@@ -45,6 +50,26 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert application_launch.annotations.idempotentHint is True
     assert application_launch.annotations.openWorldHint is False
     assert application_launch.inputSchema["properties"] == {}
+    application_quit = tools_by_name["application.quit"]
+    assert application_quit.annotations is not None
+    assert application_quit.annotations.readOnlyHint is False
+    assert application_quit.annotations.destructiveHint is True
+    project_status = tools_by_name["project.status"]
+    assert project_status.annotations is not None
+    assert project_status.annotations.readOnlyHint is True
+    for name in ("project.save", "project.open", "project.reload"):
+        tool = tools_by_name[name]
+        assert tool.annotations is not None
+        assert tool.annotations.readOnlyHint is False
+        assert tool.annotations.destructiveHint is True
+        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.openWorldHint is False
+    project_open = tools_by_name["project.open"]
+    assert project_open.inputSchema["properties"]["save_current"]["default"] is True
+    assert project_open.inputSchema["properties"]["use_scripts"]["default"] is True
+    assert project_open.inputSchema["properties"]["load_ui"]["default"] is True
+    project_reload = tools_by_name["project.reload"]
+    assert project_reload.inputSchema["properties"]["save_current"]["default"] is False
     capture = tools_by_name["viewport.capture"]
     assert capture.annotations is not None
     assert capture.annotations.readOnlyHint is True

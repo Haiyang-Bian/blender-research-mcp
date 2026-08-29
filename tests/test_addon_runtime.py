@@ -1,5 +1,6 @@
 import contextlib
 import importlib.util
+import json
 import queue
 import socket
 import sys
@@ -52,6 +53,7 @@ def test_listener_authenticates_before_dispatch_and_removes_manifest(
 ) -> None:
     runtime_module = load_addon_module("runtime")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("BLENDER_RESEARCH_MCP_LAUNCH_ID", "managed-launch-1")
     reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     reservation.bind(("127.0.0.1", 0))
     port = reservation.getsockname()[1]
@@ -63,6 +65,8 @@ def test_listener_authenticates_before_dispatch_and_removes_manifest(
         time.sleep(0.01)
     assert runtime.status == "listening"
     assert runtime.manifest_path.exists()
+    manifest = json.loads(runtime.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["launch_id"] == "managed-launch-1"
 
     client = socket.create_connection(("127.0.0.1", port), timeout=1)
     client.settimeout(0.01)

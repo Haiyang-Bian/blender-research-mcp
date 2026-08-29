@@ -1,5 +1,6 @@
 """Blender Research MCP add-on."""
 
+import os
 from typing import Any
 
 import bpy
@@ -12,7 +13,7 @@ from .state import AddonState
 bl_info = {
     "name": "Blender Research MCP",
     "author": "Blender Research MCP contributors",
-    "version": (0, 6, 0),
+    "version": (0, 7, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Research MCP",
     "description": "Local semantic, observable, and reversible MCP bridge",
@@ -20,6 +21,18 @@ bl_info = {
 }
 
 STATE: AddonState | None = None
+PORT_ENV = "BLENDER_RESEARCH_MCP_PORT"
+
+
+def _runtime_port(preference_port: int) -> int:
+    managed = os.environ.get(PORT_ENV)
+    if managed is None:
+        return preference_port
+    try:
+        port = int(managed)
+    except ValueError:
+        return preference_port
+    return port if 1 <= port <= 65535 else preference_port
 
 
 class BRMCP_AddonPreferences(bpy.types.AddonPreferences):
@@ -45,7 +58,7 @@ class BRMCP_OT_restart(bpy.types.Operator):
         if STATE is not None:
             STATE.stop()
         STATE = AddonState()
-        STATE.runtime.port = preferences.port
+        STATE.runtime.port = _runtime_port(preferences.port)
         STATE.start()
         return {"FINISHED"}
 
@@ -86,6 +99,16 @@ def _draw_full_status(layout: Any) -> None:
     layout.label(text=f"Heartbeat: {STATE.heartbeat}")
     layout.label(text=f"Scene generation: {STATE.scene_generation}")
     layout.label(text=f"Capture: {STATE.last_capture_backend}")
+    project = STATE.project_summary()
+    project_box = layout.box()
+    project_box.label(text="Project lifecycle", icon="FILE_BLEND")
+    project_box.label(text=f"Path: {project['filepath'] or 'Untitled'}")
+    project_box.label(text=f"Dirty: {'yes' if project['is_dirty'] else 'no'}")
+    operation = project["last_operation"]
+    if operation is not None:
+        project_box.label(
+            text=f"Last: {operation['kind']} ({operation['status']})"
+        )
     transaction = STATE.transactions.active
     if transaction is None:
         layout.label(text=f"Transaction: {STATE.transactions.last_status}")
@@ -171,7 +194,7 @@ def register() -> None:
         bpy.utils.register_class(cls)
     preferences = bpy.context.preferences.addons[__package__].preferences
     STATE = AddonState()
-    STATE.runtime.port = preferences.port
+    STATE.runtime.port = _runtime_port(preferences.port)
     STATE.start()
     bpy.app.handlers.depsgraph_update_post.append(_depsgraph_update)
     bpy.app.handlers.load_post.append(_load_post)

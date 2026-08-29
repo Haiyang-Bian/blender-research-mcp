@@ -59,6 +59,32 @@ def test_addon_registers_bounded_object_local_write_commands() -> None:
         assert command in source
 
 
+def test_addon_registers_project_lifecycle_without_expanding_compact_panel() -> None:
+    state = (SOURCE / "state.py").read_text(encoding="utf-8")
+    source = (SOURCE / "__init__.py").read_text(encoding="utf-8")
+
+    for command in (
+        "project.status",
+        "project.save",
+        "project.open",
+        "project.reload",
+        "application.quit",
+    ):
+        assert command in state
+    assert '"project_lifecycle": 1' in state
+    assert '"application_lifecycle": 1' in state
+    compact_status = source.split("def _draw_compact_status", 1)[1].split(
+        "def _draw_full_status", 1
+    )[0]
+    full_status = source.split("def _draw_full_status", 1)[1].split(
+        "class BRMCP_PT_status",
+        1,
+    )[0]
+    assert "Project lifecycle" not in compact_status
+    assert "Project lifecycle" in full_status
+    assert "last_operation" in full_status
+
+
 def test_addon_zip_has_an_installable_package_root(tmp_path: Path) -> None:
     output = build(tmp_path / "addon.zip")
     with zipfile.ZipFile(output) as archive:
@@ -70,5 +96,6 @@ def test_addon_zip_has_an_installable_package_root(tmp_path: Path) -> None:
     assert f"{PACKAGE_NAME}/geometry_model.py" in names
     assert f"{PACKAGE_NAME}/lookdev_ops.py" in names
     assert f"{PACKAGE_NAME}/lookdev_model.py" in names
+    assert f"{PACKAGE_NAME}/project_ops.py" in names
     assert f"{PACKAGE_NAME}/runtime.py" in names
     assert all(name.startswith(f"{PACKAGE_NAME}/") for name in names)

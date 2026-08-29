@@ -44,6 +44,16 @@ from .lookdev_ops import (
     session_identity,
     shape_key_is_driven,
 )
+from .project_ops import (
+    ProjectOperationError,
+    normalized_path,
+    open_project,
+    project_status,
+    quit_application,
+    save_project,
+    validate_open_path,
+    validate_save_path,
+)
 from .runtime import ADDON_VERSION, ListenerRuntime
 from .transaction_model import (
     IdempotencyCache,
@@ -80,6 +90,11 @@ CAPABILITIES = [
     "modifier.set_state",
     "shape_key.set_value",
     "material.set_input",
+    "project.status",
+    "project.save",
+    "project.open",
+    "project.reload",
+    "application.quit",
 ]
 CAPABILITY_VERSIONS = {
     "transport": 1,
@@ -94,6 +109,8 @@ CAPABILITY_VERSIONS = {
     "modifier_state": 1,
     "shape_key_value": 1,
     "material_input": 1,
+    "project_lifecycle": 1,
+    "application_lifecycle": 1,
 }
 MUTATION_COMMANDS = {
     "transaction.begin",
@@ -104,6 +121,10 @@ MUTATION_COMMANDS = {
     "modifier.set_state",
     "shape_key.set_value",
     "material.set_input",
+    "project.save",
+    "project.open",
+    "project.reload",
+    "application.quit",
 }
 AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 
@@ -123,6 +144,8 @@ class AddonState:
         self.idempotency = IdempotencyCache()
         self._suppress_generation = 0
         self._disconnect_rollback_deadline: float | None = None
+        self.pending_lifecycle_operation: dict[str, Any] | None = None
+        self.last_lifecycle_operation: dict[str, Any] | None = None
 
     def start(self) -> None:
         self.runtime.start()
@@ -144,6 +167,7 @@ class AddonState:
 
     def tick(self) -> None:
         self.heartbeat += 1
+        self._perform_pending_lifecycle_operation()
         self.runtime.poll(self.dispatch, self.on_disconnect)
         if self._disconnect_rollback_deadline is not None:
             if self.runtime.connected:
@@ -251,6 +275,16 @@ class AddonState:
             self.last_error = f"{exc.code}: {exc}"
             kind = "conflict" if exc.code != "TRANSACTION_NOT_FOUND" else "not_found"
             return self._error(request_id, kind, exc.code, str(exc))
+        except ProjectOperationError as exc:
+            self.last_error = f"{exc.code}: {exc}"
+            return self._error(
+                request_id,
+                exc.kind,
+                exc.code,
+                str(exc),
+                retryable=exc.retryable,
+                details=exc.details,
+            )
         except Exception as exc:  # noqa: BLE001 - dispatch boundary
             self.last_error = f"{type(exc).__name__}: {exc}"
             return self._error(
@@ -309,6 +343,16 @@ class AddonState:
         if command == "context.get":
             with self.suppress_generation():
                 return context_summary()
+        if command == "project.status":
+            return self._project_status()
+        if command == "project.save":
+            return self._save_project(params)
+        if command == "project.open":
+            return self._open_project(params)
+        if command == "project.reload":
+            return self._reload_project(params)
+        if command == "application.quit":
+            return self._quit_application(params)
         if command == "context.snapshot":
             with self.suppress_generation():
                 snapshot = capture_context(params.get("viewport_id"))
@@ -508,6 +552,255 @@ class AddonState:
             f"Unsupported command: {command}",
             kind="not_found",
         )
+
+    def _project_status(self) -> dict[str, Any]:
+        transaction = self.transactions.active
+        return project_status(
+            self.scene_generation,
+            self._transaction_result(transaction) if transaction is not None else None,
+            self.last_lifecycle_operation,
+        )
+
+    def project_summary(self) -> dict[str, Any]:
+        return self._project_status()
+
+    def _commit_active_transaction_for_lifecycle(self) -> dict[str, Any] | None:
+        transaction = self.transactions.active
+        if transaction is None:
+            return None
+        self._validate_transaction_guards(transaction)
+        result = self._transaction_result(transaction)
+        result["status"] = "committed"
+        self.transactions.finish(transaction, "committed")
+        return result
+
+    @staticmethod
+    def _optional_save_path(params: dict[str, Any], name: str) -> str | None:
+        value = params.get(name)
+        if value is None:
+            return None
+        return str(validate_save_path(value))
+
+    @staticmethod
+    def _boolean_param(params: dict[str, Any], name: str, default: bool) -> bool:
+        value = params.get(name, default)
+        if type(value) is not bool:
+            raise ProjectOperationError(
+                "PARAMS_INVALID",
+                f"{name} must be a boolean",
+                kind="validation",
+            )
+        return value
+
+    def _save_project(self, params: dict[str, Any]) -> dict[str, Any]:
+        path = self._optional_save_path(params, "path")
+        before = self._project_status()
+        transaction = self._commit_active_transaction_for_lifecycle()
+        saved = save_project(path)
+        self.scene_generation += 1
+        operation = {
+            "operation_id": str(uuid.uuid4()),
+            "kind": "save",
+            "status": "succeeded",
+            "path": saved["path"],
+        }
+        self.last_lifecycle_operation = operation
+        return {
+            "status": "saved",
+            "operation_id": operation["operation_id"],
+            "before": before,
+            "after": self._project_status(),
+            "transaction": transaction,
+            "save": saved,
+        }
+
+    def _prepare_current_for_transition(
+        self,
+        *,
+        save_current: bool,
+        save_current_as: str | None,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        if not save_current:
+            return None, {"status": "skipped", "reason": "save_current_false"}
+        transaction = self._commit_active_transaction_for_lifecycle()
+        current = self._project_status()
+        if not current["is_dirty"]:
+            return transaction, {"status": "skipped", "reason": "clean"}
+        if not current["filepath"] and save_current_as is None:
+            raise ProjectOperationError(
+                "CURRENT_PROJECT_UNTITLED",
+                "The dirty current project is untitled; provide save_current_as",
+            )
+        saved = save_project(save_current_as)
+        self.scene_generation += 1
+        return transaction, saved
+
+    def _schedule_lifecycle_operation(
+        self,
+        *,
+        kind: str,
+        path: str | None,
+        use_scripts: bool | None = None,
+        load_ui: bool | None = None,
+    ) -> dict[str, Any]:
+        if self.pending_lifecycle_operation is not None:
+            raise ProjectOperationError(
+                "LIFECYCLE_OPERATION_PENDING",
+                "Another lifecycle operation is already pending",
+                kind="conflict",
+                retryable=True,
+                details={"operation": self.pending_lifecycle_operation},
+            )
+        operation = {
+            "operation_id": str(uuid.uuid4()),
+            "kind": kind,
+            "status": "accepted",
+            "path": path,
+            "use_scripts": use_scripts,
+            "load_ui": load_ui,
+        }
+        self.pending_lifecycle_operation = operation
+        self.last_lifecycle_operation = dict(operation)
+        return operation
+
+    def _open_project(self, params: dict[str, Any]) -> dict[str, Any]:
+        target = validate_open_path(params.get("path"))
+        save_current = self._boolean_param(params, "save_current", True)
+        save_current_as = self._optional_save_path(params, "save_current_as")
+        use_scripts = self._boolean_param(params, "use_scripts", True)
+        load_ui = self._boolean_param(params, "load_ui", True)
+        before = self._project_status()
+        transaction, saved = self._prepare_current_for_transition(
+            save_current=save_current,
+            save_current_as=save_current_as,
+        )
+        current = str(bpy.data.filepath or "")
+        if current and normalized_path(current) == normalized_path(str(target)):
+            operation = {
+                "operation_id": str(uuid.uuid4()),
+                "kind": "open",
+                "status": "already_open",
+                "path": str(target),
+            }
+            self.last_lifecycle_operation = operation
+            return {
+                "status": "already_open",
+                "operation_id": operation["operation_id"],
+                "path": str(target),
+                "before": before,
+                "after": self._project_status(),
+                "transaction": transaction,
+                "save": saved,
+            }
+        operation = self._schedule_lifecycle_operation(
+            kind="open",
+            path=str(target),
+            use_scripts=use_scripts,
+            load_ui=load_ui,
+        )
+        return {
+            "status": "accepted",
+            "operation_id": operation["operation_id"],
+            "path": str(target),
+            "before": before,
+            "transaction": transaction,
+            "save": saved,
+        }
+
+    def _reload_project(self, params: dict[str, Any]) -> dict[str, Any]:
+        current = str(bpy.data.filepath or "")
+        if not current:
+            raise ProjectOperationError(
+                "PROJECT_RELOAD_UNAVAILABLE",
+                "The current project is untitled and cannot be reloaded",
+            )
+        target = validate_open_path(current)
+        save_current = self._boolean_param(params, "save_current", False)
+        use_scripts = self._boolean_param(params, "use_scripts", True)
+        load_ui = self._boolean_param(params, "load_ui", True)
+        before = self._project_status()
+        transaction, saved = self._prepare_current_for_transition(
+            save_current=save_current,
+            save_current_as=None,
+        )
+        operation = self._schedule_lifecycle_operation(
+            kind="reload",
+            path=str(target),
+            use_scripts=use_scripts,
+            load_ui=load_ui,
+        )
+        return {
+            "status": "accepted",
+            "operation_id": operation["operation_id"],
+            "path": str(target),
+            "before": before,
+            "transaction": transaction,
+            "save": saved,
+        }
+
+    def _quit_application(self, params: dict[str, Any]) -> dict[str, Any]:
+        save_current = self._boolean_param(params, "save_current", True)
+        save_current_as = self._optional_save_path(params, "save_current_as")
+        before = self._project_status()
+        transaction, saved = self._prepare_current_for_transition(
+            save_current=save_current,
+            save_current_as=save_current_as,
+        )
+        operation = self._schedule_lifecycle_operation(kind="quit", path=None)
+        return {
+            "status": "accepted",
+            "operation_id": operation["operation_id"],
+            "before": before,
+            "transaction": transaction,
+            "save": saved,
+        }
+
+    def _perform_pending_lifecycle_operation(self) -> None:
+        operation = self.pending_lifecycle_operation
+        if operation is None:
+            return
+        self.pending_lifecycle_operation = None
+        running = dict(operation)
+        running["status"] = "running"
+        self.last_lifecycle_operation = running
+        self.active_command = f"lifecycle:{operation['kind']}"
+        try:
+            kind = str(operation["kind"])
+            if kind in {"open", "reload"}:
+                open_project(
+                    str(operation["path"]),
+                    use_scripts=bool(operation["use_scripts"]),
+                    load_ui=bool(operation["load_ui"]),
+                )
+            elif kind == "quit":
+                quit_application()
+            else:
+                raise ProjectOperationError(
+                    "BLENDER_COMMAND_FAILED",
+                    f"Unknown pending lifecycle operation: {kind}",
+                    kind="internal",
+                )
+            succeeded = dict(operation)
+            succeeded["status"] = "succeeded"
+            self.last_lifecycle_operation = succeeded
+        except ProjectOperationError as exc:
+            failed = dict(operation)
+            failed.update(
+                {
+                    "status": "failed",
+                    "error": {
+                        "kind": exc.kind,
+                        "code": exc.code,
+                        "message": str(exc),
+                        "retryable": exc.retryable,
+                        "details": exc.details,
+                    },
+                }
+            )
+            self.last_lifecycle_operation = failed
+            self.last_error = f"{exc.code}: {exc}"
+        finally:
+            self.active_command = ""
 
     def _require_scene_generation(self, request: dict[str, Any]) -> None:
         expected = request.get("expected_scene_generation")

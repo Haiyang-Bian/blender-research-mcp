@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -14,6 +13,7 @@ from blender_research_mcp.constants import (
     DEFAULT_PORT,
     MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES,
+    PACKAGE_VERSION,
     PROTOCOL_VERSION,
 )
 from blender_research_mcp.errors import (
@@ -103,7 +103,7 @@ class BridgeClient:
                     session_token=manifest.session_token,
                     command="connection.hello",
                     params={
-                        "server_version": package_version("blender-research-mcp"),
+                        "server_version": PACKAGE_VERSION,
                         "protocol_min": PROTOCOL_VERSION,
                         "protocol_max": PROTOCOL_VERSION,
                         "expected_instance_id": manifest.instance_id,

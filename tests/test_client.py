@@ -9,6 +9,7 @@ from blender_research_mcp.client import BridgeClient
 from blender_research_mcp.constants import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES
 from blender_research_mcp.errors import TransportError
 from blender_research_mcp.framing import encode_frame, read_frame
+from blender_research_mcp.protocol import CapabilityVersions, HandshakeResult
 
 
 def test_client_handshake_ping_and_read_only_reconnect(tmp_path) -> None:
@@ -159,3 +160,35 @@ def test_client_rejects_addon_without_offscreen_capability(tmp_path) -> None:
             await server.wait_closed()
 
     asyncio.run(scenario())
+
+
+def test_lifecycle_capabilities_are_enforced_per_tool() -> None:
+    client = BridgeClient()
+    client._handshake = HandshakeResult(
+        protocol=1,
+        instance_id="legacy-0.6",
+        blender_version="4.2.23",
+        addon_version="0.6.0",
+        capabilities=["connection.ping"],
+        capability_versions=CapabilityVersions(
+            transport=1,
+            context=1,
+            viewport_capture=3,
+            viewport_raycast=1,
+            geometry_inspection=1,
+            lookdev_inspection=1,
+            transactions=2,
+            object_transform_scale=1,
+            object_visibility=1,
+            modifier_state=1,
+            shape_key_value=1,
+            material_input=1,
+        ),
+    )
+
+    with pytest.raises(TransportError) as mismatch:
+        client.require_capability("project_lifecycle", 1)
+    assert mismatch.value.error.code == "CAPABILITY_MISMATCH"
+    assert mismatch.value.error.details == {
+        "capabilities": {"project_lifecycle": {"required": 1, "actual": 0}}
+    }

@@ -4,20 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
 from blender_research_mcp.client import BridgeClient
-from blender_research_mcp.constants import SESSION_DIRECTORY_NAME
+from blender_research_mcp.constants import PACKAGE_VERSION, SESSION_DIRECTORY_NAME
 from blender_research_mcp.errors import BridgeError, ErrorKind, bridge_error
+from blender_research_mcp.session import manifest_candidates, pid_exists
 
 BLENDER_EXECUTABLE_ENV = "BLENDER_RESEARCH_MCP_BLENDER_EXECUTABLE"
 LAUNCH_TIMEOUT_ENV = "BLENDER_RESEARCH_MCP_LAUNCH_TIMEOUT_SECONDS"
@@ -146,7 +147,7 @@ def materialize_managed_resources(
     """Atomically materialize fixed bootstrap and add-on resources for one release."""
     addon_source = addon_resource_source()
     bootstrap_source = Path(__file__).resolve().parent / "resources" / "managed_bootstrap.py"
-    version = release_version or package_version("blender-research-mcp")
+    version = release_version or PACKAGE_VERSION
     content_hash = _resource_digest(addon_source, bootstrap_source)
     if base_directory is None:
         local_app_data = os.environ.get("LOCALAPPDATA")
@@ -159,6 +160,8 @@ def materialize_managed_resources(
     bootstrap_target = target / "managed_bootstrap.py"
     addon_target = target / "addon" / "blender_research_mcp_addon"
     if not bootstrap_target.is_file() or not addon_target.is_dir():
+        if target.exists():
+            shutil.rmtree(target)
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.parent / f".{content_hash}-{uuid4().hex}.tmp"
         temporary.mkdir(parents=False)
@@ -169,6 +172,8 @@ def materialize_managed_resources(
                 os.replace(temporary, target)
             except FileExistsError:
                 shutil.rmtree(temporary)
+                if not bootstrap_target.is_file() or not addon_target.is_dir():
+                    raise
         except Exception:
             shutil.rmtree(temporary, ignore_errors=True)
             raise
@@ -224,14 +229,6 @@ class ApplicationManager:
         capabilities = handshake.capability_versions.model_dump()
         if int(capabilities.get("project_lifecycle", 0)) >= 1:
             project = await self.client.call("project.status", read_only=True)
-        else:
-            context = await self.client.call("context.get", read_only=True)
-            project = {
-                "filepath": context.get("blend_file"),
-                "is_saved": context.get("blend_file_saved"),
-                "is_dirty": context.get("blend_file_dirty"),
-                "scene_generation": context.get("scene_generation"),
-            }
         return {
             "running": True,
             "pid": manifest.pid,
@@ -242,8 +239,279 @@ class ApplicationManager:
             "managed": manifest.launch_id is not None,
             "launch_id": manifest.launch_id,
             "project": project,
+            "lifecycle_available": int(capabilities.get("application_lifecycle", 0)) >= 1,
             "capability_versions": capabilities,
         }
+
+    async def _connect_lifecycle(self, capability: str) -> None:
+        try:
+            await self.client.connect()
+        except BridgeError as exc:
+            if exc.error.code in {
+                "SESSION_NOT_FOUND",
+                "SESSION_STALE",
+                "CONNECT_FAILED",
+                "CONNECTION_LOST",
+            }:
+                raise bridge_error(
+                    ErrorKind.PRECONDITION,
+                    "APPLICATION_NOT_RUNNING",
+                    "Blender is not running with a compatible MCP session",
+                ) from exc
+            raise
+        self.client.require_capability(capability, 1)
+
+    @staticmethod
+    def _project_path(
+        value: str,
+        *,
+        must_exist: bool,
+        parent_must_exist: bool = False,
+    ) -> Path:
+        path = Path(value)
+        if not path.is_absolute() or path.suffix.lower() != ".blend":
+            raise bridge_error(
+                ErrorKind.VALIDATION,
+                "PROJECT_PATH_INVALID",
+                "Project path must be absolute and end in .blend",
+                details={"path": value},
+            )
+        path = Path(os.path.realpath(path))
+        if must_exist and not path.is_file():
+            raise bridge_error(
+                ErrorKind.NOT_FOUND,
+                "PROJECT_NOT_FOUND",
+                f"Blender project does not exist: {path}",
+                details={"path": str(path)},
+            )
+        if parent_must_exist and not path.parent.is_dir():
+            raise bridge_error(
+                ErrorKind.VALIDATION,
+                "PROJECT_PATH_INVALID",
+                f"Project parent directory does not exist: {path.parent}",
+                details={"path": str(path)},
+            )
+        return path
+
+    async def project_status(self) -> dict[str, Any]:
+        await self._connect_lifecycle("project_lifecycle")
+        return await self.client.call("project.status", read_only=True)
+
+    async def project_save(self, path: str | None = None) -> dict[str, Any]:
+        await self._connect_lifecycle("project_lifecycle")
+        target = (
+            self._project_path(path, must_exist=False, parent_must_exist=True)
+            if path is not None
+            else None
+        )
+        return await self.client.call(
+            "project.save",
+            {"path": str(target) if target is not None else None},
+            idempotency_key=str(uuid4()),
+            read_only=False,
+            deadline_ms=30_000,
+        )
+
+    async def _wait_for_project_operation(
+        self,
+        accepted: dict[str, Any],
+        *,
+        success_status: str,
+    ) -> dict[str, Any]:
+        operation_id = str(accepted["operation_id"])
+        expected_path = str(accepted["path"])
+        deadline = asyncio.get_running_loop().time() + self.launch_timeout
+        last_status: dict[str, Any] | None = None
+        await self.client.close()
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                await self._connect_lifecycle("project_lifecycle")
+                status = await self.client.call("project.status", read_only=True)
+            except BridgeError as exc:
+                if exc.error.code not in {
+                    "SESSION_NOT_FOUND",
+                    "SESSION_STALE",
+                    "CONNECT_FAILED",
+                    "CONNECTION_LOST",
+                    "REQUEST_TIMEOUT",
+                }:
+                    raise
+                await self.client.close()
+                await asyncio.sleep(0.1)
+                continue
+            last_status = status
+            operation = status.get("last_operation")
+            if isinstance(operation, dict) and operation.get("operation_id") == operation_id:
+                if operation.get("status") == "failed":
+                    raise bridge_error(
+                        ErrorKind.BLENDER_API,
+                        "PROJECT_OPEN_FAILED",
+                        "Blender reported that the project lifecycle operation failed",
+                        retryable=True,
+                        details={"operation": operation, "accepted": accepted},
+                    )
+                if operation.get("status") == "succeeded":
+                    actual_path = str(status.get("filepath") or "")
+                    if os.path.normcase(os.path.realpath(actual_path)) != os.path.normcase(
+                        os.path.realpath(expected_path)
+                    ):
+                        raise bridge_error(
+                            ErrorKind.CONFLICT,
+                            "PROJECT_PATH_MISMATCH",
+                            "Blender opened a different project than requested",
+                            details={
+                                "expected_path": expected_path,
+                                "actual_path": actual_path,
+                                "operation": operation,
+                            },
+                        )
+                    return {
+                        "status": success_status,
+                        "operation_id": operation_id,
+                        "before": accepted.get("before"),
+                        "after": status,
+                        "transaction": accepted.get("transaction"),
+                        "save": accepted.get("save"),
+                        "path": actual_path,
+                    }
+            await asyncio.sleep(0.1)
+        code = "PROJECT_OPEN_TIMEOUT"
+        raise bridge_error(
+            ErrorKind.TIMEOUT,
+            code,
+            f"Blender did not finish the project operation within {self.launch_timeout:g} seconds",
+            retryable=True,
+            details={"accepted": accepted, "last_status": last_status},
+        )
+
+    async def project_open(
+        self,
+        path: str,
+        *,
+        save_current: bool = True,
+        save_current_as: str | None = None,
+        use_scripts: bool = True,
+        load_ui: bool = True,
+    ) -> dict[str, Any]:
+        await self._connect_lifecycle("project_lifecycle")
+        target = self._project_path(path, must_exist=True)
+        save_path = (
+            self._project_path(
+                save_current_as,
+                must_exist=False,
+                parent_must_exist=True,
+            )
+            if save_current_as is not None
+            else None
+        )
+        accepted = await self.client.call(
+            "project.open",
+            {
+                "path": str(target),
+                "save_current": save_current,
+                "save_current_as": str(save_path) if save_path is not None else None,
+                "use_scripts": use_scripts,
+                "load_ui": load_ui,
+            },
+            idempotency_key=str(uuid4()),
+            read_only=False,
+            deadline_ms=30_000,
+        )
+        if accepted.get("status") == "already_open":
+            return accepted
+        return await self._wait_for_project_operation(accepted, success_status="opened")
+
+    async def project_reload(
+        self,
+        *,
+        save_current: bool = False,
+        use_scripts: bool = True,
+        load_ui: bool = True,
+    ) -> dict[str, Any]:
+        await self._connect_lifecycle("project_lifecycle")
+        accepted = await self.client.call(
+            "project.reload",
+            {
+                "save_current": save_current,
+                "use_scripts": use_scripts,
+                "load_ui": load_ui,
+            },
+            idempotency_key=str(uuid4()),
+            read_only=False,
+            deadline_ms=30_000,
+        )
+        return await self._wait_for_project_operation(accepted, success_status="reloaded")
+
+    @staticmethod
+    def _instance_manifest_exists(port: int, instance_id: str) -> bool:
+        for path in manifest_candidates(port):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if payload.get("instance_id") == instance_id:
+                return True
+        return False
+
+    async def quit(
+        self,
+        *,
+        save_current: bool = True,
+        save_current_as: str | None = None,
+    ) -> dict[str, Any]:
+        await self._connect_lifecycle("application_lifecycle")
+        manifest = self.client.manifest
+        assert manifest is not None
+        save_path = (
+            self._project_path(
+                save_current_as,
+                must_exist=False,
+                parent_must_exist=True,
+            )
+            if save_current_as is not None
+            else None
+        )
+        accepted = await self.client.call(
+            "application.quit",
+            {
+                "save_current": save_current,
+                "save_current_as": str(save_path) if save_path is not None else None,
+            },
+            idempotency_key=str(uuid4()),
+            read_only=False,
+            deadline_ms=30_000,
+        )
+        await self.client.close()
+        deadline = asyncio.get_running_loop().time() + self.launch_timeout
+        while asyncio.get_running_loop().time() < deadline:
+            process_running = pid_exists(manifest.pid)
+            manifest_exists = self._instance_manifest_exists(
+                manifest.port,
+                manifest.instance_id,
+            )
+            if not process_running and not manifest_exists:
+                self._process = None
+                return {
+                    "status": "quit",
+                    "pid": manifest.pid,
+                    "instance_id": manifest.instance_id,
+                    "operation_id": accepted.get("operation_id"),
+                    "before": accepted.get("before"),
+                    "transaction": accepted.get("transaction"),
+                    "save": accepted.get("save"),
+                }
+            await asyncio.sleep(0.1)
+        raise bridge_error(
+            ErrorKind.TIMEOUT,
+            "APPLICATION_QUIT_TIMEOUT",
+            f"Blender did not quit within {self.launch_timeout:g} seconds",
+            retryable=True,
+            details={
+                "pid": manifest.pid,
+                "instance_id": manifest.instance_id,
+                "accepted": accepted,
+            },
+        )
 
     async def launch(self) -> dict[str, Any]:
         async with self._launch_lock:

@@ -254,6 +254,7 @@ def context_summary() -> dict[str, Any]:
     ]
     snapshot["blend_file"] = bpy.data.filepath
     snapshot["blend_file_saved"] = bool(bpy.data.filepath)
+    snapshot["blend_file_dirty"] = bool(getattr(bpy.data, "is_dirty", False))
     return snapshot
 
 

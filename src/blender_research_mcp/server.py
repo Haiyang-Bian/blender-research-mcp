@@ -7,7 +7,6 @@ import json
 import math
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from importlib.metadata import version as package_version
 from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
@@ -31,7 +30,7 @@ from blender_research_mcp.comparison import (
     ComparisonTarget,
     run_lookdev_comparison,
 )
-from blender_research_mcp.constants import DEFAULT_PORT
+from blender_research_mcp.constants import DEFAULT_PORT, PACKAGE_VERSION
 from blender_research_mcp.lifecycle import (
     DEFAULT_LAUNCH_TIMEOUT_SECONDS,
     ApplicationManager,
@@ -89,6 +88,7 @@ MaterialName = Annotated[str, Field(min_length=1, max_length=255)]
 NodeName = Annotated[str, Field(min_length=1, max_length=255)]
 SocketIdentifier = Annotated[str, Field(min_length=1, max_length=255)]
 MaterialUsers = Annotated[StrictInt, Field(ge=1)]
+ProjectPath = Annotated[str, Field(min_length=1, max_length=32767)]
 
 
 def _validate_material_input_value(value: Any) -> Any:
@@ -186,7 +186,7 @@ def create_server(
         lifespan=lifespan,
     )
     # FastMCP 1.x does not expose the low-level Server version in its constructor.
-    server._mcp_server.version = package_version("blender-research-mcp")
+    server._mcp_server.version = PACKAGE_VERSION
 
     @server.tool(
         name="application.status",
@@ -210,6 +210,92 @@ def create_server(
     )
     async def application_launch() -> dict[str, Any]:
         return await application.launch()
+
+    @server.tool(
+        name="application.quit",
+        description=(
+            "Commit an active transaction, optionally save the current project, and quit "
+            "Blender on the next main-thread tick."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def application_quit(
+        save_current: StrictBool = True,
+        save_current_as: ProjectPath | None = None,
+    ) -> dict[str, Any]:
+        return await application.quit(
+            save_current=save_current,
+            save_current_as=save_current_as,
+        )
+
+    @server.tool(
+        name="project.status",
+        description=(
+            "Read the current Blender project path, dirty state, generation, transaction, "
+            "and most recent lifecycle operation without requiring a 3D viewport."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def project_status() -> dict[str, Any]:
+        return await application.project_status()
+
+    @server.tool(
+        name="project.save",
+        description=(
+            "Commit the active transaction and save the current project, optionally using "
+            "an absolute Save As path. Existing targets are overwritten."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def project_save(path: ProjectPath | None = None) -> dict[str, Any]:
+        return await application.project_save(path)
+
+    @server.tool(
+        name="project.open",
+        description=(
+            "Open an existing absolute .blend path on the next main-thread tick. By default "
+            "the current transaction is committed and dirty current project is saved."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def project_open(
+        path: ProjectPath,
+        save_current: StrictBool = True,
+        save_current_as: ProjectPath | None = None,
+        use_scripts: StrictBool = True,
+        load_ui: StrictBool = True,
+    ) -> dict[str, Any]:
+        return await application.project_open(
+            path,
+            save_current=save_current,
+            save_current_as=save_current_as,
+            use_scripts=use_scripts,
+            load_ui=load_ui,
+        )
+
+    @server.tool(
+        name="project.reload",
+        description=(
+            "Reload the current saved .blend file on the next main-thread tick. Unsaved "
+            "changes are discarded unless save_current is true."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def project_reload(
+        save_current: StrictBool = False,
+        use_scripts: StrictBool = True,
+        load_ui: StrictBool = True,
+    ) -> dict[str, Any]:
+        return await application.project_reload(
+            save_current=save_current,
+            use_scripts=use_scripts,
+            load_ui=load_ui,
+        )
 
     @server.tool(
         name="connection.ping",

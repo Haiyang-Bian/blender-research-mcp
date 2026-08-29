@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from blender_research_mcp import addon_build
+from blender_research_mcp.constants import PACKAGE_VERSION
 
 ROOT = Path(__file__).parents[1]
 
@@ -21,11 +22,12 @@ def load_quality_gate_module():
 
 
 def test_build_version_sources_are_synchronized() -> None:
-    assert addon_build.project_version() == "0.6.0"
-    assert addon_build.addon_runtime_version() == "0.6.0"
-    assert addon_build.addon_manifest_version() == "0.6.0"
-    assert addon_build.resolve_build_version("0.6.0") == "0.6.0"
-    assert addon_build.default_output("0.6.0").name == "blender-research-mcp-addon-0.6.0.zip"
+    assert PACKAGE_VERSION == "0.7.0"
+    assert addon_build.project_version() == "0.7.0"
+    assert addon_build.addon_runtime_version() == "0.7.0"
+    assert addon_build.addon_manifest_version() == "0.7.0"
+    assert addon_build.resolve_build_version("0.7.0") == "0.7.0"
+    assert addon_build.default_output("0.7.0").name == "blender-research-mcp-addon-0.7.0.zip"
 
 
 def test_build_rejects_requested_version_mismatch() -> None:
@@ -64,7 +66,7 @@ def test_shared_pycharm_run_configurations_are_uv_backed() -> None:
             "ShConfigurationType",
             (
                 'uv run --no-sync python scripts/build_addon.py --version '
-                '"$Prompt:Release version (for example 0.6.0)$"'
+                '"$Prompt:Release version (for example 0.7.0)$"'
             ),
         ),
         "Tests - Pytest": ("tests", ""),

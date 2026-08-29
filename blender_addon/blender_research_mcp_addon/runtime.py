@@ -22,8 +22,9 @@ from .wire import MAX_RESPONSE_BYTES, PROTOCOL_VERSION, FrameDecoder, FramingErr
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 9877
-ADDON_VERSION = "0.6.0"
+ADDON_VERSION = "0.7.0"
 ZERO_REQUEST_ID = "00000000-0000-0000-0000-000000000000"
+LAUNCH_ID_ENV = "BLENDER_RESEARCH_MCP_LAUNCH_ID"
 
 
 @dataclass
@@ -293,6 +294,9 @@ class ListenerRuntime:
             "addon_version": ADDON_VERSION,
             "created_at": datetime.now(UTC).isoformat(),
         }
+        launch_id = os.environ.get(LAUNCH_ID_ENV)
+        if launch_id:
+            manifest["launch_id"] = launch_id
         temporary.write_text(json.dumps(manifest), encoding="utf-8")
         with contextlib.suppress(OSError):
             temporary.chmod(0o600)

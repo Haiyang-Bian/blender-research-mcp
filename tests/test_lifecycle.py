@@ -76,6 +76,13 @@ def test_managed_resources_are_versioned_hashed_and_repeatable(tmp_path: Path) -
     assert first.bootstrap.is_file()
     assert (first.addon_path / "blender_research_mcp_addon" / "__init__.py").is_file()
 
+    first.bootstrap.unlink()
+    repaired = materialize_managed_resources(
+        base_directory=tmp_path,
+        release_version="0.7.0",
+    )
+    assert repaired.bootstrap.is_file()
+
 
 class FakeProcess:
     pid = 4321
@@ -138,6 +145,69 @@ class FakeClient:
             "is_dirty": False,
             "scene_generation": 0,
         }
+
+
+class FakeProjectClient(FakeClient):
+    def __init__(self, target: Path) -> None:
+        super().__init__()
+        self.running = True
+        self.target = target
+        self.status_path = target
+        self.manifest = SimpleNamespace(
+            pid=98765,
+            instance_id="managed-instance",
+            port=9877,
+            launch_id="managed-launch",
+        )
+        self.calls: list[tuple[str, dict[str, object], dict[str, object]]] = []
+        self.status_count = 0
+        self.operation_id = "operation-1"
+        self.operation_status = "succeeded"
+
+    async def call(self, command: str, params=None, **kwargs):
+        payload = params or {}
+        self.calls.append((command, payload, kwargs))
+        if command == "project.open":
+            return {
+                "status": "accepted",
+                "operation_id": self.operation_id,
+                "path": str(self.target),
+                "before": {"filepath": "old.blend"},
+                "transaction": {"status": "committed"},
+                "save": {"status": "saved"},
+            }
+        if command == "project.reload":
+            return {
+                "status": "accepted",
+                "operation_id": self.operation_id,
+                "path": str(self.target),
+                "before": {"filepath": str(self.target)},
+                "transaction": None,
+                "save": {"status": "skipped"},
+            }
+        if command == "project.status":
+            self.status_count += 1
+            return {
+                "filepath": str(self.status_path),
+                "is_saved": True,
+                "is_dirty": False,
+                "last_operation": {
+                    "operation_id": self.operation_id,
+                    "kind": "open",
+                    "status": self.operation_status,
+                },
+            }
+        if command == "project.save":
+            return {"status": "saved", "path": payload.get("path")}
+        if command == "application.quit":
+            return {
+                "status": "accepted",
+                "operation_id": self.operation_id,
+                "before": {"filepath": str(self.target)},
+                "transaction": None,
+                "save": {"status": "saved"},
+            }
+        raise AssertionError(command)
 
 
 def test_managed_launch_uses_exact_argv_environment_and_coalesces(tmp_path: Path) -> None:
@@ -208,3 +278,120 @@ def test_launch_reports_early_process_exit(tmp_path: Path) -> None:
     assert failed.value.error.code == "APPLICATION_LAUNCH_FAILED"
     assert failed.value.error.details["exit_code"] == 12
     assert Path(failed.value.error.details["log_path"]).is_file()
+
+
+def test_project_tools_refuse_to_implicitly_launch_blender(tmp_path: Path) -> None:
+    client = FakeClient()
+    manager = ApplicationManager(client)  # type: ignore[arg-type]
+
+    with pytest.raises(BridgeError) as stopped:
+        asyncio.run(manager.project_status())
+    assert stopped.value.error.code == "APPLICATION_NOT_RUNNING"
+
+
+def test_project_open_forwards_intent_and_verifies_reconnected_path(tmp_path: Path) -> None:
+    target = tmp_path / "target.blend"
+    target.write_bytes(b"blend")
+    save_as = tmp_path / "current-saved.blend"
+    client = FakeProjectClient(target)
+    manager = ApplicationManager(client, launch_timeout=1)  # type: ignore[arg-type]
+
+    result = asyncio.run(
+        manager.project_open(
+            str(target),
+            save_current=True,
+            save_current_as=str(save_as),
+            use_scripts=False,
+            load_ui=False,
+        )
+    )
+
+    assert result["status"] == "opened"
+    assert result["path"] == str(target)
+    command, params, options = client.calls[0]
+    assert command == "project.open"
+    assert params == {
+        "path": str(target),
+        "save_current": True,
+        "save_current_as": str(save_as),
+        "use_scripts": False,
+        "load_ui": False,
+    }
+    assert options["read_only"] is False
+    assert options["idempotency_key"]
+
+
+def test_project_open_preserves_blender_failure_and_path_mismatch(tmp_path: Path) -> None:
+    target = tmp_path / "target.blend"
+    target.write_bytes(b"blend")
+    client = FakeProjectClient(target)
+    client.operation_status = "failed"
+    manager = ApplicationManager(client, launch_timeout=1)  # type: ignore[arg-type]
+
+    with pytest.raises(BridgeError) as failed:
+        asyncio.run(manager.project_open(str(target)))
+    assert failed.value.error.code == "PROJECT_OPEN_FAILED"
+
+    other = tmp_path / "other.blend"
+    other.write_bytes(b"blend")
+    client = FakeProjectClient(target)
+    client.status_path = other
+    manager = ApplicationManager(client, launch_timeout=1)  # type: ignore[arg-type]
+    with pytest.raises(BridgeError) as mismatch:
+        asyncio.run(manager.project_open(str(target)))
+    assert mismatch.value.error.code == "PROJECT_PATH_MISMATCH"
+
+
+def test_project_save_allows_new_absolute_target_and_reuses_one_idempotency_key(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target.blend"
+    client = FakeProjectClient(target)
+    manager = ApplicationManager(client)  # type: ignore[arg-type]
+
+    result = asyncio.run(manager.project_save(str(target)))
+
+    assert result["status"] == "saved"
+    command, params, options = client.calls[0]
+    assert command == "project.save"
+    assert params == {"path": str(target)}
+    assert options["idempotency_key"]
+
+
+def test_project_reload_defaults_to_discard_and_trusted_project_loading(tmp_path: Path) -> None:
+    target = tmp_path / "target.blend"
+    target.write_bytes(b"blend")
+    client = FakeProjectClient(target)
+    manager = ApplicationManager(client, launch_timeout=1)  # type: ignore[arg-type]
+
+    result = asyncio.run(manager.project_reload())
+
+    assert result["status"] == "reloaded"
+    command, params, options = client.calls[0]
+    assert command == "project.reload"
+    assert params == {
+        "save_current": False,
+        "use_scripts": True,
+        "load_ui": True,
+    }
+    assert options["idempotency_key"]
+
+
+def test_application_quit_waits_for_process_and_manifest_removal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    target = tmp_path / "target.blend"
+    client = FakeProjectClient(target)
+    manager = ApplicationManager(client, launch_timeout=1)  # type: ignore[arg-type]
+    monkeypatch.setattr("blender_research_mcp.lifecycle.pid_exists", lambda _pid: False)
+    monkeypatch.setattr(manager, "_instance_manifest_exists", lambda _port, _instance: False)
+
+    result = asyncio.run(manager.quit())
+
+    assert result["status"] == "quit"
+    assert result["pid"] == 98765
+    command, params, options = client.calls[0]
+    assert command == "application.quit"
+    assert params == {"save_current": True, "save_current_as": None}
+    assert options["idempotency_key"]
