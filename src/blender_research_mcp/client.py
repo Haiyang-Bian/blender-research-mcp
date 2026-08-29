@@ -104,8 +104,12 @@ class BridgeClient:
             "viewport_capture": 3,
             "viewport_raycast": 1,
             "geometry_inspection": 1,
+            "lookdev_inspection": 1,
             "transactions": 2,
             "object_transform_scale": 1,
+            "object_visibility": 1,
+            "modifier_state": 1,
+            "shape_key_value": 1,
         }
         actual_versions = result.capability_versions.model_dump()
         incompatible = {

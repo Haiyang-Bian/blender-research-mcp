@@ -14,11 +14,15 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "context.restore",
         "object.inspect",
         "object.geometry.inspect",
+        "object.lookdev.inspect",
         "viewport.capture",
         "viewport.raycast",
         "observation.bundle",
         "transaction.begin",
         "object.transform",
+        "object.visibility.set",
+        "modifier.set_state",
+        "shape_key.set_value",
         "transaction.commit",
         "transaction.rollback",
     ]
@@ -39,6 +43,9 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     geometry = tools_by_name["object.geometry.inspect"]
     assert geometry.annotations is not None
     assert geometry.annotations.readOnlyHint is True
+    lookdev = tools_by_name["object.lookdev.inspect"]
+    assert lookdev.annotations is not None
+    assert lookdev.annotations.readOnlyHint is True
     raycast = tools_by_name["viewport.raycast"]
     assert raycast.annotations is not None
     assert raycast.annotations.readOnlyHint is True
@@ -57,3 +64,17 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert transform.annotations.readOnlyHint is False
     assert transform.annotations.destructiveHint is True
     assert transform.annotations.idempotentHint is True
+    visibility = tools_by_name["object.visibility.set"]
+    assert visibility.annotations is not None
+    assert visibility.annotations.destructiveHint is True
+    assert visibility.inputSchema["properties"]["hide_viewport"]["anyOf"][0]["type"] == (
+        "boolean"
+    )
+    modifier = tools_by_name["modifier.set_state"]
+    assert modifier.annotations is not None
+    assert modifier.annotations.idempotentHint is True
+    assert modifier.inputSchema["properties"]["expected_modifier_identity"]["maxLength"] == 128
+    shape_key = tools_by_name["shape_key.set_value"]
+    assert shape_key.annotations is not None
+    assert shape_key.annotations.destructiveHint is True
+    assert shape_key.inputSchema["properties"]["expected_shape_key_identity"]["maxLength"] == 128

@@ -25,14 +25,26 @@ from .context_ops import (
     validate_context_snapshot,
 )
 from .generation import has_persistent_scene_update
-from .lookdev_ops import read_property, restore_delta, session_identity
+from .lookdev_ops import (
+    inspect_object_lookdev,
+    read_property,
+    require_modifier,
+    require_object,
+    require_shape_key,
+    restore_delta,
+    session_identity,
+    shape_key_is_driven,
+)
 from .runtime import ADDON_VERSION, ListenerRuntime
 from .transaction_model import (
     IdempotencyCache,
+    ModifierStateDelta,
     ScaleDelta,
+    ShapeKeyDelta,
     Transaction,
     TransactionBook,
     TransactionModelError,
+    VisibilityDelta,
     context_fingerprint,
     request_fingerprint,
     values_equal,
@@ -46,12 +58,16 @@ CAPABILITIES = [
     "context.restore",
     "object.inspect",
     "object.geometry.inspect",
+    "object.lookdev.inspect",
     "viewport.capture",
     "viewport.raycast",
     "transaction.begin",
     "transaction.commit",
     "transaction.rollback",
     "object.transform",
+    "object.visibility.set",
+    "modifier.set_state",
+    "shape_key.set_value",
 ]
 CAPABILITY_VERSIONS = {
     "transport": 1,
@@ -59,14 +75,21 @@ CAPABILITY_VERSIONS = {
     "viewport_capture": 3,
     "viewport_raycast": 1,
     "geometry_inspection": 1,
+    "lookdev_inspection": 1,
     "transactions": 2,
     "object_transform_scale": 1,
+    "object_visibility": 1,
+    "modifier_state": 1,
+    "shape_key_value": 1,
 }
 MUTATION_COMMANDS = {
     "transaction.begin",
     "transaction.commit",
     "transaction.rollback",
     "object.transform",
+    "object.visibility.set",
+    "modifier.set_state",
+    "shape_key.set_value",
 }
 AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 
@@ -312,6 +335,16 @@ class AddonState:
                 )
             with self.suppress_generation():
                 return inspect_geometry(object_name)
+        if command == "object.lookdev.inspect":
+            object_name = params.get("object_name")
+            if not isinstance(object_name, str) or not object_name:
+                raise ContextOperationError(
+                    "OBJECT_NAME_INVALID",
+                    "object_name must be a non-empty string",
+                    kind="validation",
+                )
+            with self.suppress_generation():
+                return inspect_object_lookdev(object_name)
         if command == "viewport.capture":
             object_name = params.get("object_name")
             if not isinstance(object_name, str) or not object_name:
@@ -413,6 +446,15 @@ class AddonState:
         if command == "object.transform":
             transaction = self._require_transaction(params, request)
             return self._transform_scale(transaction, params)
+        if command == "object.visibility.set":
+            transaction = self._require_transaction(params, request)
+            return self._set_object_visibility(transaction, params)
+        if command == "modifier.set_state":
+            transaction = self._require_transaction(params, request)
+            return self._set_modifier_state(transaction, params)
+        if command == "shape_key.set_value":
+            transaction = self._require_transaction(params, request)
+            return self._set_shape_key_value(transaction, params)
         if command == "transaction.commit":
             transaction = self._require_transaction(params, request)
             self._validate_transaction_guards(transaction)
@@ -565,6 +607,295 @@ class AddonState:
             "after": after,
             "scale": list(obj.scale),
             "status": transaction.status,
+            "delta_count": len(transaction.deltas),
+            "delta_kinds": transaction.delta_kinds(),
+        }
+
+    @staticmethod
+    def _required_identity(params: dict[str, Any], name: str) -> str:
+        value = params.get(name)
+        if not isinstance(value, str) or not value:
+            raise ContextOperationError(
+                "TARGET_IDENTITY_REQUIRED",
+                f"{name} must be a non-empty session identity",
+                kind="validation",
+            )
+        return value
+
+    @staticmethod
+    def _require_mutable_object(obj: Any) -> None:
+        if obj.library is not None and obj.override_library is None:
+            raise ContextOperationError(
+                "OBJECT_LINKED",
+                f"Linked object cannot be modified: {obj.name}",
+            )
+
+    def _record_delta(self, transaction: Transaction, delta: Any) -> None:
+        transaction.deltas.append(delta)
+        self.scene_generation += 1
+        transaction.status = "active"
+        transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+
+    def _set_object_visibility(
+        self,
+        transaction: Transaction,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._validate_transaction_guards(transaction)
+        object_name = params.get("object_name")
+        if not isinstance(object_name, str) or not object_name:
+            raise ContextOperationError(
+                "OBJECT_NAME_INVALID",
+                "object_name must be a non-empty string",
+                kind="validation",
+            )
+        object_identity = self._required_identity(params, "expected_object_identity")
+        patch = params.get("visibility")
+        allowed = {"hide_viewport", "hide_render"}
+        if not isinstance(patch, dict) or not patch or set(patch) - allowed:
+            raise ContextOperationError(
+                "WRITE_PATCH_EMPTY",
+                "visibility must set hide_viewport and/or hide_render",
+                kind="validation",
+            )
+        if any(type(value) is not bool for value in patch.values()):
+            raise ContextOperationError(
+                "VISIBILITY_VALUE_INVALID",
+                "visibility values must be booleans",
+                kind="validation",
+            )
+        obj = require_object(object_name, object_identity)
+        self._require_mutable_object(obj)
+        if patch.get("hide_viewport") is True and (
+            obj.select_get() or bpy.context.view_layer.objects.active == obj
+        ):
+            raise ContextOperationError(
+                "VISIBILITY_CONTEXT_CONFLICT",
+                "Cannot hide the active or selected object without changing user context",
+                kind="precondition",
+            )
+        before = {attribute: bool(getattr(obj, attribute)) for attribute in patch}
+        after = {attribute: bool(value) for attribute, value in patch.items()}
+        changed = sorted(
+            attribute for attribute in after if before[attribute] != after[attribute]
+        )
+        if changed:
+            with self.suppress_generation():
+                for attribute in changed:
+                    setattr(obj, attribute, after[attribute])
+                bpy.context.view_layer.update()
+            self._record_delta(
+                transaction,
+                VisibilityDelta(
+                    object_name=object_name,
+                    object_identity=object_identity,
+                    before={attribute: before[attribute] for attribute in changed},
+                    after={attribute: after[attribute] for attribute in changed},
+                ),
+            )
+        return {
+            "transaction_id": transaction.transaction_id,
+            "object_name": object_name,
+            "object_identity": object_identity,
+            "changed_fields": changed,
+            "before": before,
+            "after": after,
+            "visibility": {
+                "hide_viewport": bool(obj.hide_viewport),
+                "hide_render": bool(obj.hide_render),
+            },
+            "status": transaction.status,
+            "delta_count": len(transaction.deltas),
+            "delta_kinds": transaction.delta_kinds(),
+        }
+
+    def _set_modifier_state(
+        self,
+        transaction: Transaction,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._validate_transaction_guards(transaction)
+        object_name = params.get("object_name")
+        modifier_name = params.get("modifier_name")
+        if not isinstance(object_name, str) or not object_name:
+            raise ContextOperationError(
+                "OBJECT_NAME_INVALID",
+                "object_name must be a non-empty string",
+                kind="validation",
+            )
+        if not isinstance(modifier_name, str) or not modifier_name:
+            raise ContextOperationError(
+                "MODIFIER_NAME_INVALID",
+                "modifier_name must be a non-empty string",
+                kind="validation",
+            )
+        object_identity = self._required_identity(params, "expected_object_identity")
+        modifier_identity = self._required_identity(params, "expected_modifier_identity")
+        patch = params.get("state")
+        allowed = {"show_viewport", "show_render"}
+        if not isinstance(patch, dict) or not patch or set(patch) - allowed:
+            raise ContextOperationError(
+                "WRITE_PATCH_EMPTY",
+                "state must set show_viewport and/or show_render",
+                kind="validation",
+            )
+        if any(type(value) is not bool for value in patch.values()):
+            raise ContextOperationError(
+                "MODIFIER_STATE_INVALID",
+                "modifier state values must be booleans",
+                kind="validation",
+            )
+        obj, modifier = require_modifier(
+            object_name,
+            object_identity,
+            modifier_name,
+            modifier_identity,
+        )
+        self._require_mutable_object(obj)
+        before = {attribute: bool(getattr(modifier, attribute)) for attribute in patch}
+        after = {attribute: bool(value) for attribute, value in patch.items()}
+        changed = sorted(
+            attribute for attribute in after if before[attribute] != after[attribute]
+        )
+        if changed:
+            with self.suppress_generation():
+                for attribute in changed:
+                    setattr(modifier, attribute, after[attribute])
+                bpy.context.view_layer.update()
+            self._record_delta(
+                transaction,
+                ModifierStateDelta(
+                    object_name=object_name,
+                    object_identity=object_identity,
+                    modifier_name=modifier_name,
+                    modifier_identity=modifier_identity,
+                    before={attribute: before[attribute] for attribute in changed},
+                    after={attribute: after[attribute] for attribute in changed},
+                ),
+            )
+        return {
+            "transaction_id": transaction.transaction_id,
+            "object_name": object_name,
+            "object_identity": object_identity,
+            "modifier_name": modifier_name,
+            "modifier_identity": modifier_identity,
+            "changed_fields": changed,
+            "before": before,
+            "after": after,
+            "state": {
+                "show_viewport": bool(modifier.show_viewport),
+                "show_render": bool(modifier.show_render),
+            },
+            "status": transaction.status,
+            "delta_count": len(transaction.deltas),
+            "delta_kinds": transaction.delta_kinds(),
+        }
+
+    def _set_shape_key_value(
+        self,
+        transaction: Transaction,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._validate_transaction_guards(transaction)
+        object_name = params.get("object_name")
+        shape_key_name = params.get("shape_key_name")
+        raw_value = params.get("value")
+        if not isinstance(object_name, str) or not object_name:
+            raise ContextOperationError(
+                "OBJECT_NAME_INVALID",
+                "object_name must be a non-empty string",
+                kind="validation",
+            )
+        if not isinstance(shape_key_name, str) or not shape_key_name:
+            raise ContextOperationError(
+                "SHAPE_KEY_NAME_INVALID",
+                "shape_key_name must be a non-empty string",
+                kind="validation",
+            )
+        if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+            raise ContextOperationError(
+                "SHAPE_KEY_VALUE_INVALID",
+                "shape key value must be a finite number",
+                kind="validation",
+            )
+        value = float(raw_value)
+        if not math.isfinite(value):
+            raise ContextOperationError(
+                "SHAPE_KEY_VALUE_INVALID",
+                "shape key value must be a finite number",
+                kind="validation",
+            )
+        object_identity = self._required_identity(params, "expected_object_identity")
+        shape_key_identity = self._required_identity(params, "expected_shape_key_identity")
+        obj, key_block = require_shape_key(
+            object_name,
+            object_identity,
+            shape_key_name,
+            shape_key_identity,
+        )
+        self._require_mutable_object(obj)
+        if obj.type != "MESH":
+            raise ContextOperationError(
+                "OBJECT_LOOKDEV_UNSUPPORTED",
+                f"Shape key writes only support MESH objects: {object_name}",
+            )
+        shape_keys = obj.data.shape_keys
+        if key_block == shape_keys.reference_key:
+            raise ContextOperationError(
+                "SHAPE_KEY_BASIS_FORBIDDEN",
+                "The Basis shape key cannot be assigned a preview value",
+            )
+        if shape_keys.library is not None or obj.data.library is not None:
+            raise ContextOperationError(
+                "OBJECT_LINKED",
+                f"Linked shape key data cannot be modified: {object_name}",
+            )
+        if shape_key_is_driven(shape_keys, key_block):
+            raise ContextOperationError(
+                "SHAPE_KEY_DRIVEN",
+                f"Shape key is controlled by a driver: {object_name}.{shape_key_name}",
+            )
+        minimum = float(key_block.slider_min)
+        maximum = float(key_block.slider_max)
+        if not minimum <= value <= maximum:
+            raise ContextOperationError(
+                "SHAPE_KEY_VALUE_OUT_OF_RANGE",
+                f"Shape key value must be between {minimum} and {maximum}",
+                kind="validation",
+                details={"minimum": minimum, "maximum": maximum, "value": value},
+            )
+        before = float(key_block.value)
+        changed = not values_equal(before, value)
+        if changed:
+            with self.suppress_generation():
+                key_block.value = value
+                bpy.context.view_layer.update()
+            self._record_delta(
+                transaction,
+                ShapeKeyDelta(
+                    object_name=object_name,
+                    object_identity=object_identity,
+                    shape_key_name=shape_key_name,
+                    shape_key_identity=shape_key_identity,
+                    before=before,
+                    after=value,
+                ),
+            )
+        return {
+            "transaction_id": transaction.transaction_id,
+            "object_name": object_name,
+            "object_identity": object_identity,
+            "shape_key_name": shape_key_name,
+            "shape_key_identity": shape_key_identity,
+            "changed": changed,
+            "before": before,
+            "after": value,
+            "value": float(key_block.value),
+            "slider_min": minimum,
+            "slider_max": maximum,
+            "status": transaction.status,
+            "delta_count": len(transaction.deltas),
+            "delta_kinds": transaction.delta_kinds(),
         }
 
     def _rollback_transaction(self, transaction: Transaction) -> dict[str, Any]:

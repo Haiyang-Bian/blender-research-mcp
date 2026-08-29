@@ -19,10 +19,132 @@ from .transaction_model import (
 )
 
 AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
+MODIFIER_LIMIT = 256
+SHAPE_KEY_LIMIT = 256
+MATERIAL_SLOT_LIMIT = 64
 
 
 def session_identity(kind: str, value: Any) -> str:
     return f"{kind}:{value.as_pointer():x}"
+
+
+def _library_path(value: Any) -> str | None:
+    library = getattr(value, "library", None)
+    return library.filepath if library is not None else None
+
+
+def shape_key_is_driven(shape_keys: Any, key_block: Any) -> bool:
+    animation_data = shape_keys.animation_data
+    if animation_data is None:
+        return False
+    data_path = key_block.path_from_id("value")
+    return any(driver.data_path == data_path for driver in animation_data.drivers)
+
+
+def inspect_object_lookdev(object_name: str) -> dict[str, Any]:
+    obj = bpy.data.objects.get(object_name)
+    if obj is None:
+        raise ContextOperationError(
+            "OBJECT_NOT_FOUND",
+            f"Object does not exist: {object_name}",
+            kind="not_found",
+        )
+    warnings: list[dict[str, Any]] = []
+    modifiers = list(obj.modifiers)
+    if len(modifiers) > MODIFIER_LIMIT:
+        warnings.append(
+            {
+                "code": "LOOKDEV_DIAGNOSTICS_TRUNCATED",
+                "section": "modifiers",
+                "limit": MODIFIER_LIMIT,
+                "count": len(modifiers),
+            }
+        )
+    modifier_results = [
+        {
+            "name": modifier.name,
+            "type": modifier.type,
+            "session_identity": session_identity("modifier", modifier),
+            "show_viewport": bool(modifier.show_viewport),
+            "show_render": bool(modifier.show_render),
+        }
+        for modifier in modifiers[:MODIFIER_LIMIT]
+    ]
+
+    shape_key_results: list[dict[str, Any]] = []
+    shape_keys = getattr(obj.data, "shape_keys", None)
+    key_blocks = list(shape_keys.key_blocks)[1:] if shape_keys is not None else []
+    if len(key_blocks) > SHAPE_KEY_LIMIT:
+        warnings.append(
+            {
+                "code": "LOOKDEV_DIAGNOSTICS_TRUNCATED",
+                "section": "shape_keys",
+                "limit": SHAPE_KEY_LIMIT,
+                "count": len(key_blocks),
+            }
+        )
+    for key_block in key_blocks[:SHAPE_KEY_LIMIT]:
+        shape_key_results.append(
+            {
+                "name": key_block.name,
+                "session_identity": session_identity("shape_key", key_block),
+                "value": float(key_block.value),
+                "slider_min": float(key_block.slider_min),
+                "slider_max": float(key_block.slider_max),
+                "mute": bool(key_block.mute),
+                "driven": shape_key_is_driven(shape_keys, key_block),
+                "relative_key": key_block.relative_key.name,
+            }
+        )
+
+    slots = list(obj.material_slots)
+    if len(slots) > MATERIAL_SLOT_LIMIT:
+        warnings.append(
+            {
+                "code": "LOOKDEV_DIAGNOSTICS_TRUNCATED",
+                "section": "material_slots",
+                "limit": MATERIAL_SLOT_LIMIT,
+                "count": len(slots),
+            }
+        )
+    material_slots = []
+    for index, slot in enumerate(slots[:MATERIAL_SLOT_LIMIT]):
+        material = slot.material
+        material_slots.append(
+            {
+                "index": index,
+                "name": material.name if material is not None else None,
+                "session_identity": (
+                    session_identity("material", material) if material is not None else None
+                ),
+                "users": int(material.users) if material is not None else 0,
+                "library": _library_path(material) if material is not None else None,
+                "use_nodes": bool(material.use_nodes) if material is not None else False,
+            }
+        )
+
+    return {
+        "name": obj.name,
+        "type": obj.type,
+        "session_identity": session_identity("object", obj),
+        "library": _library_path(obj),
+        "data_library": _library_path(obj.data),
+        "visibility": {
+            "hide_viewport": bool(obj.hide_viewport),
+            "hide_render": bool(obj.hide_render),
+            "visible": bool(obj.visible_get()),
+        },
+        "modifiers": modifier_results,
+        "shape_keys": shape_key_results,
+        "shape_keys_library": _library_path(shape_keys) if shape_keys is not None else None,
+        "material_slots": material_slots,
+        "counts": {
+            "modifiers": len(modifiers),
+            "shape_keys": len(key_blocks),
+            "material_slots": len(slots),
+        },
+        "warnings": warnings,
+    }
 
 
 def _require_identity(kind: str, value: Any, expected: str) -> None:

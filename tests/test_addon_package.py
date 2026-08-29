@@ -36,6 +36,18 @@ def test_addon_registers_compact_view3d_and_full_scene_properties_panels() -> No
     assert "session_token" not in source
 
 
+def test_addon_registers_bounded_object_local_write_commands() -> None:
+    source = (SOURCE / "state.py").read_text(encoding="utf-8")
+
+    for command in (
+        "object.lookdev.inspect",
+        "object.visibility.set",
+        "modifier.set_state",
+        "shape_key.set_value",
+    ):
+        assert command in source
+
+
 def test_addon_zip_has_an_installable_package_root(tmp_path: Path) -> None:
     output = build(tmp_path / "addon.zip")
     with zipfile.ZipFile(output) as archive:

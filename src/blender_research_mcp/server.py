@@ -11,7 +11,7 @@ from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, ContentBlock, ImageContent, TextContent, ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from blender_research_mcp.client import BridgeClient
 from blender_research_mcp.constants import DEFAULT_PORT
@@ -53,6 +53,10 @@ OverlaysMode = Literal["CURRENT", "ON", "OFF"]
 BundleViews = Annotated[tuple[SemanticView, ...], Field(min_length=1, max_length=3)]
 CaptureId = Annotated[str, Field(min_length=1, max_length=128)]
 NormalizedCoordinate = Annotated[float, Field(ge=0.0, le=1.0)]
+SessionIdentity = Annotated[str, Field(min_length=1, max_length=128)]
+ModifierName = Annotated[str, Field(min_length=1, max_length=255)]
+ShapeKeyName = Annotated[str, Field(min_length=1, max_length=255)]
+FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
 
 
 class ScalePatch(BaseModel):
@@ -165,6 +169,22 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
     async def object_geometry_inspect(object_name: ObjectName) -> dict[str, Any]:
         return await client.call(
             "object.geometry.inspect",
+            {"object_name": object_name},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="object.lookdev.inspect",
+        description=(
+            "List bounded object-local visibility, modifier, shape-key, and material-slot "
+            "targets with session identities for safe preview writes."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def object_lookdev_inspect(object_name: ObjectName) -> dict[str, Any]:
+        return await client.call(
+            "object.lookdev.inspect",
             {"object_name": object_name},
             read_only=True,
         )
@@ -316,6 +336,126 @@ def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
                 "transaction_id": transaction_id,
                 "object_name": object_name,
                 "scale": scale.model_dump(exclude_none=True),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="object.visibility.set",
+        description=(
+            "Set absolute object viewport and/or render visibility flags inside the active "
+            "transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def object_visibility_set(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        hide_viewport: StrictBool | None = None,
+        hide_render: StrictBool | None = None,
+    ) -> dict[str, Any]:
+        visibility = {
+            name: value
+            for name, value in {
+                "hide_viewport": hide_viewport,
+                "hide_render": hide_render,
+            }.items()
+            if value is not None
+        }
+        if not visibility:
+            raise ValueError("hide_viewport and/or hide_render is required")
+        return await client.call(
+            "object.visibility.set",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "visibility": visibility,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="modifier.set_state",
+        description=(
+            "Set absolute viewport and/or render enable flags for one exact modifier inside "
+            "the active transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def modifier_set_state(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        modifier_name: ModifierName,
+        expected_modifier_identity: SessionIdentity,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        show_viewport: StrictBool | None = None,
+        show_render: StrictBool | None = None,
+    ) -> dict[str, Any]:
+        state = {
+            name: value
+            for name, value in {
+                "show_viewport": show_viewport,
+                "show_render": show_render,
+            }.items()
+            if value is not None
+        }
+        if not state:
+            raise ValueError("show_viewport and/or show_render is required")
+        return await client.call(
+            "modifier.set_state",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "modifier_name": modifier_name,
+                "expected_modifier_identity": expected_modifier_identity,
+                "state": state,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="shape_key.set_value",
+        description=(
+            "Set one exact non-Basis, non-driven mesh shape key to an absolute value inside "
+            "the active transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def shape_key_set_value(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        shape_key_name: ShapeKeyName,
+        expected_shape_key_identity: SessionIdentity,
+        value: FiniteFloat,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        return await client.call(
+            "shape_key.set_value",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "shape_key_name": shape_key_name,
+                "expected_shape_key_identity": expected_shape_key_identity,
+                "value": value,
             },
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,
