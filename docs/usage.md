@@ -15,10 +15,11 @@
    `viewport_raycast: 1`, `geometry_inspection: 1`, `lookdev_inspection: 1`,
    `transactions: 2`, and all advertised legacy bounded-write capabilities at version 1
    are required. Static authoring additionally requires `transactions: 3` and the
-   relevant 0.8 authoring/render capability.
+   relevant 0.8 authoring/render capability. Unified object configuration additionally
+   requires `object_settings: 1`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.8.0.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.9.0.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -65,6 +66,8 @@ project root. `project.*` never starts Blender implicitly and returns
 Use exact object names from `context.get` or other verified scene metadata.
 
 - `object.inspect` returns type, transforms, visibility, bounds, and session identity.
+  Light and Camera objects also return typed data identity, users/shared/library state,
+  current settings, writable fields, and ranges.
 - `object.geometry.inspect` returns a bounded evaluated-mesh summary.
 - `viewport.capture` returns one focus-independent image and a settled scene generation.
 - `observation.bundle` returns one to three ordered images, defaulting to FRONT, RIGHT,
@@ -135,8 +138,9 @@ in-memory authoring batch:
 2. Begin one transaction with `transactions: 3`. Each distinct writer gets one UUID;
    only a transport replay of the same payload reuses it.
 3. Create supported primitives, Empty, Camera, or lights with `object.create`; use
-   `object.duplicate` for linked or independent data; use the expanded
-   `object.transform` for absolute location, XYZ Euler degrees, and scale.
+   `object.duplicate` for linked or independent data. For subsequent coherent settings
+   on one object, prefer one `object.set` request containing distinct transform,
+   visibility, Light, and/or Camera patches.
 4. Create a canonical Principled material, assign its exact slot, load absolute local
    images, and bind base color, roughness, metallic, normal, bump, emission, or alpha.
    `material.inspect` returns exact node/socket/link evidence; replacing a link requires
@@ -156,6 +160,10 @@ guards pass. 0.8 does not expose arbitrary mesh editing, arbitrary shader nodes,
 Geometry Nodes, modifier parameters, animation, rigs, compositor operations, Cycles,
 network downloads, or image pack/unpack/reload.
 
+`object.set` changes properties only. Continue to use `object.create/duplicate/delete`
+for structure and `scene.camera.set` for the scene's active Camera. It does not replace
+material, World, Modifier, image, project, or render tools.
+
 `render.preview` and `render.save` use Eevee Next, exact Camera identity, dimensions
 from 256 to 1000, and 1–64 samples. Both restore the previous Camera, engine,
 resolution, transparency, output settings, and sample count. Preview returns a PNG only
@@ -173,6 +181,12 @@ or `.exr` whose parent directory exists and reports the actual file hash.
    command.
 5. Roll back unless the result should explicitly remain in Blender memory. Commit does
    not save the blend file.
+
+The preferred 0.9 object-property writer is `object.set`. It accepts one to four
+non-repeated typed patches, validates all of them before writing, applies transform then
+visibility then object data, and advances generation once. Light/Camera data patches
+must include the exact identity, type, and user count from `object.inspect`; set
+`allow_shared_data=true` only when the requested scope includes every user.
 
 Legacy single-property preview writers are `object.transform`, `object.visibility.set`,
 `modifier.set_state`, `shape_key.set_value`, and `material.set_input`. The 0.8
@@ -203,6 +217,8 @@ absolute candidate values:
 
 1. Build the matching discriminated `target` with every inspected session identity.
 2. Provide unique `{label, value}` candidates of the target's exact type and range.
+   The `object_setting` target uses a closed transform-axis, visibility, Light, or
+   Camera locator. Light colors are `#RRGGBB` sRGB and Area shapes are exact enums.
 3. Choose one evidence object and capture view, display mode, overlays, and size.
 4. Review the returned images in order: baseline, then each candidate in request order.
 5. Check every candidate's writer, capture, rollback, difference statistics, and the
@@ -213,6 +229,11 @@ begin, write, capture, and rollback cycle. Boolean targets accept only the one v
 opposite the baseline. Shared material inputs still require the exact user count and
 `allow_shared=true`. Visually indistinguishable candidates produce a warning rather
 than an error.
+
+Shared Light/Camera data similarly requires the exact users and
+`allow_shared_data=true`. Color candidates retain their submitted hexadecimal form in
+the report, but equality and restoration are checked against Blender's linear RGB
+value.
 
 Comparison never ranks, commits, or saves a candidate. After the operator chooses a
 direction, apply that value through a new ordinary transaction. Any context, identity,
@@ -274,6 +295,12 @@ Codex after the first installation so automatic skill discovery can see it.
   fall back to arbitrary Python.
 - `STRUCTURE_CONFLICT`: preserve user state, stop the batch, and re-inspect identities,
   users, slots, nodes, links, World, Camera, and transaction status.
+- `SHARED_OBJECT_DATA_CONFIRMATION_REQUIRED`: inspect the Light/Camera data users and
+  proceed only when the user's requested scope includes all of them.
+- `OBJECT_DATA_IDENTITY_MISMATCH` or `OBJECT_DATA_USERS_MISMATCH`: discard the stale
+  `object.inspect` evidence and rebuild the typed patch.
+- `OBJECT_SETTINGS_RESTORE_FAILED`: stop subsequent writes and inspect the object,
+  data, transaction, and user context; do not force an assumed baseline.
 - Object, collection, data, material, or image identity/user conflict: discard stale
   evidence and rebuild the remaining authoring steps from current inspection.
 - `MATERIAL_LINK_CONFLICT` or `MATERIAL_LINK_IDENTITY_MISMATCH`: inspect the complete

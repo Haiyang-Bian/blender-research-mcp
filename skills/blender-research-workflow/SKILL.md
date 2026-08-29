@@ -60,6 +60,20 @@ substitute arbitrary Python or generic node/RNA operations.
 only for an explicit image export path; a failed export may be retried after commit
 without repeating the scene transaction.
 
+## Prefer the unified object setting entry
+
+After `object.inspect`, use one `object.set` when the same object needs a coherent
+combination of transform, visibility, Light, or Camera property changes. Supply every
+exact object/data identity, type, and user count from that inspection. Shared
+Light/Camera data is a broader edit; set `allow_shared_data=true` only when the user's
+requested scope includes every user.
+
+Keep structure and scene ownership separate: use `object.create/duplicate/delete` for
+object structure and `scene.camera.set` for the active Camera. Materials, World,
+Modifiers, images, lifecycle, and renders retain their own tools. If the connected
+add-on lacks `object_settings: 1`, use compatible legacy transform/visibility tools
+where they cover the request; do not invent `light.set`, `camera.set`, or generic RNA.
+
 ## Ground image evidence
 
 Use a successful capture's own `capture_id` when mapping normalized top-left image
@@ -98,6 +112,11 @@ tool must return the baseline first, restore after every candidate, and finish w
 three restoration flags true. Treat visually indistinguishable candidates as evidence,
 not failure. Comparison never chooses, commits, or saves a result; after the user picks
 a direction, apply it through a new ordinary transaction.
+
+For transform, visibility, Light, or Camera alternatives, prefer the typed
+`object_setting` comparison target when `object_settings: 1` is available. It uses the
+same inspected scope and `object.set` writer for every independently rolled-back
+candidate.
 
 Read [references/tool-recipes.md](references/tool-recipes.md) when executing an
 application/project lifecycle, multi-step scene authoring, material/texture binding,

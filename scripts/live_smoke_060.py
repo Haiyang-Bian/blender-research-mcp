@@ -596,7 +596,13 @@ async def run_connected(
         ) as session:
             ping_before = await initialize_session(session, report)
             report["ping_before"] = ping_before
-            if ping_before["addon_version"] not in {"0.5.1", "0.6.0", "0.7.0", "0.8.0"}:
+            if ping_before["addon_version"] not in {
+                "0.5.1",
+                "0.6.0",
+                "0.7.0",
+                "0.8.0",
+                "0.9.0",
+            }:
                 raise RuntimeError(
                     f"unexpected compatible add-on version: {ping_before['addon_version']}"
                 )
@@ -604,6 +610,7 @@ async def run_connected(
                 "0.6.0",
                 "0.7.0",
                 "0.8.0",
+                "0.9.0",
             }:
                 raise RuntimeError("UI verification requires the 0.6.0+ add-on")
             baseline_context, _ = await call_structured(session, "context.get")

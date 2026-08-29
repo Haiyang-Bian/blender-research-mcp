@@ -142,6 +142,19 @@ rewire nodes or create a single-user material as a workaround.
 6. Ask the user to select a direction. If they want it retained, start a new ordinary
    transaction and apply that exact value; comparison itself never commits or saves.
 
+For `object_setting`, choose exactly one locator:
+
+- transform channel plus axis;
+- visibility property;
+- Light property plus exact data identity/users/type/shared scope;
+- Camera property plus exact data identity/users/type/shared scope.
+
+Numeric candidates are finite floating-point values in the inspected range. A Boolean
+locator accepts only the value opposite the baseline. Area shape values are exact enum
+strings. Light colors are `#RRGGBB`; hexadecimal case variants are equivalent, and the
+rollback guard compares Blender's linear RGB while the report preserves the submitted
+string.
+
 Any candidate failure stops the sequence. Do not combine partial images with an older
 baseline, retry over a property conflict, or manually force the original value.
 
@@ -184,7 +197,39 @@ scene build may use many writes, up to the transaction's 256-delta bound.
   user context; change selection explicitly outside the authoring transaction if the
   user's request requires that deletion.
 - Do not approximate unsupported topology with arbitrary mesh-component edits. Compose
-  supported primitives or report the 0.8 boundary.
+  supported primitives or report the current boundary.
+
+## Unified object settings
+
+Use `object.inspect` immediately before configuring an existing object. Retain the
+object identity and, for a Light or Camera, the data identity, users, concrete data
+type, writable fields, and ranges.
+
+1. Begin or continue one transaction at the returned generation.
+2. Build one `object.set` request with one to four non-repeated patches. Combine fields
+   when they form one coherent object setting: for example Camera transform plus lens,
+   or Area-light transform plus color, energy, shape, and size.
+3. Use absolute Blender units, XYZ Euler degrees, and local scale. Light colors use
+   `#RRGGBB` sRGB; Point/Spot radius, Area shape/size, Spot cone/blend, and Sun angle are
+   available only when reported for the inspected type.
+4. For Camera data, use lens/sensor width only with `PERSP`, ortho scale only with
+   `ORTHO`, and keep clip end greater than clip start. Projection type and DOF are not
+   writable.
+5. When data users exceed one, verify the requested scope includes all users and pass
+   the unchanged count plus `allow_shared_data=true`. Re-inspect on any identity, type,
+   or user-count mismatch.
+6. Check the returned path-sorted changes, object summary, delta count, and delta kinds.
+   A `changed=false` response is a successful no-op and does not advance generation.
+
+The request validates all patches before writing and applies transform, visibility,
+then data as one generation step. On `OBJECT_SETTINGS_APPLY_FAILED`, verify the object
+before retrying. On `OBJECT_SETTINGS_RESTORE_FAILED`, stop the transaction workflow and
+inspect current object, data, context, and transaction state; never force a guessed
+baseline.
+
+`object.set` does not create/delete objects, choose the active Camera, change World or
+materials, edit Modifier parameters, or expose arbitrary RNA. Use the corresponding
+semantic tool for each of those responsibilities.
 
 ## Principled materials and local textures
 

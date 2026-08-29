@@ -1,10 +1,10 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.8.0 semantic static-scene authoring implemented and live validated
-- Next milestone: unify typed object, Light, and Camera settings while preserving the
-  reviewed transaction and comparison loop
+- Status: 0.9.0 unified typed object settings implemented; automated gate passed and
+  live Blender acceptance pending
+- Next milestone: finish the 0.9 live gate before selecting another authority domain
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.8.0
+- Package and add-on version: 0.9.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -13,9 +13,10 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.8.0 now covers
-the validated observation/lifecycle path plus bounded static-scene authoring; the older
-bridge is no longer the primary interface for this repository.
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.9.0 now covers
+the validated observation/lifecycle/static-authoring path plus a unified typed object,
+Light, and Camera setting surface; the older bridge is no longer the primary interface
+for this repository.
 
 That shape creates a poor long-running LookDev loop:
 
@@ -218,18 +219,19 @@ normalized image coordinates for evaluated-scene raycasts.
 
 ### Implemented bounded mutation
 
+- object.set
 - object.transform
 - object.visibility.set
 - modifier.set_state
 - shape_key.set_value
 - material.set_input
 
-The 0.5 implementation accepts only absolute allow-listed fields. Object writes are
-limited to local `scale.x/y/z`, visibility flags, modifier viewport/render state, and
-non-Basis undriven shape-key values. Material writes are limited to unlinked,
-undriven Float, Int, Boolean, Vector, and Color input `default_value` properties.
-Node topology, modifier structure, location, rotation, lights, asset import, arbitrary
-Python, and file saving remain unavailable.
+The original 0.5 surface accepts absolute allow-listed visibility, Modifier, Shape Key,
+and material input fields. Version 0.9 adds `object.set`, a closed union for complete
+local TRS, visibility, typed Light data, and typed Camera data. It is one public
+object-level operation with internal typed dispatch, not a generic RNA writer.
+Structural object changes, active-Camera selection, materials, World, images, Modifier
+parameters, rendering, and project saving remain separate tools.
 
 Every new writer requires an active transaction, a current scene generation, a unique
 idempotency key, and exact session identities returned by inspection. Shared materials
@@ -253,6 +255,8 @@ and restoration verification cycle.
 Comparison is transient mutation, not a read-only operation. It will never commit,
 save a blend file, rank candidates, or widen the Blender command surface. A selected
 candidate must be applied later through the existing explicit transaction workflow.
+In 0.9 the closed target union also accepts one typed `object_setting` locator and uses
+`object.set`; older comparison targets remain compatible.
 The complete contract and acceptance gate are recorded in
 `docs/roadmap/0.6.0-comparative-previews.md`.
 
@@ -294,6 +298,19 @@ after successful preview. Any property, context, identity, structure, link, user
 preview failure stops the batch and rolls it back. Commit remains memory-only; project
 save and render export are separate explicit deliverable operations. See
 `docs/roadmap/0.8.0-semantic-scene-authoring.md`.
+
+### Implemented unified object settings
+
+Version 0.9.0 adds exact Light/Camera data evidence to `object.inspect` and one typed
+`object.set` writer. A request validates all patches and reserves transaction capacity
+before changing Blender, applies transform then visibility then object data, and
+advances generation once. No-op requests create no delta. Shared Light/Camera data
+requires exact identity/users and explicit shared scope.
+
+The transaction model guards numeric, Boolean, controlled enum, and linear RGB values.
+Apply failures restore and verify this call's partial writes before returning. Legacy
+`object.transform` and `object.visibility.set` retain their schemas while using the same
+kernel. See `docs/roadmap/0.9.0-unified-object-settings.md` and decision 0008.
 
 Tool count is not a success metric. A small composable surface with precise
 preconditions is preferable to dozens of overlapping convenience tools.
@@ -409,7 +426,19 @@ Status: implemented and validated on Blender 4.2.23 in 0.8.0. See
 - Add World/Camera controls and temporary Eevee preview plus explicit PNG/EXR export.
 - Validate a deterministic fixture and a complete moonlit-water scene in temporary files.
 
-### Phase 7 — adoption and reviewed authority expansion
+### Phase 7 — unified typed object settings
+
+Status: implemented with automated gates in 0.9.0; Blender 4.2.23 live acceptance is
+pending.
+
+- Add a closed typed `object.set` surface for object, Light, and Camera settings.
+- Keep one public object-level entry while dispatching to typed internal handlers.
+- Guard shared object data by exact identity, type, users, and explicit shared scope.
+- Route typed object-setting comparisons through the same writer and rollback checks.
+- Preserve all 0.8 tools when connected to an older add-on; reject only new capability
+  use.
+
+### Phase 8 — adoption and reviewed authority expansion
 
 Status: initial adoption complete. Codex is configured against the new MCP, versions
 0.2 through 0.5.1 have live Blender validation records, and the repository is public
@@ -418,8 +447,8 @@ with its validated history merged into `main`.
 - Reuse the validated 0.8 authoring and 0.6 comparison smokes as regression suites.
 - Keep any older bridge only as an external fallback; do not copy its unrestricted
   execution surface into this repository.
-- Add a closed typed `object.set` surface for object, Light, and Camera settings rather
-  than a generic RNA writer; keep selected Modifier families as a separate proposal.
+- Complete the 0.9 object-settings acceptance before selecting another typed domain;
+  keep selected Modifier families as a separate proposal.
 
 ## 10. Acceptance criteria for the first milestone
 
