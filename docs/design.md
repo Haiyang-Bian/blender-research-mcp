@@ -1,8 +1,7 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.9.0 unified typed object settings implemented; automated gate passed and
-  live Blender acceptance pending
-- Next milestone: finish the 0.9 live gate before selecting another authority domain
+- Status: 0.9.0 unified typed object settings implemented and live-validated
+- Next milestone: select the next bounded scene-authoring authority domain
 - Primary Blender target: 4.2.23 LTS
 - Package and add-on version: 0.9.0
 - Protocol version: 1

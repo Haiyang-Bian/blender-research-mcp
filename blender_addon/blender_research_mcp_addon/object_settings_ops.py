@@ -482,13 +482,14 @@ def _prepare_light(
         before[field] = old
         after[field] = new
         changes.append({"path": f"light.{field}", "before": public_old, "after": public_new})
-    resulting_shape = str(after.get("shape", data.shape))
-    if "size_y" in supplied and resulting_shape not in {"RECTANGLE", "ELLIPSE"}:
-        raise AuthoringOperationError(
-            "OBJECT_SETTING_INVALID",
-            "light.size_y requires RECTANGLE or ELLIPSE Area shape",
-            kind="validation",
-        )
+    if data.type == "AREA":
+        resulting_shape = str(after.get("shape", data.shape))
+        if "size_y" in supplied and resulting_shape not in {"RECTANGLE", "ELLIPSE"}:
+            raise AuthoringOperationError(
+                "OBJECT_SETTING_INVALID",
+                "light.size_y requires RECTANGLE or ELLIPSE Area shape",
+                kind="validation",
+            )
     if not before:
         return None, changes
     return (

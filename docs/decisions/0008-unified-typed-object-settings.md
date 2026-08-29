@@ -1,6 +1,6 @@
 # 0008 — unified typed object settings
 
-- Status: accepted and automated-gate validated in 0.9.0; live acceptance pending
+- Status: accepted and automated/live-gate validated in 0.9.0
 - Date: 2026-08-30
 
 ## Context

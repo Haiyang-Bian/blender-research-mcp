@@ -27,7 +27,8 @@ authoring surface. Structural transaction v3
 supports exact create, unlink/delete, material-slot, node-link, World, and Camera
 rollback. The automated suite and real Blender moonlit-water gate have both passed; see
 [the 0.8 validation record](validation/2026-08-29-semantic-scene-authoring.md). The 0.9
-automated gate has passed and its real Blender acceptance is pending. The
+automated and real Blender gates have both passed; see
+[the 0.9 validation record](validation/2026-08-30-unified-object-settings.md). The
 independent 0.6 real comparison gate has also passed; see
 [its validation record](validation/2026-08-30-comparative-previews.md).
 

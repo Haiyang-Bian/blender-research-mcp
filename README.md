@@ -22,8 +22,8 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 验收。0.8.0 新增从空项目创建对象、Principled 材质、本地图像、World、Camera，
 再以 Eevee Next 预览/导出的语义场景创作闭环；自动化门禁和真实月光水面验收
 均已通过。0.9.0 新增统一且封闭类型的 `object.set`，可在一次原子调用中设置同一
-对象的 TRS、可见性与 Light/Camera 数据；自动化门禁已通过，真实 Blender 验收
-待执行。既有验收记录见
+对象的 TRS、可见性与 Light/Camera 数据；自动化门禁和真实 Blender 4.2.23 验收
+均已通过。既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
 [0.4.0 空间诊断](docs/validation/2026-08-29-spatial-diagnosis.md) 和
@@ -31,7 +31,8 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 [0.7.0 托管生命周期](docs/validation/2026-08-29-managed-lifecycle.md)，以及
 [0.8.0 语义场景创作](docs/validation/2026-08-29-semantic-scene-authoring.md)。
 独立比较预览回归见
-[0.6.0 比较预览](docs/validation/2026-08-30-comparative-previews.md)。
+[0.6.0 比较预览](docs/validation/2026-08-30-comparative-previews.md)，统一对象设置见
+[0.9.0 对象设置](docs/validation/2026-08-30-unified-object-settings.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见

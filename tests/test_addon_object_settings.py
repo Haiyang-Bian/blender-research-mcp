@@ -70,6 +70,17 @@ class CameraData:
         self._lens = value
 
 
+class PointLight:
+    def __init__(self) -> None:
+        self.name = "Point Data"
+        self.users = 1
+        self.library = None
+        self.type = "POINT"
+        self.energy = 500.0
+        self.color = [1.0, 1.0, 1.0]
+        self.shadow_soft_size = 0.25
+
+
 class Object:
     def __init__(self, data: CameraData) -> None:
         self.name = "Camera"
@@ -169,6 +180,37 @@ def _camera_patch(data: CameraData, **settings: object) -> dict[str, object]:
         "expected_camera_type": "PERSP",
         **settings,
     }
+
+
+def test_point_light_does_not_require_area_shape_rna() -> None:
+    data = PointLight()
+    obj = Object(data)  # type: ignore[arg-type]
+    obj.type = "LIGHT"
+    settings, model = _load_modules(obj)
+    transaction = _transaction(model)
+
+    result = settings.apply_object_settings(
+        transaction,
+        _params(  # type: ignore[arg-type]
+            obj,
+            data,
+            [
+                {
+                    "type": "light",
+                    "expected_data_identity": f"pointlight:{id(data)}",
+                    "expected_data_users": 1,
+                    "expected_light_type": "POINT",
+                    "energy": 750.0,
+                    "radius": 0.5,
+                }
+            ],
+        ),
+    )
+
+    assert result["changed"] is True
+    assert data.energy == 750.0
+    assert data.shadow_soft_size == 0.5
+    assert len(transaction.deltas) == 1
 
 
 def test_addon_applies_multi_patch_atomically_and_records_typed_deltas() -> None:
