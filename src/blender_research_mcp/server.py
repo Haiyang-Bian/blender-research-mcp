@@ -32,6 +32,10 @@ from blender_research_mcp.comparison import (
     run_lookdev_comparison,
 )
 from blender_research_mcp.constants import DEFAULT_PORT
+from blender_research_mcp.lifecycle import (
+    DEFAULT_LAUNCH_TIMEOUT_SECONDS,
+    ApplicationManager,
+)
 from blender_research_mcp.observation import (
     capture_image,
     collect_observation_bundle,
@@ -153,26 +157,59 @@ class OrbitRequest(BaseModel):
     pitch_degrees: float = Field(default=0.0, ge=-89.0, le=89.0)
 
 
-def create_server(*, port: int = DEFAULT_PORT) -> FastMCP[Any]:
+def create_server(
+    *,
+    port: int = DEFAULT_PORT,
+    blender_executable: str | None = None,
+    launch_timeout: float = DEFAULT_LAUNCH_TIMEOUT_SECONDS,
+) -> FastMCP[Any]:
     client = BridgeClient(port=port)
+    application = ApplicationManager(
+        client,
+        blender_executable=blender_executable,
+        launch_timeout=launch_timeout,
+    )
 
     @asynccontextmanager
-    async def lifespan(_server: FastMCP[Any]) -> AsyncIterator[BridgeClient]:
+    async def lifespan(_server: FastMCP[Any]) -> AsyncIterator[ApplicationManager]:
         try:
-            yield client
+            yield application
         finally:
-            await client.close()
+            await application.close()
 
     server = FastMCP(
         name="blender-research-mcp",
         instructions=(
-            "Local semantic Blender research tools. Operations never save the blend file "
-            "or execute arbitrary Python."
+            "Local semantic Blender research tools. Application launch is independent from "
+            "project opening. Tools do not expose arbitrary Python execution."
         ),
         lifespan=lifespan,
     )
     # FastMCP 1.x does not expose the low-level Server version in its constructor.
     server._mcp_server.version = package_version("blender-research-mcp")
+
+    @server.tool(
+        name="application.status",
+        description=(
+            "Report whether a compatible Blender MCP session is running and summarize it."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def application_status() -> dict[str, Any]:
+        return await application.status()
+
+    @server.tool(
+        name="application.launch",
+        description=(
+            "Reuse a compatible Blender MCP session or launch the configured Blender with "
+            "the version-matched session add-on. This tool never opens a project."
+        ),
+        annotations=PREVIEW_MUTATION,
+        structured_output=True,
+    )
+    async def application_launch() -> dict[str, Any]:
+        return await application.launch()
 
     @server.tool(
         name="connection.ping",

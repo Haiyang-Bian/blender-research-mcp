@@ -11,6 +11,8 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert server._mcp_server.version == "0.6.0"
     tools = asyncio.run(server.list_tools())
     assert [tool.name for tool in tools] == [
+        "application.status",
+        "application.launch",
         "connection.ping",
         "context.get",
         "context.snapshot",
@@ -33,6 +35,16 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "transaction.rollback",
     ]
     tools_by_name = {tool.name: tool for tool in tools}
+    application_status = tools_by_name["application.status"]
+    assert application_status.annotations is not None
+    assert application_status.annotations.readOnlyHint is True
+    application_launch = tools_by_name["application.launch"]
+    assert application_launch.annotations is not None
+    assert application_launch.annotations.readOnlyHint is False
+    assert application_launch.annotations.destructiveHint is False
+    assert application_launch.annotations.idempotentHint is True
+    assert application_launch.annotations.openWorldHint is False
+    assert application_launch.inputSchema["properties"] == {}
     capture = tools_by_name["viewport.capture"]
     assert capture.annotations is not None
     assert capture.annotations.readOnlyHint is True

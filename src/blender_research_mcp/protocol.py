@@ -31,6 +31,8 @@ class CapabilityVersions(BaseModel):
     modifier_state: int = Field(default=0, ge=0)
     shape_key_value: int = Field(default=0, ge=0)
     material_input: int = Field(default=0, ge=0)
+    project_lifecycle: int = Field(default=0, ge=0)
+    application_lifecycle: int = Field(default=0, ge=0)
 
 
 class RequestEnvelope(BaseModel):

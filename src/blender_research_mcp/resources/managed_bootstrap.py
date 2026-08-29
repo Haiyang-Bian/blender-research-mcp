@@ -1,0 +1,25 @@
+"""Fixed Blender bootstrap for a managed Blender Research MCP session."""
+
+from __future__ import annotations
+
+import os
+import sys
+
+import addon_utils  # type: ignore[import-not-found]
+
+ADDON_PATH_ENV = "BLENDER_RESEARCH_MCP_ADDON_RESOURCE_PATH"
+ADDON_MODULE = "blender_research_mcp_addon"
+
+
+def main() -> None:
+    addon_path = os.environ.get(ADDON_PATH_ENV)
+    if not addon_path:
+        raise RuntimeError(f"{ADDON_PATH_ENV} is required")
+    if addon_path not in sys.path:
+        sys.path.insert(0, addon_path)
+    addon_utils.enable(ADDON_MODULE, default_set=False, persistent=True)
+    if addon_utils.check(ADDON_MODULE)[1] is False:
+        raise RuntimeError(f"Could not enable {ADDON_MODULE}")
+
+
+main()

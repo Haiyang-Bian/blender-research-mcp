@@ -60,3 +60,5 @@ def test_capability_versions_default_to_incompatible_zeroes() -> None:
     assert versions.modifier_state == 0
     assert versions.shape_key_value == 0
     assert versions.material_input == 0
+    assert versions.project_lifecycle == 0
+    assert versions.application_lifecycle == 0

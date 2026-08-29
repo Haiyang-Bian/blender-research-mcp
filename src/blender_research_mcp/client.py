@@ -44,6 +44,29 @@ class BridgeClient:
     def handshake(self) -> HandshakeResult | None:
         return self._handshake
 
+    @property
+    def manifest(self) -> SessionManifest | None:
+        return self._manifest
+
+    def require_capability(self, name: str, version: int = 1) -> None:
+        """Enforce a tool-local capability without rejecting older add-ons globally."""
+        handshake = self._handshake
+        actual = 0
+        if handshake is not None:
+            actual = int(handshake.capability_versions.model_dump().get(name, 0))
+        if actual < version:
+            raise TransportError(
+                ErrorInfo(
+                    kind=ErrorKind.PROTOCOL_VERSION,
+                    code="CAPABILITY_MISMATCH",
+                    message=f"Blender add-on does not support required capability {name}",
+                    retryable=False,
+                    details={
+                        "capabilities": {name: {"required": version, "actual": actual}}
+                    },
+                )
+            )
+
     async def close(self) -> None:
         writer, self._writer = self._writer, None
         self._reader = None

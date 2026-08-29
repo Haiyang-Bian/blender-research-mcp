@@ -54,3 +54,23 @@ def transport_error(code: str, message: str, *, retryable: bool = True) -> Trans
             retryable=retryable,
         )
     )
+
+
+def bridge_error(
+    kind: ErrorKind,
+    code: str,
+    message: str,
+    *,
+    retryable: bool = False,
+    details: dict[str, Any] | None = None,
+) -> BridgeError:
+    """Build a structured server-side lifecycle error."""
+    return BridgeError(
+        ErrorInfo(
+            kind=kind,
+            code=code,
+            message=message,
+            retryable=retryable,
+            details=details or {},
+        )
+    )
