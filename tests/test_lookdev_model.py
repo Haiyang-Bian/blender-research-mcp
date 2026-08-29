@@ -51,3 +51,14 @@ def test_material_value_validation_rejects_nonfinite_and_unsupported_values() ->
     with pytest.raises(model.LookdevModelError) as exc_info:
         model.normalize_material_value("SHADER", 1.0, minimum=None, maximum=None)
     assert exc_info.value.code == "MATERIAL_SOCKET_UNSUPPORTED"
+
+
+def test_material_range_prefers_socket_values_and_falls_back_to_rna_hard_limits() -> None:
+    model = load_lookdev_model()
+
+    assert model.resolve_material_range("FLOAT", 0.0, 2.0, -10.0, 10.0) == (0.0, 2.0)
+    assert model.resolve_material_range("COLOR", None, None, 0.0, 1.0) == (0.0, 1.0)
+    assert model.resolve_material_range("BOOLEAN", 0, 1, 0, 1) == (None, None)
+    assert model.resolve_material_range(
+        "VECTOR", float("nan"), None, -1.0, float("inf")
+    ) == (-1.0, None)

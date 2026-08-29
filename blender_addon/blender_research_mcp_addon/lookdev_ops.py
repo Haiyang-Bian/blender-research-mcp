@@ -7,6 +7,7 @@ from typing import Any
 import bpy
 
 from .context_ops import ContextOperationError
+from .lookdev_model import resolve_material_range
 from .transaction_model import (
     MaterialInputDelta,
     ModifierStateDelta,
@@ -78,13 +79,23 @@ def material_socket_range(
     socket: Any,
     socket_kind: str | None,
 ) -> tuple[float | None, float | None]:
-    if socket_kind == "BOOLEAN":
-        return None, None
     minimum = getattr(socket, "min_value", None)
     maximum = getattr(socket, "max_value", None)
-    return (
-        float(minimum) if minimum is not None else None,
-        float(maximum) if maximum is not None else None,
+    rna_minimum = None
+    rna_maximum = None
+    try:
+        default_value = socket.bl_rna.properties.get("default_value")
+        if default_value is not None:
+            rna_minimum = default_value.hard_min
+            rna_maximum = default_value.hard_max
+    except (AttributeError, TypeError):
+        pass
+    return resolve_material_range(
+        socket_kind,
+        minimum,
+        maximum,
+        rna_minimum,
+        rna_maximum,
     )
 
 

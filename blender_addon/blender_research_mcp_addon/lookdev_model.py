@@ -21,6 +21,25 @@ class LookdevModelError(RuntimeError):
         self.details = details or {}
 
 
+def resolve_material_range(
+    socket_kind: str | None,
+    minimum: Any,
+    maximum: Any,
+    rna_minimum: Any,
+    rna_maximum: Any,
+) -> tuple[float | None, float | None]:
+    if socket_kind == "BOOLEAN":
+        return None, None
+
+    def finite_number(primary: Any, fallback: Any) -> float | None:
+        for candidate in (primary, fallback):
+            if type(candidate) in {int, float} and math.isfinite(float(candidate)):
+                return float(candidate)
+        return None
+
+    return finite_number(minimum, rna_minimum), finite_number(maximum, rna_maximum)
+
+
 def normalize_material_value(
     socket_kind: str,
     raw_value: Any,
