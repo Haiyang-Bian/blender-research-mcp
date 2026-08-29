@@ -1,6 +1,6 @@
 # 0005 — Bounded transactional LookDev writes
 
-- Status: accepted for 0.5.1; live validation pending
+- Status: accepted and live-validated in 0.5.1
 - Date: 2026-08-29
 
 ## Context

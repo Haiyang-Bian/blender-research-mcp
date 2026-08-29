@@ -18,6 +18,21 @@ def load_smoke_module():
     return module
 
 
+def load_051_smoke_module():
+    scripts = Path(__file__).parents[1] / "scripts"
+    path = scripts / "live_smoke_051.py"
+    spec = importlib.util.spec_from_file_location("live_smoke_051_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    sys.path.insert(0, str(scripts))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(scripts))
+    return module
+
+
 def test_context_identity_ignores_generation_but_keeps_view() -> None:
     smoke = load_smoke_module()
     first = {
@@ -163,3 +178,65 @@ def test_validate_geometry_summary_checks_counts_and_bounds() -> None:
     }
 
     smoke.validate_geometry_summary(result)
+
+
+def test_051_material_preview_values_preserve_type_and_range() -> None:
+    smoke = load_051_smoke_module()
+
+    assert smoke.choose_material_value(
+        {"socket_kind": "BOOLEAN", "value": False, "minimum": None, "maximum": None}
+    ) is True
+    assert smoke.choose_material_value(
+        {"socket_kind": "INT", "value": 2, "minimum": 0, "maximum": 3}
+    ) == 3
+    assert math.isclose(
+        smoke.choose_material_value(
+            {"socket_kind": "FLOAT", "value": 0.5, "minimum": 0.0, "maximum": 1.0}
+        ),
+        0.55,
+    )
+    vector = smoke.choose_material_value(
+        {
+            "socket_kind": "VECTOR",
+            "value": [0.0, 0.5, 1.0],
+            "minimum": -1.0,
+            "maximum": 1.0,
+        }
+    )
+    assert vector == [0.1, 0.5, 1.0]
+    assert all(type(component) is float for component in vector)
+
+
+def test_051_shape_key_selection_skips_drivers_and_fixed_ranges() -> None:
+    smoke = load_051_smoke_module()
+    lookdev = {
+        "name": "脸",
+        "shape_keys": [
+            {
+                "name": "Driven",
+                "value": 0.0,
+                "slider_min": 0.0,
+                "slider_max": 1.0,
+                "driven": True,
+            },
+            {
+                "name": "Fixed",
+                "value": 0.5,
+                "slider_min": 0.5,
+                "slider_max": 0.5,
+                "driven": False,
+            },
+            {
+                "name": "Smile",
+                "value": 0.0,
+                "slider_min": 0.0,
+                "slider_max": 1.0,
+                "driven": False,
+            },
+        ],
+    }
+
+    target, value = smoke.choose_shape_key(lookdev)
+
+    assert target["name"] == "Smile"
+    assert value == 0.1

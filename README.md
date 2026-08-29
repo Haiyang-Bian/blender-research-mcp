@@ -13,12 +13,13 @@ Blender 会话发现。0.4.0 在不依赖窗口像素的 GPU 离屏捕获上增�
 着色、绝对 orbit、捕获绑定的 `viewport.raycast` 和有界 evaluated geometry
 摘要。0.4.0 已通过 Blender 被 Codex 完全遮挡时的真实空间诊断烟测，
 包括诊断着色、绝对 orbit、正交/透视 raycast、geometry inspect、旧证据
-拒绝和事务回退。0.5.1 已实现有类型、可回退的对象可见性、Modifier 状态、
-Shape Key 值和材质输入预览；自动化测试已通过，真实 Blender 烟测将在安装
-0.5.1 插件后记录。验收记录见
+拒绝和事务回退。0.5.1 已实现并真实验证有类型、可回退的对象可见性、
+Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护、断线自动
+回退以及 Blender 被 Codex 完全遮挡时的离屏证据。验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
-[0.4.0 空间诊断](docs/validation/2026-08-29-spatial-diagnosis.md)。
+[0.4.0 空间诊断](docs/validation/2026-08-29-spatial-diagnosis.md) 和
+[0.5.1 受限 LookDev 写入](docs/validation/2026-08-29-bounded-lookdev-writes.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)。
