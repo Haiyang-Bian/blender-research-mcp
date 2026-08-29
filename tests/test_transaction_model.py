@@ -170,3 +170,62 @@ def test_idempotency_cache_can_remove_auto_rolled_back_transaction() -> None:
     cache.remove_transaction("tx-1")
 
     assert cache.lookup("begin-key", "fingerprint") is None
+
+
+def test_structural_deltas_are_guarded_and_reported_without_property_coercion() -> None:
+    model = load_transaction_model()
+    transaction = model.Transaction(
+        transaction_id="tx-structure",
+        label="build scene",
+        context_snapshot={},
+        context_fingerprint="context",
+        started_generation=2,
+    )
+    original = model.StructureGuard("object", "Moon", "object:1", "fingerprint-1", 1)
+    refreshed = model.StructureGuard("object", "Moon", "object:1", "fingerprint-2", 1)
+    transaction.record(
+        model.StructuralDelta(
+            kind="object_create",
+            action="create_resource",
+            before=(),
+            after=(original,),
+        )
+    )
+
+    assert transaction.expected_properties() == {}
+    assert transaction.expected_structures() == {
+        ("object", "Moon", "object:1"): original
+    }
+    assert transaction.delta_kinds() == ["object_create"]
+
+    transaction.refresh_structure_guard(refreshed)
+    assert transaction.expected_structures() == {
+        ("object", "Moon", "object:1"): refreshed
+    }
+
+
+def test_transaction_rejects_more_than_256_deltas() -> None:
+    model = load_transaction_model()
+    transaction = model.Transaction(
+        transaction_id="tx-limit",
+        label=None,
+        context_snapshot={},
+        context_fingerprint="context",
+        started_generation=0,
+    )
+    for index in range(model.MAX_TRANSACTION_DELTAS):
+        transaction.record(
+            model.ScaleDelta(
+                "Cube",
+                "object:1",
+                {"x": float(index)},
+                {"x": float(index + 1)},
+            )
+        )
+
+    with pytest.raises(model.TransactionModelError) as error:
+        transaction.record(
+            model.ScaleDelta("Cube", "object:1", {"x": 256.0}, {"x": 257.0})
+        )
+
+    assert error.value.code == "TRANSACTION_DELTA_LIMIT"

@@ -9,6 +9,8 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
+MAX_TRANSACTION_DELTAS = 256
+
 
 class TransactionModelError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
@@ -71,8 +73,40 @@ class MaterialInputDelta:
     after: PropertyValue
 
 
+@dataclass(frozen=True)
+class StructureGuard:
+    """Expected session-local state for one structurally edited Blender resource."""
+
+    kind: str
+    name: str
+    identity: str
+    fingerprint: str
+    users: int | None = None
+
+
+@dataclass
+class StructuralDelta:
+    """A reversible structural change interpreted by the Blender-side authoring layer.
+
+    ``payload`` deliberately remains Blender-private.  It may contain runtime data-block
+    references needed to restore an unlink or remove a transaction-created resource; it
+    is never serialized into an MCP response.
+    """
+
+    kind: str
+    action: str
+    before: tuple[StructureGuard, ...]
+    after: tuple[StructureGuard, ...]
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
 TransactionDelta = (
-    ScaleDelta | VisibilityDelta | ModifierStateDelta | ShapeKeyDelta | MaterialInputDelta
+    ScaleDelta
+    | VisibilityDelta
+    | ModifierStateDelta
+    | ShapeKeyDelta
+    | MaterialInputDelta
+    | StructuralDelta
 )
 
 
@@ -170,6 +204,8 @@ def delta_properties(
                 delta.after,
             )
         ]
+    if isinstance(delta, StructuralDelta):
+        return []
     raise TypeError(f"Unsupported transaction delta: {type(delta).__name__}")
 
 
@@ -196,6 +232,49 @@ class Transaction:
     status: str = "active"
     deltas: list[TransactionDelta] = field(default_factory=list)
 
+    def ensure_capacity(self, additional: int = 1) -> None:
+        if isinstance(additional, bool) or additional < 0:
+            raise ValueError("additional must be a non-negative integer")
+        if len(self.deltas) + additional > MAX_TRANSACTION_DELTAS:
+            raise TransactionModelError(
+                "TRANSACTION_DELTA_LIMIT",
+                f"A transaction may contain at most {MAX_TRANSACTION_DELTAS} deltas",
+            )
+
+    def record(self, delta: TransactionDelta) -> None:
+        self.ensure_capacity()
+        self.deltas.append(delta)
+
+    def structural_deltas(self) -> list[StructuralDelta]:
+        return [delta for delta in self.deltas if isinstance(delta, StructuralDelta)]
+
+    def expected_structures(self) -> dict[tuple[str, str, str], StructureGuard]:
+        expected: dict[tuple[str, str, str], StructureGuard] = {}
+        for delta in self.structural_deltas():
+            for guard in delta.after:
+                expected[(guard.kind, guard.name, guard.identity)] = guard
+        return expected
+
+    def refresh_structure_guard(self, guard: StructureGuard) -> None:
+        """Refresh every matching guard after a later agent-owned structural write."""
+
+        key = (guard.kind, guard.name, guard.identity)
+        found = False
+        for delta in self.structural_deltas():
+            updated = []
+            for current in delta.after:
+                if (current.kind, current.name, current.identity) == key:
+                    updated.append(guard)
+                    found = True
+                else:
+                    updated.append(current)
+            delta.after = tuple(updated)
+        if not found:
+            raise TransactionModelError(
+                "STRUCTURE_GUARD_NOT_FOUND",
+                f"No structural guard exists for {guard.kind} {guard.name}",
+            )
+
     def expected_properties(self) -> dict[PropertyRef, PropertyValue]:
         expected: dict[PropertyRef, PropertyValue] = {}
         for delta in self.deltas:
@@ -204,13 +283,13 @@ class Transaction:
         return expected
 
     def delta_kinds(self) -> list[str]:
-        return sorted(
-            {
-                reference.kind
-                for delta in self.deltas
-                for reference, _, _ in delta_properties(delta)
-            }
-        )
+        kinds = {
+            reference.kind
+            for delta in self.deltas
+            for reference, _, _ in delta_properties(delta)
+        }
+        kinds.update(delta.kind for delta in self.structural_deltas())
+        return sorted(kinds)
 
 
 class TransactionBook:

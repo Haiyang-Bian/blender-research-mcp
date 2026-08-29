@@ -56,12 +56,18 @@ from .project_ops import (
     validate_save_path,
 )
 from .runtime import ADDON_VERSION, ListenerRuntime
+from .structural_ops import (
+    finalize_structural_delta,
+    restore_structural_delta,
+    validate_structural_transaction,
+)
 from .transaction_model import (
     IdempotencyCache,
     MaterialInputDelta,
     ModifierStateDelta,
     ScaleDelta,
     ShapeKeyDelta,
+    StructuralDelta,
     Transaction,
     TransactionBook,
     TransactionModelError,
@@ -104,7 +110,7 @@ CAPABILITY_VERSIONS = {
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 2,
+    "transactions": 3,
     "object_transform_scale": 1,
     "object_visibility": 1,
     "modifier_state": 1,
@@ -542,7 +548,16 @@ class AddonState:
             transaction = self._require_transaction(params, request)
             self._validate_transaction_guards(transaction)
             result = self._transaction_result(transaction)
+            finalized: list[dict[str, Any]] = []
+            with self.suppress_generation():
+                for delta in transaction.structural_deltas():
+                    item = finalize_structural_delta(delta)
+                    if item is not None:
+                        finalized.append(item)
+            if finalized:
+                self.scene_generation += 1
             result["status"] = "committed"
+            result["finalized"] = finalized
             self.transactions.finish(transaction, "committed")
             return result
         if command == "transaction.rollback":
@@ -571,7 +586,16 @@ class AddonState:
             return None
         self._validate_transaction_guards(transaction)
         result = self._transaction_result(transaction)
+        finalized: list[dict[str, Any]] = []
+        with self.suppress_generation():
+            for delta in transaction.structural_deltas():
+                item = finalize_structural_delta(delta)
+                if item is not None:
+                    finalized.append(item)
+        if finalized:
+            self.scene_generation += 1
         result["status"] = "committed"
+        result["finalized"] = finalized
         self.transactions.finish(transaction, "committed")
         return result
 
@@ -864,6 +888,7 @@ class AddonState:
                         "actual": current,
                     },
                 )
+        validate_structural_transaction(transaction)
 
     def _transform_scale(
         self,
@@ -920,17 +945,15 @@ class AddonState:
             for axis, value in after.items():
                 obj.scale[AXIS_INDEX[axis]] = value
             bpy.context.view_layer.update()
-        self.scene_generation += 1
-        transaction.deltas.append(
+        self._record_delta(
+            transaction,
             ScaleDelta(
                 object_name=object_name,
                 object_identity=session_identity("object", obj),
                 before=before,
                 after=after,
-            )
+            ),
         )
-        transaction.status = "active"
-        transaction.context_fingerprint = self._current_context_fingerprint(transaction)
         return {
             "transaction_id": transaction.transaction_id,
             "object_name": object_name,
@@ -963,7 +986,7 @@ class AddonState:
             )
 
     def _record_delta(self, transaction: Transaction, delta: Any) -> None:
-        transaction.deltas.append(delta)
+        transaction.record(delta)
         self.scene_generation += 1
         transaction.status = "active"
         transaction.context_fingerprint = self._current_context_fingerprint(transaction)
@@ -1418,7 +1441,10 @@ class AddonState:
         restored: list[dict[str, Any]] = []
         with self.suppress_generation():
             for delta in reversed(transaction.deltas):
-                restored.append(restore_delta(delta))
+                if isinstance(delta, StructuralDelta):
+                    restored.append(restore_structural_delta(delta))
+                else:
+                    restored.append(restore_delta(delta))
             bpy.context.view_layer.update()
             restore_context(transaction.context_snapshot)
         if transaction.deltas:
