@@ -8,30 +8,82 @@ from blender_research_mcp.server import MaterialInputValue, create_server
 
 def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     server = create_server()
-    assert server._mcp_server.version == "0.5.1"
+    assert server._mcp_server.version == "0.8.0"
     tools = asyncio.run(server.list_tools())
     assert [tool.name for tool in tools] == [
+        "application.status",
+        "application.launch",
+        "application.quit",
+        "project.status",
+        "project.save",
+        "project.open",
+        "project.reload",
         "connection.ping",
         "context.get",
         "context.snapshot",
         "context.restore",
+        "scene.inspect",
         "object.inspect",
         "object.geometry.inspect",
         "object.lookdev.inspect",
         "material.inspect",
+        "image.inspect",
         "viewport.capture",
         "viewport.raycast",
         "observation.bundle",
+        "lookdev.compare",
         "transaction.begin",
+        "object.create",
+        "object.duplicate",
+        "object.delete",
         "object.transform",
         "object.visibility.set",
         "modifier.set_state",
         "shape_key.set_value",
         "material.set_input",
+        "material.create",
+        "material.assign",
+        "image.load",
+        "material.texture.bind",
+        "material.texture.clear",
+        "world.set",
+        "scene.camera.set",
+        "render.preview",
+        "render.save",
         "transaction.commit",
         "transaction.rollback",
     ]
     tools_by_name = {tool.name: tool for tool in tools}
+    application_status = tools_by_name["application.status"]
+    assert application_status.annotations is not None
+    assert application_status.annotations.readOnlyHint is True
+    application_launch = tools_by_name["application.launch"]
+    assert application_launch.annotations is not None
+    assert application_launch.annotations.readOnlyHint is False
+    assert application_launch.annotations.destructiveHint is False
+    assert application_launch.annotations.idempotentHint is True
+    assert application_launch.annotations.openWorldHint is False
+    assert application_launch.inputSchema["properties"] == {}
+    application_quit = tools_by_name["application.quit"]
+    assert application_quit.annotations is not None
+    assert application_quit.annotations.readOnlyHint is False
+    assert application_quit.annotations.destructiveHint is True
+    project_status = tools_by_name["project.status"]
+    assert project_status.annotations is not None
+    assert project_status.annotations.readOnlyHint is True
+    for name in ("project.save", "project.open", "project.reload"):
+        tool = tools_by_name[name]
+        assert tool.annotations is not None
+        assert tool.annotations.readOnlyHint is False
+        assert tool.annotations.destructiveHint is True
+        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.openWorldHint is False
+    project_open = tools_by_name["project.open"]
+    assert project_open.inputSchema["properties"]["save_current"]["default"] is True
+    assert project_open.inputSchema["properties"]["use_scripts"]["default"] is True
+    assert project_open.inputSchema["properties"]["load_ui"]["default"] is True
+    project_reload = tools_by_name["project.reload"]
+    assert project_reload.inputSchema["properties"]["save_current"]["default"] is False
     capture = tools_by_name["viewport.capture"]
     assert capture.annotations is not None
     assert capture.annotations.readOnlyHint is True
@@ -68,11 +120,46 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert bundle.inputSchema["properties"]["views"]["maxItems"] == 3
     assert bundle.inputSchema["properties"]["max_size"]["maximum"] == 1200
     assert "display_mode" in bundle.inputSchema["properties"]
+    comparison = tools_by_name["lookdev.compare"]
+    assert comparison.annotations is not None
+    assert comparison.annotations.readOnlyHint is False
+    assert comparison.annotations.destructiveHint is False
+    assert comparison.annotations.idempotentHint is True
+    assert comparison.annotations.openWorldHint is False
+    assert comparison.inputSchema["properties"]["candidates"]["minItems"] == 1
+    assert comparison.inputSchema["properties"]["candidates"]["maxItems"] == 3
+    assert comparison.inputSchema["$defs"]["ComparisonCapture"]["properties"]["max_size"][
+        "maximum"
+    ] == 1000
+    target_schema = comparison.inputSchema["properties"]["target"]
+    assert target_schema["discriminator"]["propertyName"] == "type"
+    assert len(target_schema["oneOf"]) == 5
+    scene_inspect = tools_by_name["scene.inspect"]
+    assert scene_inspect.annotations is not None
+    assert scene_inspect.annotations.readOnlyHint is True
+    assert scene_inspect.inputSchema["properties"]["kinds"]["minItems"] == 1
+    assert scene_inspect.inputSchema["properties"]["kinds"]["maxItems"] == 7
+    assert scene_inspect.inputSchema["properties"]["limit"]["maximum"] == 256
+    object_create = tools_by_name["object.create"]
+    assert object_create.annotations is not None
+    assert object_create.annotations.destructiveHint is True
+    definition_schema = object_create.inputSchema["properties"]["definition"]
+    assert definition_schema["discriminator"]["propertyName"] == "type"
+    assert len(definition_schema["oneOf"]) == 10
+    object_duplicate = tools_by_name["object.duplicate"]
+    assert object_duplicate.inputSchema["properties"]["linked_data"]["default"] is False
+    object_delete = tools_by_name["object.delete"]
+    assert object_delete.inputSchema["properties"]["expected_object_identity"][
+        "maxLength"
+    ] == 128
     transform = tools_by_name["object.transform"]
     assert transform.annotations is not None
     assert transform.annotations.readOnlyHint is False
     assert transform.annotations.destructiveHint is True
     assert transform.annotations.idempotentHint is True
+    assert "location" in transform.inputSchema["properties"]
+    assert "rotation_euler_degrees" in transform.inputSchema["properties"]
+    assert "expected_object_identity" in transform.inputSchema["properties"]
     visibility = tools_by_name["object.visibility.set"]
     assert visibility.annotations is not None
     assert visibility.annotations.destructiveHint is True
@@ -93,6 +180,61 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert material_input.annotations.idempotentHint is True
     assert material_input.inputSchema["properties"]["expected_material_users"]["minimum"] == 1
     assert len(material_input.inputSchema["properties"]["value"]["oneOf"]) == 5
+    image_inspect = tools_by_name["image.inspect"]
+    assert image_inspect.annotations is not None
+    assert image_inspect.annotations.readOnlyHint is True
+    material_create = tools_by_name["material.create"]
+    color_schema = material_create.inputSchema["$defs"]["MaterialDefinition"]["properties"][
+        "base_color"
+    ]
+    assert color_schema["discriminator"]["propertyName"] == "type"
+    assert len(color_schema["oneOf"]) == 2
+    material_assign = tools_by_name["material.assign"]
+    assert material_assign.inputSchema["properties"]["mode"]["enum"] == [
+        "append",
+        "replace",
+        "clear",
+    ]
+    image_load = tools_by_name["image.load"]
+    assert image_load.inputSchema["properties"]["colorspace"]["enum"] == [
+        "AUTO",
+        "SRGB",
+        "NON_COLOR",
+    ]
+    texture_bind = tools_by_name["material.texture.bind"]
+    assert texture_bind.inputSchema["properties"]["channel"]["enum"] == [
+        "base_color",
+        "roughness",
+        "metallic",
+        "normal",
+        "bump",
+        "emission",
+        "alpha",
+    ]
+    assert texture_bind.inputSchema["properties"]["replace_existing"]["default"] is False
+    texture_clear = tools_by_name["material.texture.clear"]
+    assert texture_clear.inputSchema["properties"]["expected_link_identities"][
+        "minItems"
+    ] == 1
+    world_set = tools_by_name["world.set"]
+    assert world_set.inputSchema["properties"]["allow_shared"]["default"] is False
+    assert world_set.annotations is not None
+    assert world_set.annotations.destructiveHint is True
+    scene_camera = tools_by_name["scene.camera.set"]
+    assert scene_camera.inputSchema["properties"]["expected_camera_identity"][
+        "maxLength"
+    ] == 128
+    render_preview = tools_by_name["render.preview"]
+    assert render_preview.annotations is not None
+    assert render_preview.annotations.readOnlyHint is False
+    assert render_preview.annotations.destructiveHint is False
+    assert render_preview.inputSchema["properties"]["width"]["minimum"] == 256
+    assert render_preview.inputSchema["properties"]["width"]["maximum"] == 1000
+    assert render_preview.inputSchema["properties"]["samples"]["maximum"] == 64
+    render_save = tools_by_name["render.save"]
+    assert render_save.annotations is not None
+    assert render_save.annotations.destructiveHint is True
+    assert render_save.inputSchema["properties"]["transparent"]["default"] is False
 
 
 def test_material_input_value_preserves_json_types() -> None:

@@ -1,16 +1,33 @@
 ---
 name: blender-research-workflow
-description: Inspect, spatially diagnose, and reversibly preview bounded LookDev changes in a live Blender 4.2 scene through Blender Research MCP. Use for viewport evidence, capture-bound raycasts, evaluated mesh summaries, scale, visibility, modifier-state, shape-key, or material-input previews; do not use for arbitrary Python or saving blend files.
+description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, or static scene delivery; do not use for arbitrary Python, arbitrary node graphs, animation, or mesh-component editing.
 ---
 
 # Blender Research Workflow
 
 Use the semantic `blender_research` MCP as the source of truth for live Blender state.
 
-## Start safely
+## Follow application and project intent
 
-1. Call `connection.ping` before relying on the tools. Require protocol `1`, add-on
-   `0.5.x`, `viewport_capture >= 3`, `viewport_raycast >= 1`,
+Treat application launch and project opening as separate decisions:
+
+1. When the user wants Blender started, call `application.status`; call
+   `application.launch` only when `running=false`. Never pass a project path to launch.
+2. When the user wants a project opened, call `application.status`, launch if needed,
+   then call `project.open` with the exact absolute `.blend` path.
+3. A direct request to save, switch, reload, or close is already authorization. Execute
+   the corresponding lifecycle chain without asking the same question again.
+
+`project.open` and `application.quit` save the current dirty project by default and
+commit an active transaction first. `project.reload` discards unsaved changes by
+default. Follow explicit `save_current=false/true`, `save_current_as`, `use_scripts`, or
+`load_ui` intent when the user specifies it. Project tools never launch Blender
+implicitly; handle `APPLICATION_NOT_RUNNING` with the separate status/launch sequence.
+
+After selecting the application/project state:
+
+1. Call `connection.ping` before relying on scene tools. Require protocol `1`, a
+   capability-compatible add-on, `viewport_capture >= 3`, `viewport_raycast >= 1`,
    `geometry_inspection >= 1`, `lookdev_inspection >= 1`, and
    `transactions >= 2`.
 2. Call `context.get` and use exact object names. Never infer live connectivity from
@@ -19,9 +36,29 @@ Use the semantic `blender_research` MCP as the source of truth for live Blender 
    views. Use `object.inspect` or `object.geometry.inspect` when structured state
    answers the question without an image.
 
-Blender may be behind another window. It must remain running with a `VIEW_3D` area;
-minimized capture is not guaranteed. Treat `CAPTURE_GPU_UNAVAILABLE` as a request to
-restore the Blender window, not permission to use desktop automation or raw Python.
+Viewport capture requires a `VIEW_3D` area. Treat `CAPTURE_GPU_UNAVAILABLE` as a failed
+evidence capture, not permission to use desktop automation or raw Python.
+
+## Follow scene-authoring intent
+
+When the user asks to build or modify a static scene, that request authorizes the
+complete in-memory authoring chain. Inspect exact scene/resource identities, begin one
+structural transaction, execute the bounded object/material/image/World/Camera writes,
+render the smallest useful preview, and commit when the structured and visual checks
+succeed. Do not stop for per-object or per-material confirmation. On any write,
+preview, context, property, or structure conflict, roll the whole transaction back and
+report the preserved state.
+
+Authoring requires `transactions >= 3` plus the capability for each requested domain.
+Use `scene.inspect`, `image.inspect`, and the extended `material.inspect` rather than
+guessing names, slots, nodes, links, users, or session identities. Use only the exposed
+primitive, Principled PBR channel, local-image, World, Camera, and Eevee tools; do not
+substitute arbitrary Python or generic node/RNA operations.
+
+`transaction.commit` retains the successful scene only in Blender memory. Call
+`project.save` when the user asked to save or deliver a `.blend`. Call `render.save`
+only for an explicit image export path; a failed export may be retried after commit
+without repeating the scene transaction.
 
 ## Ground image evidence
 
@@ -54,5 +91,14 @@ If a context, property, generation, or idempotency conflict occurs, stop. Do not
 restore, overwrite user state, open a second transaction, or fall back to unrestricted
 Python. Connection loss may trigger the add-on's automatic rollback.
 
-Read [references/tool-recipes.md](references/tool-recipes.md) when executing a
-multi-step observation, preview, reconnect, or recovery workflow.
+Use `lookdev.compare` when the decision needs one to three absolute candidates for one
+already inspected property. Supply every exact target identity, preserve candidate
+order, and choose one evidence object/view that makes the difference reviewable. The
+tool must return the baseline first, restore after every candidate, and finish with all
+three restoration flags true. Treat visually indistinguishable candidates as evidence,
+not failure. Comparison never chooses, commits, or saves a result; after the user picks
+a direction, apply it through a new ordinary transaction.
+
+Read [references/tool-recipes.md](references/tool-recipes.md) when executing an
+application/project lifecycle, multi-step scene authoring, material/texture binding,
+rendering, observation, comparison, preview, reconnect, or recovery workflow.

@@ -1,7 +1,40 @@
 # Blender Research MCP recipes
 
-Use only the tools registered by `blender_research`. These sequences preserve the
-current blend file and never authorize arbitrary Python.
+Use only the tools registered by `blender_research`. Lifecycle tools may intentionally
+save or replace the current blend file when that matches the user's request; they never
+authorize arbitrary Python.
+
+## Application and project lifecycle
+
+Choose the chain from user intent rather than combining tools implicitly:
+
+- **Start Blender only:** call `application.status`; if `running=false`, call
+  `application.launch`. Stop there unless the user also asked to open a project.
+- **Open or switch project:** call `application.status`, launch if needed, then call
+  `project.open(path)` with the user's exact absolute existing `.blend` path.
+- **Save:** call `project.save()`. For an untitled project, provide the absolute target
+  path the user supplied; a different path is Save As and becomes current.
+- **Reload:** call `project.reload()`. Its default discards unsaved changes. Use
+  `save_current=true` only when requested or when the user explicitly wants the edits
+  preserved before reload.
+- **Quit:** call `application.quit()`. It saves dirty current state by default. Use
+  `save_current=false` when the user asked to close without saving.
+
+The user's explicit save/open/switch/reload/close request is sufficient authorization;
+do not insert another confirmation. `project.open` and `application.quit` commit an
+active transaction and save a dirty current project by default. A dirty untitled
+project requires `save_current_as`; use the provided absolute path rather than
+inventing one.
+
+Opening and Save As paths may be anywhere accessible; there is no project-root
+allowlist. Open targets must exist and Save As parents must exist. Default
+`use_scripts=true` and `load_ui=true` honor trusted project scripts and saved UI. Pass
+false only when the caller requests that behavior.
+
+After an open or reload, accept success only after the tool returns a verified final
+`project.status` whose absolute path matches the target. `already_open` is a successful
+no-op; call reload when the user wants an actual disk reload. If a lifecycle call times
+out, inspect `application.status` or `project.status.last_operation` before retrying.
 
 ## Read-only diagnosis
 
@@ -93,8 +126,120 @@ keys.
 Never write a linked, driven, read-only, unsupported, or library-linked socket. Do not
 rewire nodes or create a single-user material as a workaround.
 
+## Comparative LookDev review
+
+1. Inspect one exact writable target. For material inputs, inspect the exact slot and
+   retain object, material, node, socket, user-count, type, and range evidence.
+2. Choose one to three unique absolute candidates of the exact target type. Do not use
+   relative expressions, implicit conversion, clamps, or a value equal to the baseline.
+3. Call `lookdev.compare` with the closed target union, ordered labeled candidates, and
+   one evidence capture specification. A Boolean target accepts only the opposite value.
+4. Review content in order: baseline, then each candidate. Match images to
+   `content_index`; inspect hashes, writer/rollback results, and difference statistics.
+5. Accept the comparison only when `context_unchanged`, `object_unchanged`, and
+   `target_restored` are all true. An indistinguishable warning means the requested
+   change did not escape the rendered-noise threshold; it is not an automatic winner.
+6. Ask the user to select a direction. If they want it retained, start a new ordinary
+   transaction and apply that exact value; comparison itself never commits or saves.
+
+Any candidate failure stops the sequence. Do not combine partial images with an older
+baseline, retry over a property conflict, or manually force the original value.
+
+## Intent-driven static scene authoring
+
+For a user request to build or materially revise a static scene:
+
+1. Establish the requested application/project state, then call `scene.inspect` for
+   objects, collections, materials, images, World, Camera, and render state as needed.
+2. Begin one transaction with `transactions >= 3` and a task label. Generate one UUID
+   per logical writer and reuse only that UUID if transport retries the same payload.
+3. Create and place objects, then create/load/assign materials and images, set World
+   and active Camera. After each response, use its returned generation and exact new
+   identities for the next write.
+4. Re-inspect the smallest decisive subset. Call `render.preview` from an exact Camera
+   when final-camera evidence matters; otherwise use a bounded viewport observation.
+5. If every structural, context, and image check succeeds, commit automatically. The
+   original creation/modification request is the retention decision; do not ask for a
+   confirmation after every primitive or material.
+6. On any conflict or failed preview, stop subsequent writes and roll back the whole
+   transaction. Verify scene/resource state after rollback before starting over.
+7. After commit, call `render.save` for requested PNG/EXR deliverables. Call
+   `project.save` only when the user asked to save or deliver the `.blend` project.
+
+Do not combine unrelated artistic alternatives in one transaction. A complete coherent
+scene build may use many writes, up to the transaction's 256-delta bound.
+
+## Object authoring
+
+- Use `object.create` only for plane/grid/cube, UV or ico sphere, cylinder, cone,
+  Empty, Camera, and point/sun/spot/area lights. Names must be unique. When targeting a
+  non-root collection, use the exact collection identity returned by `scene.inspect`.
+- Initial and later transforms are absolute Blender-unit location, XYZ Euler degrees,
+  and local scale. Location/rotation writes require the exact object identity.
+- Use `object.duplicate(linked_data=false)` for independent object data or
+  `linked_data=true` only when the requested objects should share edits. Preserve the
+  returned data identity and user count.
+- `object.delete` unlinks during the transaction and removes the object only at commit.
+  It rejects the active or selected object because that would invalidate the captured
+  user context; change selection explicitly outside the authoring transaction if the
+  user's request requires that deletion.
+- Do not approximate unsupported topology with arbitrary mesh-component edits. Compose
+  supported primitives or report the 0.8 boundary.
+
+## Principled materials and local textures
+
+1. Create a canonical material with `material.create`; colors may be `#RRGGBB` sRGB or
+   explicit linear RGBA. Retain the returned material and Principled node identities.
+2. Inspect object/data identities and user count. Use `material.assign` append, replace,
+   or clear with the exact slot guard. Set `allow_shared_data=true` only when the
+   requested scope includes every object sharing that mesh data.
+3. Load an arbitrary absolute local file with `image.load`. Use `AUTO` unless semantic
+   meaning calls for `SRGB` color data or `NON_COLOR` numeric/normal data. Retain image
+   identity, users, path, dimensions, and color space from `image.inspect`.
+4. Call `material.inspect` again and choose the exact Principled node/channel. Bind only
+   base color, roughness, metallic, normal, bump, emission, or alpha through
+   `material.texture.bind` with UV or Generated coordinates and bounded mapping.
+5. Do not overwrite an existing incoming link by default. To replace it, pass
+   `replace_existing=true` and the complete inspected `incoming_link_identities` set.
+   Use the same exact set for `material.texture.clear`; rollback restores those links.
+
+These tools do not download, pack, unpack, or reload assets and do not expose arbitrary
+shader nodes. Shared materials require the exact current material user count and the
+requested scope before `allow_shared=true`.
+
+## World, Camera, and reviewed renders
+
+- `world.set` creates a World when the scene has none. Modifying an existing World
+  requires its exact identity/users; shared intent permits `allow_shared=true`.
+  Environment images use exact image identity/users and optional Z rotation. An
+  unsupported pre-existing World graph returns a link conflict instead of rewiring it.
+- `scene.camera.set` takes one exact Camera object and restores the previous active
+  Camera on rollback.
+- `render.preview` temporarily uses Eevee Next at 256–1000 pixels and 1–64 samples,
+  returns a validated PNG/hash, and restores the active Camera and all render settings.
+  A preview is evidence, not an automatic aesthetic ranking.
+- `render.save` overwrites an absolute `.png` or `.exr` whose parent exists. It restores
+  temporary render settings and returns the actual file hash and byte count. Export is
+  independent from `.blend` saving and can be retried after a committed scene build.
+
 ## Recovery
 
+- `APPLICATION_NOT_RUNNING`: call `application.status`, then launch only if the user's
+  intent requires Blender to run; retry the project operation afterward.
+- `BLENDER_EXECUTABLE_NOT_CONFIGURED` or `BLENDER_EXECUTABLE_NOT_FOUND`: report the
+  required CLI/environment/PATH configuration. Do not turn project.open into a hidden
+  process launcher.
+- `APPLICATION_LAUNCH_FAILED` or `APPLICATION_LAUNCH_TIMEOUT`: report PID, launch ID,
+  and log path. Do not create an unbounded retry loop.
+- `CURRENT_PROJECT_UNTITLED`: use the user's absolute `path` or `save_current_as` and
+  repeat the requested save/open/quit chain.
+- `PROJECT_SAVE_FAILED`: the following open/quit was not scheduled; resolve the save
+  failure before retrying the original intent.
+- `PROJECT_OPEN_FAILED`, `PROJECT_OPEN_TIMEOUT`, or `PROJECT_PATH_MISMATCH`: inspect the
+  actual filepath and `last_operation`; do not report a switch that was not verified.
+- `PROJECT_RELOAD_UNAVAILABLE`: save the untitled project or open a named project first.
+- `APPLICATION_QUIT_TIMEOUT`: inspect status; do not claim Blender exited while its PID
+  or instance manifest remains.
 - `CAPABILITY_MISMATCH`: install the matching add-on ZIP, re-enable it, restart the
   bridge, then ping again.
 - `CAPTURE_GPU_UNAVAILABLE`: ensure Blender is open, not minimized, and has a `VIEW_3D`
@@ -109,10 +254,23 @@ rewire nodes or create a single-user material as a workaround.
   mesh arrays or fall back to unrestricted Python.
 - Transaction conflict: preserve user state and report the exact conflict. Never force
   rollback over a value the user changed.
+- `COMPARISON_RESTORE_FAILED`: stop all further writes and re-inspect the target,
+  active transaction, user context, and evidence object before another comparison.
 - `SHARED_MATERIAL_CONFIRMATION_REQUIRED`: report the user count and affected objects;
   obtain intent before a shared preview.
 - `MATERIAL_USERS_CONFLICT`: re-inspect the material rather than reusing stale scope.
 - Material socket link, driver, read-only, type, or range failure: choose a different
   inspected writable input or report the boundary; do not rewire nodes or use Python.
+- `STRUCTURE_CONFLICT`: preserve user edits, stop the batch, and inspect the affected
+  identity, fingerprint, links, users, and transaction status before another attempt.
+- Object/material/image/collection identity or user-count conflict: re-run the relevant
+  inspect tool and rebuild the remainder of the plan from current state.
+- `MATERIAL_LINK_CONFLICT` or `MATERIAL_LINK_IDENTITY_MISMATCH`: re-inspect the complete
+  Principled incoming-link set; never guess or partially replace it.
+- `RENDER_FAILED`, `RENDER_RESULT_INVALID`, or `RENDER_BLANK`: roll back an uncommitted
+  authoring batch. Re-inspect Camera, World, visibility, and render evidence rather than
+  accepting a missing or uniform image.
+- Render output path/save failure after commit: keep the committed in-memory scene and
+  retry only the explicit export after correcting the absolute path or parent.
 - Connection loss: reconnect and ping. The add-on attempts safe rollback after its
   reconnect grace period; inspect transaction status before further mutation.

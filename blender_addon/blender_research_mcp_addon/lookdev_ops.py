@@ -11,6 +11,7 @@ from .lookdev_model import resolve_material_range
 from .transaction_model import (
     MaterialInputDelta,
     ModifierStateDelta,
+    ObjectTransformDelta,
     PropertyRef,
     PropertyValue,
     ScaleDelta,
@@ -24,6 +25,8 @@ MODIFIER_LIMIT = 256
 SHAPE_KEY_LIMIT = 256
 MATERIAL_SLOT_LIMIT = 64
 MATERIAL_SOCKET_LIMIT = 256
+MATERIAL_NODE_LIMIT = 256
+MATERIAL_LINK_LIMIT = 512
 MATERIAL_SOCKET_KINDS = {
     "VALUE": "FLOAT",
     "INT": "INT",
@@ -142,9 +145,87 @@ def inspect_material(object_name: str, material_slot_index: int) -> dict[str, An
     node_tree = material.node_tree if material.use_nodes else None
     warnings: list[dict[str, Any]] = []
     socket_results: list[dict[str, Any]] = []
+    node_results: list[dict[str, Any]] = []
+    link_results: list[dict[str, Any]] = []
+    image_nodes: list[dict[str, Any]] = []
+    semantic_channels: list[dict[str, Any]] = []
     socket_count = 0
     if node_tree is not None:
-        for node in node_tree.nodes:
+        nodes = list(node_tree.nodes)
+        links = list(node_tree.links)
+        for node in nodes[:MATERIAL_NODE_LIMIT]:
+            node_result = {
+                "name": node.name,
+                "label": node.label,
+                "type": node.type,
+                "bl_idname": node.bl_idname,
+                "session_identity": session_identity("node", node),
+            }
+            node_results.append(node_result)
+            if node.bl_idname == "ShaderNodeTexImage":
+                image = node.image
+                image_nodes.append(
+                    {
+                        **node_result,
+                        "image": (
+                            {
+                                "name": image.name,
+                                "session_identity": session_identity("image", image),
+                                "filepath": bpy.path.abspath(image.filepath),
+                                "users": int(image.users),
+                                "colorspace": image.colorspace_settings.name,
+                            }
+                            if image is not None
+                            else None
+                        ),
+                    }
+                )
+            if node.bl_idname == "ShaderNodeBsdfPrincipled":
+                channel_names = {
+                    "base_color": ("Base Color",),
+                    "roughness": ("Roughness",),
+                    "metallic": ("Metallic",),
+                    "normal": ("Normal",),
+                    "bump": ("Normal",),
+                    "emission": ("Emission Color", "Emission"),
+                    "alpha": ("Alpha",),
+                }
+                for channel, names in channel_names.items():
+                    destination = next(
+                        (node.inputs.get(name) for name in names if node.inputs.get(name)),
+                        None,
+                    )
+                    if destination is None:
+                        continue
+                    incoming = list(destination.links)
+                    semantic_channels.append(
+                        {
+                            "channel": channel,
+                            "node_name": node.name,
+                            "node_identity": session_identity("node", node),
+                            "socket_name": destination.name,
+                            "socket_identifier": destination.identifier,
+                            "socket_identity": session_identity("socket", destination),
+                            "incoming_link_identities": [
+                                session_identity("link", link) for link in incoming
+                            ],
+                        }
+                    )
+        for link in links[:MATERIAL_LINK_LIMIT]:
+            link_results.append(
+                {
+                    "session_identity": session_identity("link", link),
+                    "from_node": link.from_node.name,
+                    "from_node_identity": session_identity("node", link.from_node),
+                    "from_socket": link.from_socket.name,
+                    "from_socket_identity": session_identity("socket", link.from_socket),
+                    "to_node": link.to_node.name,
+                    "to_node_identity": session_identity("node", link.to_node),
+                    "to_socket": link.to_socket.name,
+                    "to_socket_identity": session_identity("socket", link.to_socket),
+                }
+            )
+        for node in nodes:
             for socket in node.inputs:
                 socket_count += 1
                 if len(socket_results) >= MATERIAL_SOCKET_LIMIT:
@@ -203,6 +284,24 @@ def inspect_material(object_name: str, material_slot_index: int) -> dict[str, An
                 "count": socket_count,
             }
         )
+    if node_tree is not None and len(node_tree.nodes) > MATERIAL_NODE_LIMIT:
+        warnings.append(
+            {
+                "code": "LOOKDEV_DIAGNOSTICS_TRUNCATED",
+                "section": "material_nodes",
+                "limit": MATERIAL_NODE_LIMIT,
+                "count": len(node_tree.nodes),
+            }
+        )
+    if node_tree is not None and len(node_tree.links) > MATERIAL_LINK_LIMIT:
+        warnings.append(
+            {
+                "code": "LOOKDEV_DIAGNOSTICS_TRUNCATED",
+                "section": "material_links",
+                "limit": MATERIAL_LINK_LIMIT,
+                "count": len(node_tree.links),
+            }
+        )
     affected_objects = material_affected_objects(material)
     return {
         "object_name": obj.name,
@@ -220,7 +319,18 @@ def inspect_material(object_name: str, material_slot_index: int) -> dict[str, An
         ),
         "node_tree_library": _library_path(node_tree) if node_tree is not None else None,
         "sockets": socket_results,
-        "counts": {"sockets": socket_count, "returned_sockets": len(socket_results)},
+        "nodes": node_results,
+        "links": link_results,
+        "image_nodes": image_nodes,
+        "principled_channels": semantic_channels,
+        "counts": {
+            "sockets": socket_count,
+            "returned_sockets": len(socket_results),
+            "nodes": len(node_tree.nodes) if node_tree is not None else 0,
+            "returned_nodes": len(node_results),
+            "links": len(node_tree.links) if node_tree is not None else 0,
+            "returned_links": len(link_results),
+        },
         "warnings": warnings,
     }
 
@@ -455,8 +565,17 @@ def require_material_socket(target: tuple[str, ...]) -> tuple[Any, Any, Any, Any
 
 
 def read_property(reference: PropertyRef) -> PropertyValue:
-    if reference.kind in {"object_scale", "object_visibility"}:
+    if reference.kind in {
+        "object_location",
+        "object_rotation_euler",
+        "object_scale",
+        "object_visibility",
+    }:
         obj = require_object(*reference.target)
+        if reference.kind == "object_location":
+            return float(obj.location[AXIS_INDEX[reference.attribute]])
+        if reference.kind == "object_rotation_euler":
+            return float(obj.rotation_euler[AXIS_INDEX[reference.attribute]])
         if reference.kind == "object_scale":
             return float(obj.scale[AXIS_INDEX[reference.attribute]])
         return bool(getattr(obj, reference.attribute))
@@ -482,6 +601,17 @@ def restore_delta(delta: TransactionDelta) -> dict[str, Any]:
         for axis, value in delta.before.items():
             obj.scale[AXIS_INDEX[axis]] = value
         return {"kind": "object_scale", "object_name": delta.object_name, "scale": delta.before}
+    if isinstance(delta, ObjectTransformDelta):
+        obj = require_object(delta.object_name, delta.object_identity)
+        for channel, values in delta.before.items():
+            target = getattr(obj, channel)
+            for axis, value in values.items():
+                target[AXIS_INDEX[axis]] = value
+        return {
+            "kind": "object_transform",
+            "object_name": delta.object_name,
+            "values": delta.before,
+        }
     if isinstance(delta, VisibilityDelta):
         obj = require_object(delta.object_name, delta.object_identity)
         for attribute, value in delta.before.items():

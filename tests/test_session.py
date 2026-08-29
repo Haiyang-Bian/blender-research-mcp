@@ -9,7 +9,13 @@ from blender_research_mcp.errors import TransportError
 from blender_research_mcp.session import load_manifest
 
 
-def write_manifest(path, *, port: int, pid: int | None = None) -> None:
+def write_manifest(
+    path,
+    *,
+    port: int,
+    pid: int | None = None,
+    launch_id: str | None = None,
+) -> None:
     path.write_text(
         json.dumps(
             {
@@ -21,6 +27,7 @@ def write_manifest(path, *, port: int, pid: int | None = None) -> None:
                 "session_token": "s" * 43,
                 "addon_version": "0.3.1",
                 "created_at": datetime.now(UTC).isoformat(),
+                "launch_id": launch_id,
             }
         ),
         encoding="utf-8",
@@ -32,6 +39,10 @@ def test_load_manifest_validates_endpoint_and_process(tmp_path) -> None:
     write_manifest(path, port=9877)
     manifest = load_manifest(9877, path)
     assert manifest.pid == os.getpid()
+    assert manifest.launch_id is None
+
+    write_manifest(path, port=9877, launch_id="launch-1")
+    assert load_manifest(9877, path).launch_id == "launch-1"
 
     with pytest.raises(TransportError) as mismatch:
         load_manifest(9878, path)

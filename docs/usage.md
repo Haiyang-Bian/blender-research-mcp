@@ -2,19 +2,63 @@
 
 ## Start and connect
 
-1. Install `artifacts/blender-research-mcp-addon-0.5.1.zip` in Blender 4.2.23 and
-   enable **Blender Research MCP**.
-2. Keep the blend file open with at least one 3D Viewport.
-3. Configure the `blender_research` STDIO MCP as shown in the repository README and
-   restart Codex after changing its MCP configuration.
+1. Configure the `blender_research` STDIO MCP as shown in the repository README.
+2. For managed launch, set `BLENDER_RESEARCH_MCP_BLENDER_EXECUTABLE` or pass
+   `--blender-executable`. `application.launch` also searches `PATH` last.
+   On Windows, point this at a real `blender.exe` that accepts command-line arguments;
+   the Microsoft Store execution alias launches Blender but drops the managed bootstrap
+   environment and arguments. A manually started Store Blender session can still be
+   discovered normally.
+3. Call `application.status`. If `running=false` and the user wants Blender opened,
+   call `application.launch`; this starts Blender but does not open a project.
 4. Call `connection.ping`. Protocol 1, `viewport_capture: 3`,
    `viewport_raycast: 1`, `geometry_inspection: 1`, `lookdev_inspection: 1`,
-   `transactions: 2`, and all advertised bounded-write capabilities at version 1 are
-   required.
+   `transactions: 2`, and all advertised legacy bounded-write capabilities at version 1
+   are required. Static authoring additionally requires `transactions: 3` and the
+   relevant 0.8 authoring/render capability.
 
-Blender does not need focus for semantic operations or off-screen capture. It may be
-behind another window. Minimized capture is not guaranteed; restore the Blender window
-if `CAPTURE_GPU_UNAVAILABLE` is returned.
+Manual installation remains available through
+`artifacts/blender-research-mcp-addon-0.8.0.zip`. Managed launch instead materializes
+the version-matched add-on and fixed bootstrap for the current session without changing
+Blender preferences or the startup file.
+
+## Manage the Blender application and project
+
+Application launch and project opening are intentionally separate:
+
+1. For “start Blender”, call `application.status`, then `application.launch` only if
+   needed. Do not supply or infer a project path.
+2. For “open this project”, call `application.status`, launch if needed, then call
+   `project.open` with the user's absolute existing `.blend` path.
+3. Do not repeat a confirmation after the user has explicitly asked to save, open,
+   switch, reload, or close. That intent authorizes the corresponding lifecycle chain.
+
+`application.status` returns `running=false` normally when Blender is absent. A running
+session includes PID, instance and launch IDs, versions, port, managed status,
+capabilities, and a project summary; the session token is never returned.
+
+`project.status` works without a 3D Viewport and reports filepath, saved/dirty state,
+scene generation, active transaction, and the last lifecycle operation.
+
+- `project.save()` commits an active transaction and saves the current file. An
+  untitled project requires an absolute `path`; a different path performs Save As and
+  overwrites an existing target without a file selector.
+- `project.open(path)` defaults to committing the active transaction and saving a dirty
+  current project before switching. A dirty untitled current project requires
+  `save_current_as`. Set `save_current=false` to switch and discard the old unsaved
+  state. `use_scripts=true` and `load_ui=true` are the defaults.
+- Opening the already current path returns `already_open` after any required save. Use
+  `project.reload()` for a real disk reload.
+- `project.reload()` defaults to discarding unsaved changes. Set `save_current=true`
+  when the user wants to preserve them first.
+- `application.quit()` defaults to committing and saving before closing. A dirty
+  untitled project requires `save_current_as`; `save_current=false` closes without
+  saving.
+
+All file parameters must be absolute `.blend` paths. Open targets must exist; Save As
+targets may be new if their parent directory exists. Paths are not restricted to a
+project root. `project.*` never starts Blender implicitly and returns
+`APPLICATION_NOT_RUNNING` when no session exists.
 
 ## Observe a target
 
@@ -60,7 +104,8 @@ Use the compact **Research MCP** N-panel for connection, capture backend, transa
 and error status. The complete status panel is under
 **Scene Properties > Blender Research MCP**. Neither panel changes Blender areas or
 workspaces. The full panel lists authorized write categories and shows the active
-transaction's delta count and kinds without exposing the session token.
+transaction's label, delta count, and kinds plus the current project path, dirty state,
+and last lifecycle operation, without exposing the session token.
 
 ## Inspect writable LookDev targets
 
@@ -79,6 +124,44 @@ socket identities, socket identifier, value range, material user count, and affe
 object list. At most 256 shape keys, 64 material slots, and 256 material sockets are
 returned; check `warnings` before assuming the list is complete.
 
+## Author a bounded static scene
+
+A direct request to create or materially revise a static scene authorizes one complete
+in-memory authoring batch:
+
+1. Call `scene.inspect` for the resource kinds needed by the request. Use exact object,
+   collection, material, image, World, and Camera identities rather than remembered
+   names.
+2. Begin one transaction with `transactions: 3`. Each distinct writer gets one UUID;
+   only a transport replay of the same payload reuses it.
+3. Create supported primitives, Empty, Camera, or lights with `object.create`; use
+   `object.duplicate` for linked or independent data; use the expanded
+   `object.transform` for absolute location, XYZ Euler degrees, and scale.
+4. Create a canonical Principled material, assign its exact slot, load absolute local
+   images, and bind base color, roughness, metallic, normal, bump, emission, or alpha.
+   `material.inspect` returns exact node/socket/link evidence; replacing a link requires
+   the complete current link-identity set.
+5. Set the World background/environment and active Camera when required. Shared mesh
+   data, materials, World, and images retain exact identity/user-count guards.
+6. Re-inspect critical resources and call `render.preview` for final-camera evidence.
+   On success, commit automatically; the original scene-building request is already the
+   retention intent. On any context/property/structure/link/preview failure, roll the
+   whole transaction back and verify current state.
+7. After commit, call `render.save` for requested absolute PNG/EXR deliverables.
+   Call `project.save` only when the user requested a saved/delivered `.blend`.
+
+Transactions contain at most 256 property plus structural deltas. `object.delete`
+unlinks first, restores links on rollback, and removes the object only after commit
+guards pass. 0.8 does not expose arbitrary mesh editing, arbitrary shader nodes,
+Geometry Nodes, modifier parameters, animation, rigs, compositor operations, Cycles,
+network downloads, or image pack/unpack/reload.
+
+`render.preview` and `render.save` use Eevee Next, exact Camera identity, dimensions
+from 256 to 1000, and 1–64 samples. Both restore the previous Camera, engine,
+resolution, transparency, output settings, and sample count. Preview returns a PNG only
+after dimension/hash/byte-count/nonblank validation. Save overwrites an absolute `.png`
+or `.exr` whose parent directory exists and reports the actual file hash.
+
 ## Preview one supported change
 
 1. Observe or inspect the object and retain the latest `scene_generation`.
@@ -91,10 +174,11 @@ returned; check `warnings` before assuming the list is complete.
 5. Roll back unless the result should explicitly remain in Blender memory. Commit does
    not save the blend file.
 
-Supported writers are `object.transform`, `object.visibility.set`,
-`modifier.set_state`, `shape_key.set_value`, and `material.set_input`. They never
-change object location/rotation, add or reorder modifiers, edit node topology, change
-lights, import assets, or save files.
+Legacy single-property preview writers are `object.transform`, `object.visibility.set`,
+`modifier.set_state`, `shape_key.set_value`, and `material.set_input`. The 0.8
+authoring tools separately permit bounded location/rotation, fixed semantic node links,
+lights, and local images inside structural transactions; neither surface permits
+arbitrary modifiers/nodes/Python or implicit `.blend` saving.
 
 Shape-key values must be finite and inside the inspected slider range; no clamp occurs.
 Material input values preserve their inspected Boolean, Int, Float, three-component
@@ -112,6 +196,29 @@ rollback returns `CONTEXT_CONFLICT`, `PROPERTY_CONFLICT`, or
 Use a distinct idempotency key for each distinct payload; a replay of the same payload
 returns the cached result.
 
+## Compare candidates
+
+Use `lookdev.compare` after inspecting one exact target and choosing one to three
+absolute candidate values:
+
+1. Build the matching discriminated `target` with every inspected session identity.
+2. Provide unique `{label, value}` candidates of the target's exact type and range.
+3. Choose one evidence object and capture view, display mode, overlays, and size.
+4. Review the returned images in order: baseline, then each candidate in request order.
+5. Check every candidate's writer, capture, rollback, difference statistics, and the
+   final `context_unchanged`, `object_unchanged`, and `target_restored` flags.
+
+The tool re-inspects before every candidate and uses a separate transaction for each
+begin, write, capture, and rollback cycle. Boolean targets accept only the one value
+opposite the baseline. Shared material inputs still require the exact user count and
+`allow_shared=true`. Visually indistinguishable candidates produce a warning rather
+than an error.
+
+Comparison never ranks, commits, or saves a candidate. After the operator chooses a
+direction, apply that value through a new ordinary transaction. Any context, identity,
+property, capture, or rollback conflict stops the remaining candidates without a force
+path.
+
 ## Install the Codex workflow skill
 
 The repository copy under `skills/blender-research-workflow` is authoritative. Install
@@ -127,10 +234,31 @@ Codex after the first installation so automatic skill discovery can see it.
 
 ## Common failures
 
-- `CAPABILITY_MISMATCH`: install and fully restart the matching 0.5 add-on.
+- `APPLICATION_NOT_RUNNING`: call `application.status`, then launch Blender only when
+  that matches the user's intent; retry the project operation afterward.
+- `BLENDER_EXECUTABLE_NOT_CONFIGURED` or `BLENDER_EXECUTABLE_NOT_FOUND`: configure the
+  executable through CLI, environment, or `PATH` and call `application.launch` again.
+- `APPLICATION_LAUNCH_FAILED` or `APPLICATION_LAUNCH_TIMEOUT`: inspect the returned
+  launch ID and log path; do not loop indefinitely.
+- `CURRENT_PROJECT_UNTITLED`: provide `path` for `project.save` or `save_current_as` for
+  the requested open/quit operation.
+- `PROJECT_PATH_INVALID` or `PROJECT_NOT_FOUND`: use an absolute `.blend` path with the
+  required existing target or parent directory.
+- `PROJECT_SAVE_FAILED`: the current project was not switched or closed; correct the
+  reported Blender/operator failure and retry the original intent.
+- `PROJECT_OPEN_FAILED`, `PROJECT_OPEN_TIMEOUT`, or `PROJECT_PATH_MISMATCH`: inspect
+  `project.status.last_operation` and the actual filepath before another switch.
+- `PROJECT_RELOAD_UNAVAILABLE`: save the untitled project first or open an existing
+  `.blend` file.
+- `APPLICATION_QUIT_TIMEOUT`: inspect `application.status`; the server does not kill
+  Blender after a timed-out semantic quit.
+- `CAPABILITY_MISMATCH`: install and fully restart an add-on with the required
+  capability versions; do not infer compatibility from the version string alone.
 - `CAPTURE_GPU_UNAVAILABLE`: restore the Blender window and confirm a 3D Viewport exists.
 - `CAPTURE_BLANK`: discard the image; it is not valid evidence.
 - `SCENE_UNSTABLE`: stop playback/loading/editing and restart the observation.
+- `COMPARISON_RESTORE_FAILED`: stop all writes and inspect the target, transaction, and
+  user context before starting another comparison.
 - `OBSERVATION_CONTEXT_DRIFT` or `OBSERVATION_SCENE_CHANGED`: discard the whole bundle
   and capture it again.
 - `CAPTURE_NOT_FOUND`: the ID was evicted or the bridge/file restarted; capture again.
@@ -144,3 +272,13 @@ Codex after the first installation so automatic skill discovery can see it.
 - Material socket linked/driven/read-only/type/range failure: choose a different
   inspected writable socket or revise the absolute value. Do not edit node topology or
   fall back to arbitrary Python.
+- `STRUCTURE_CONFLICT`: preserve user state, stop the batch, and re-inspect identities,
+  users, slots, nodes, links, World, Camera, and transaction status.
+- Object, collection, data, material, or image identity/user conflict: discard stale
+  evidence and rebuild the remaining authoring steps from current inspection.
+- `MATERIAL_LINK_CONFLICT` or `MATERIAL_LINK_IDENTITY_MISMATCH`: inspect the complete
+  Principled incoming-link set; do not partially replace or guess links.
+- `RENDER_FAILED`, `RENDER_RESULT_INVALID`, or `RENDER_BLANK`: reject the preview and
+  roll back an uncommitted authoring batch. Inspect Camera, World, and visibility.
+- Render output path or save failure after commit: preserve the committed in-memory
+  scene and retry only the explicit export with a valid absolute path and parent.

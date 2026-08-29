@@ -15,14 +15,70 @@ Blender 会话发现。0.4.0 在不依赖窗口像素的 GPU 离屏捕获上增�
 包括诊断着色、绝对 orbit、正交/透视 raycast、geometry inspect、旧证据
 拒绝和事务回退。0.5.1 已实现并真实验证有类型、可回退的对象可见性、
 Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护、断线自动
-回退以及 Blender 被 Codex 完全遮挡时的离屏证据。验收记录见
+回退。0.6.0 新增 `lookdev.compare`，可针对一个已检查属性生成基线和 1–3 个
+候选证据，并在每个候选后独立回退与验证。0.7.0 进一步把 Blender 应用启动
+与 `.blend` 项目生命周期拆成独立工具：Agent 可启动环境变量配置的 Blender，
+随后按用户意图保存、打开、重载或关闭项目；该闭环已通过真实 Blender 4.2.23
+验收。0.8.0 新增从空项目创建对象、Principled 材质、本地图像、World、Camera，
+再以 Eevee Next 预览/导出的语义场景创作闭环；自动化门禁和真实月光水面验收
+均已通过。既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
 [0.4.0 空间诊断](docs/validation/2026-08-29-spatial-diagnosis.md) 和
-[0.5.1 受限 LookDev 写入](docs/validation/2026-08-29-bounded-lookdev-writes.md)。
+[0.5.1 受限 LookDev 写入](docs/validation/2026-08-29-bounded-lookdev-writes.md)，以及
+[0.7.0 托管生命周期](docs/validation/2026-08-29-managed-lifecycle.md)，以及
+[0.8.0 语义场景创作](docs/validation/2026-08-29-semantic-scene-authoring.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
-[docs/usage.md](docs/usage.md)。
+[docs/usage.md](docs/usage.md)，完整文档导航见
+[docs/README.md](docs/README.md)。公开仓库位于
+[Haiyang-Bian/blender-research-mcp](https://github.com/Haiyang-Bian/blender-research-mcp)。
+
+## 0.6.0 可比较预览
+
+0.6.0 改善评审闭环而不扩大 Blender 写权限。新增
+`lookdev.compare`：针对一个已检查的受限属性，自动生成“当前基线 + 1–3 个
+绝对候选值”的并列图像、结构化 before/after 和像素差异；每个候选都在独立
+事务中应用、捕获并回退，最终必须恢复基线、用户上下文和场景状态。
+
+该工具不会自动选择最佳候选、commit 或保存 `.blend`。用户选定方向后，仍需
+通过现有显式事务重新应用。灯光、任意 Modifier 参数、节点拓扑和位置/旋转仍
+不进入 0.6.0。详细接口、检查点与验收门槛见
+[0.6.0 路线图](docs/roadmap/0.6.0-comparative-previews.md)。
+
+## 0.7.0 应用与项目生命周期
+
+应用和项目是两个独立层次：`application.launch` 只启动或复用 Blender，不接受
+项目路径；`project.open` 只操作已经接入 MCP 的 Blender，不会隐式启动应用。
+Agent 在用户要求“打开项目”时依次调用 `application.status`、必要时
+`application.launch`，最后调用 `project.open`。
+
+- `application.status/launch/quit` 管理 Blender 进程与托管会话；
+- `project.status/save/open/reload` 管理当前 `.blend` 文件；
+- `project.open` 默认 commit 活动事务、保存 dirty 当前项目，并加载目标保存的
+  UI 与受信任项目脚本；
+- `project.reload` 默认从磁盘重载并丢弃未保存修改；
+- `application.quit` 默认 commit、保存并关闭，显式 `save_current=false` 则直接
+  丢弃未保存修改。
+
+用户明确要求保存、切换、重载或关闭即授权相应动作链，不再弹出第二次确认。
+所有项目路径必须为绝对 `.blend` 路径，但不受项目根目录白名单限制。托管启动
+使用随当前 wheel 发布的固定 add-on/bootstrap，不写 Blender 偏好或 startup
+file。完整契约见
+[0.7.0 路线图](docs/roadmap/0.7.0-managed-lifecycle.md)。
+
+## 0.8.0 语义场景创作
+
+0.8.0 把事务升级到结构 delta v3，并新增 `scene.inspect`、对象创建/复制/删除与
+完整 TRS、标准 Principled 材质、本地图像加载、七类语义贴图通道、World/活动
+Camera，以及 Eevee Next 预览和 PNG/EXR 导出。用户明确要求搭建或修改静态场景
+时，Agent 可在一个事务内自动完成“发现 → 多步写入 → 预览 → commit”；任何
+属性、上下文、结构、链接或用户数冲突都会停止并整批回退。
+
+该版本仍不开放任意 Python、任意节点图、网格组件编辑、Geometry Nodes、动画、
+Cycles 或网络资产下载。`transaction.commit` 只保留内存状态；只有明确要求保存
+或交付 `.blend` 时才调用 `project.save`。详细契约见
+[0.8.0 路线图](docs/roadmap/0.8.0-semantic-scene-authoring.md)。
 
 ## 目录
 
@@ -54,7 +110,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.5.1
+uv run --no-sync python scripts/build_addon.py --version 0.8.0
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认
@@ -74,8 +130,14 @@ uv run --no-sync python scripts/quality_gate.py
 不会读取或修改个人 `.idea/workspace.xml` 中的旧 SDK 设置。若刚拉取配置后
 列表尚未刷新，重新加载项目即可。
 
-外部 MCP 服务无参数时通过 stdio 启动，并自动发现端口 9877 的本地
-Blender 插件会话。它不提供任意 Python 或保存 `.blend` 文件的工具。
+外部 MCP 服务无参数时通过 stdio 启动，并自动发现端口 9877 的本地 Blender
+插件会话。设置 `BLENDER_RESEARCH_MCP_BLENDER_EXECUTABLE` 后，Agent 也可通过
+`application.launch` 启动可见 Blender。服务不提供任意 Python 工具；保存和
+切换 `.blend` 只能通过明确的项目生命周期工具完成。
+
+Windows 托管启动应配置一个能直接接收命令行参数的真实 `blender.exe`；Microsoft
+Store 的 execution alias 会丢失受管 bootstrap 的环境和参数。已由用户启动的
+Store Blender 仍可作为普通现有会话被发现和复用。
 
 ## 空间诊断
 
@@ -109,24 +171,24 @@ socket，并标明类型、范围、链接、驱动和可写原因。
 复制 single-user 材质，也不会改变节点拓扑。没有明确保留意图时应 rollback；
 commit 仅保留 Blender 内存状态，仍不会保存 `.blend`。
 
+当需要比较同一属性的多个绝对值时，`lookdev.compare` 会验证所有身份和实时
+基线，再按请求顺序为每个候选执行独立的 begin、单次写入、capture 和 rollback。
+只有全部候选都恢复成功时才返回完整图集和差异统计；工具不会给候选排名，也
+不会 commit。选定方向后仍应通过普通事务显式应用。
+
 ## Blender 控制区域
 
 3D Viewport 的 **Research MCP** N-panel 只显示紧凑状态。完整 endpoint、
 heartbeat、scene generation、命令耗时、事务和错误信息位于
-**Scene Properties > Blender Research MCP**。插件不会自动切割 Area 或创建
+**Scene Properties > Blender Research MCP**，并显示当前项目路径、dirty
+状态和最近生命周期操作。插件不会自动切割 Area 或创建
 Workspace；用户可以手动把任意现有 Area 切换为 Properties Editor。
 
-## Blender 是否需要焦点
+## 运行条件
 
-| 操作 | 是否需要 Blender 在前台 |
-| --- | --- |
-| 连接、上下文、对象检查 | 否 |
-| 事务、受限 LookDev 写入、回退 | 否 |
-| 捕获、bundle、raycast、geometry inspect | 否；Blender 可被其他窗口遮挡 |
-
-Blender 必须保持运行并存在至少一个 `VIEW_3D`。最小化不是 0.5.1 的兼容
-保证；GPU 上下文不可用时捕获返回 `CAPTURE_GPU_UNAVAILABLE`，不会把黑图
-作为证据。捕获后端和焦点契约可通过 `connection.ping` 查看。
+`application.status/launch` 与 `project.status/save/open/reload/quit` 不依赖
+`VIEW_3D`。视口捕获仍需要 Blender 会话中存在 3D Viewport；GPU 上下文不可用
+时返回 `CAPTURE_GPU_UNAVAILABLE`，不会把黑图作为证据。
 
 ## 配置 Codex
 
@@ -145,19 +207,21 @@ codex mcp add blender_research -- uv --directory C:\absolute\path\to\blender-res
 command = "uv"
 args = ["run", "--no-sync", "blender-research-mcp"]
 cwd = "C:\\absolute\\path\\to\\blender-research-mcp"
+env = { BLENDER_RESEARCH_MCP_BLENDER_EXECUTABLE = "C:\\Program Files\\Blender Foundation\\Blender 4.2\\blender.exe" }
 startup_timeout_sec = 20
 tool_timeout_sec = 60
 default_tools_approval_mode = "writes"
 ~~~
 
-保存后重启 Codex，并用 `/mcp` 检查 `blender_research`。观察工具可自动调用；
-具有修改性的工具会按 annotations 触发写操作审批。MCP 进程可以在 Blender
-未启动时完成初始化，但具体工具会返回结构化的连接不可用错误。
+保存后重启 Codex，并用 `/mcp` 检查 `blender_research`。MCP 进程可以在
+Blender 未启动时完成初始化；此时 `application.status` 正常返回
+`running=false`，`application.launch` 可冷启动 Blender，而 `project.*` 明确
+返回 `APPLICATION_NOT_RUNNING`，不会把启动和项目操作隐式耦合。
 
 ## 安装常用工作流 Skill
 
 仓库中的 `skills/blender-research-workflow` 定义了连接验证、多视图观察、
-二维到三维诊断、受限写入检查、单变量事务预览和安全恢复流程。安装到个人
+项目生命周期、二维到三维诊断、意图驱动场景创作、受限写入检查、单变量事务预览、候选比较和恢复流程。安装到个人
 Codex skills：
 
 ~~~powershell

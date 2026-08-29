@@ -27,10 +27,20 @@ class CapabilityVersions(BaseModel):
     lookdev_inspection: int = Field(default=0, ge=0)
     transactions: int = Field(default=0, ge=0)
     object_transform_scale: int = Field(default=0, ge=0)
+    object_transform: int = Field(default=0, ge=0)
+    scene_inspection: int = Field(default=0, ge=0)
+    object_authoring: int = Field(default=0, ge=0)
+    material_authoring: int = Field(default=0, ge=0)
+    image_assets: int = Field(default=0, ge=0)
+    world_authoring: int = Field(default=0, ge=0)
+    render_preview: int = Field(default=0, ge=0)
+    render_export: int = Field(default=0, ge=0)
     object_visibility: int = Field(default=0, ge=0)
     modifier_state: int = Field(default=0, ge=0)
     shape_key_value: int = Field(default=0, ge=0)
     material_input: int = Field(default=0, ge=0)
+    project_lifecycle: int = Field(default=0, ge=0)
+    application_lifecycle: int = Field(default=0, ge=0)
 
 
 class RequestEnvelope(BaseModel):

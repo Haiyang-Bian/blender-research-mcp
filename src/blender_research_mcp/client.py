@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -14,6 +13,7 @@ from blender_research_mcp.constants import (
     DEFAULT_PORT,
     MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES,
+    PACKAGE_VERSION,
     PROTOCOL_VERSION,
 )
 from blender_research_mcp.errors import (
@@ -43,6 +43,29 @@ class BridgeClient:
     @property
     def handshake(self) -> HandshakeResult | None:
         return self._handshake
+
+    @property
+    def manifest(self) -> SessionManifest | None:
+        return self._manifest
+
+    def require_capability(self, name: str, version: int = 1) -> None:
+        """Enforce a tool-local capability without rejecting older add-ons globally."""
+        handshake = self._handshake
+        actual = 0
+        if handshake is not None:
+            actual = int(handshake.capability_versions.model_dump().get(name, 0))
+        if actual < version:
+            raise TransportError(
+                ErrorInfo(
+                    kind=ErrorKind.PROTOCOL_VERSION,
+                    code="CAPABILITY_MISMATCH",
+                    message=f"Blender add-on does not support required capability {name}",
+                    retryable=False,
+                    details={
+                        "capabilities": {name: {"required": version, "actual": actual}}
+                    },
+                )
+            )
 
     async def close(self) -> None:
         writer, self._writer = self._writer, None
@@ -80,7 +103,7 @@ class BridgeClient:
                     session_token=manifest.session_token,
                     command="connection.hello",
                     params={
-                        "server_version": package_version("blender-research-mcp"),
+                        "server_version": PACKAGE_VERSION,
                         "protocol_min": PROTOCOL_VERSION,
                         "protocol_max": PROTOCOL_VERSION,
                         "expected_instance_id": manifest.instance_id,
