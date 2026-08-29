@@ -32,7 +32,7 @@ def test_client_handshake_ping_and_read_only_reconnect(tmp_path) -> None:
                     "protocol": 1,
                     "instance_id": "instance-1",
                     "blender_version": "4.2.23",
-                    "addon_version": "0.4.0",
+                    "addon_version": "0.5.0",
                     "capabilities": ["connection.ping"],
                     "capability_versions": {
                         "transport": 1,
@@ -40,7 +40,7 @@ def test_client_handshake_ping_and_read_only_reconnect(tmp_path) -> None:
                         "viewport_capture": 3,
                         "viewport_raycast": 1,
                         "geometry_inspection": 1,
-                        "transactions": 1,
+                        "transactions": 2,
                         "object_transform_scale": 1,
                     },
                 },
@@ -80,7 +80,7 @@ def test_client_handshake_ping_and_read_only_reconnect(tmp_path) -> None:
                     "pid": os.getpid(),
                     "instance_id": "instance-1",
                     "session_token": "t" * 43,
-                    "addon_version": "0.4.0",
+                    "addon_version": "0.5.0",
                     "created_at": datetime.now(UTC).isoformat(),
                 }
             ),

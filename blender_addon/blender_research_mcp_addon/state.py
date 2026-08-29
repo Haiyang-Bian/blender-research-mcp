@@ -25,6 +25,7 @@ from .context_ops import (
     validate_context_snapshot,
 )
 from .generation import has_persistent_scene_update
+from .lookdev_ops import read_property, restore_delta, session_identity
 from .runtime import ADDON_VERSION, ListenerRuntime
 from .transaction_model import (
     IdempotencyCache,
@@ -34,6 +35,7 @@ from .transaction_model import (
     TransactionModelError,
     context_fingerprint,
     request_fingerprint,
+    values_equal,
 )
 from .wire import PROTOCOL_VERSION
 
@@ -57,7 +59,7 @@ CAPABILITY_VERSIONS = {
     "viewport_capture": 3,
     "viewport_raycast": 1,
     "geometry_inspection": 1,
-    "transactions": 1,
+    "transactions": 2,
     "object_transform_scale": 1,
 }
 MUTATION_COMMANDS = {
@@ -471,22 +473,22 @@ class AddonState:
                 "User context changed while the transaction was active",
                 kind="conflict",
             )
-        for (object_name, axis), expected in transaction.expected_scale().items():
-            obj = bpy.data.objects.get(object_name)
-            if obj is None:
-                raise ContextOperationError(
-                    "OBJECT_NOT_FOUND",
-                    f"Transaction object no longer exists: {object_name}",
-                    kind="conflict",
-                )
-            current = float(obj.scale[AXIS_INDEX[axis]])
-            if not math.isclose(current, expected, rel_tol=0.0, abs_tol=1e-7):
+        for reference, expected in transaction.expected_properties().items():
+            current = read_property(reference)
+            if not values_equal(current, expected):
                 transaction.status = "conflicted"
                 self.transactions.last_status = "conflicted"
                 raise ContextOperationError(
                     "PROPERTY_CONFLICT",
-                    f"Scale {object_name}.{axis} changed outside the transaction",
+                    f"{reference.kind}.{reference.attribute} changed outside the transaction",
                     kind="conflict",
+                    details={
+                        "kind": reference.kind,
+                        "target": list(reference.target),
+                        "attribute": reference.attribute,
+                        "expected": expected,
+                        "actual": current,
+                    },
                 )
 
     def _transform_scale(
@@ -546,7 +548,12 @@ class AddonState:
             bpy.context.view_layer.update()
         self.scene_generation += 1
         transaction.deltas.append(
-            ScaleDelta(object_name=object_name, before=before, after=after)
+            ScaleDelta(
+                object_name=object_name,
+                object_identity=session_identity("object", obj),
+                before=before,
+                after=after,
+            )
         )
         transaction.status = "active"
         transaction.context_fingerprint = self._current_context_fingerprint(transaction)
@@ -566,18 +573,7 @@ class AddonState:
         restored: list[dict[str, Any]] = []
         with self.suppress_generation():
             for delta in reversed(transaction.deltas):
-                obj = bpy.data.objects.get(delta.object_name)
-                if obj is None:
-                    raise ContextOperationError(
-                        "OBJECT_NOT_FOUND",
-                        f"Transaction object no longer exists: {delta.object_name}",
-                        kind="conflict",
-                    )
-                for axis, value in delta.before.items():
-                    obj.scale[AXIS_INDEX[axis]] = value
-                restored.append(
-                    {"object_name": delta.object_name, "scale": delta.before.copy()}
-                )
+                restored.append(restore_delta(delta))
             bpy.context.view_layer.update()
             restore_context(transaction.context_snapshot)
         if transaction.deltas:
@@ -598,6 +594,7 @@ class AddonState:
             "status": transaction.status,
             "started_generation": transaction.started_generation,
             "delta_count": len(transaction.deltas),
+            "delta_kinds": transaction.delta_kinds(),
         }
 
     def _error(

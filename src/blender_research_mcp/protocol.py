@@ -24,8 +24,13 @@ class CapabilityVersions(BaseModel):
     viewport_capture: int = Field(default=0, ge=0)
     viewport_raycast: int = Field(default=0, ge=0)
     geometry_inspection: int = Field(default=0, ge=0)
+    lookdev_inspection: int = Field(default=0, ge=0)
     transactions: int = Field(default=0, ge=0)
     object_transform_scale: int = Field(default=0, ge=0)
+    object_visibility: int = Field(default=0, ge=0)
+    modifier_state: int = Field(default=0, ge=0)
+    shape_key_value: int = Field(default=0, ge=0)
+    material_input: int = Field(default=0, ge=0)
 
 
 class RequestEnvelope(BaseModel):

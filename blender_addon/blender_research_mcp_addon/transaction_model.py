@@ -19,8 +19,171 @@ class TransactionModelError(RuntimeError):
 @dataclass
 class ScaleDelta:
     object_name: str
+    object_identity: str
     before: dict[str, float]
     after: dict[str, float]
+
+
+@dataclass
+class VisibilityDelta:
+    object_name: str
+    object_identity: str
+    before: dict[str, bool]
+    after: dict[str, bool]
+
+
+@dataclass
+class ModifierStateDelta:
+    object_name: str
+    object_identity: str
+    modifier_name: str
+    modifier_identity: str
+    before: dict[str, bool]
+    after: dict[str, bool]
+
+
+@dataclass
+class ShapeKeyDelta:
+    object_name: str
+    object_identity: str
+    shape_key_name: str
+    shape_key_identity: str
+    before: float
+    after: float
+
+
+PropertyValue = bool | int | float | tuple[float, ...]
+
+
+@dataclass
+class MaterialInputDelta:
+    object_name: str
+    object_identity: str
+    material_slot_index: int
+    material_name: str
+    material_identity: str
+    node_name: str
+    node_identity: str
+    socket_identifier: str
+    socket_identity: str
+    socket_kind: str
+    before: PropertyValue
+    after: PropertyValue
+
+
+TransactionDelta = (
+    ScaleDelta | VisibilityDelta | ModifierStateDelta | ShapeKeyDelta | MaterialInputDelta
+)
+
+
+@dataclass(frozen=True)
+class PropertyRef:
+    kind: str
+    target: tuple[str, ...]
+    attribute: str
+
+
+def delta_properties(
+    delta: TransactionDelta,
+) -> list[tuple[PropertyRef, PropertyValue, PropertyValue]]:
+    if isinstance(delta, ScaleDelta):
+        return [
+            (
+                PropertyRef(
+                    kind="object_scale",
+                    target=(delta.object_name, delta.object_identity),
+                    attribute=axis,
+                ),
+                delta.before[axis],
+                value,
+            )
+            for axis, value in delta.after.items()
+        ]
+    if isinstance(delta, VisibilityDelta):
+        return [
+            (
+                PropertyRef(
+                    kind="object_visibility",
+                    target=(delta.object_name, delta.object_identity),
+                    attribute=attribute,
+                ),
+                delta.before[attribute],
+                value,
+            )
+            for attribute, value in delta.after.items()
+        ]
+    if isinstance(delta, ModifierStateDelta):
+        return [
+            (
+                PropertyRef(
+                    kind="modifier_state",
+                    target=(
+                        delta.object_name,
+                        delta.object_identity,
+                        delta.modifier_name,
+                        delta.modifier_identity,
+                    ),
+                    attribute=attribute,
+                ),
+                delta.before[attribute],
+                value,
+            )
+            for attribute, value in delta.after.items()
+        ]
+    if isinstance(delta, ShapeKeyDelta):
+        return [
+            (
+                PropertyRef(
+                    kind="shape_key_value",
+                    target=(
+                        delta.object_name,
+                        delta.object_identity,
+                        delta.shape_key_name,
+                        delta.shape_key_identity,
+                    ),
+                    attribute="value",
+                ),
+                delta.before,
+                delta.after,
+            )
+        ]
+    if isinstance(delta, MaterialInputDelta):
+        return [
+            (
+                PropertyRef(
+                    kind="material_input",
+                    target=(
+                        delta.object_name,
+                        delta.object_identity,
+                        str(delta.material_slot_index),
+                        delta.material_name,
+                        delta.material_identity,
+                        delta.node_name,
+                        delta.node_identity,
+                        delta.socket_identifier,
+                        delta.socket_identity,
+                        delta.socket_kind,
+                    ),
+                    attribute="default_value",
+                ),
+                delta.before,
+                delta.after,
+            )
+        ]
+    raise TypeError(f"Unsupported transaction delta: {type(delta).__name__}")
+
+
+def values_equal(left: PropertyValue, right: PropertyValue) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, tuple) or isinstance(right, tuple):
+        if not isinstance(left, tuple) or not isinstance(right, tuple) or len(left) != len(right):
+            return False
+        pairs = zip(left, right, strict=True)
+        return all(values_equal(left_value, right_value) for left_value, right_value in pairs)
+    if isinstance(left, int) or isinstance(right, int):
+        return type(left) is type(right) and left == right
+    return abs(float(left) - float(right)) <= 1e-7
 
 
 @dataclass
@@ -31,14 +194,23 @@ class Transaction:
     context_fingerprint: str
     started_generation: int
     status: str = "active"
-    deltas: list[ScaleDelta] = field(default_factory=list)
+    deltas: list[TransactionDelta] = field(default_factory=list)
 
-    def expected_scale(self) -> dict[tuple[str, str], float]:
-        expected: dict[tuple[str, str], float] = {}
+    def expected_properties(self) -> dict[PropertyRef, PropertyValue]:
+        expected: dict[PropertyRef, PropertyValue] = {}
         for delta in self.deltas:
-            for axis, value in delta.after.items():
-                expected[(delta.object_name, axis)] = value
+            for reference, _before, after in delta_properties(delta):
+                expected[reference] = after
         return expected
+
+    def delta_kinds(self) -> list[str]:
+        return sorted(
+            {
+                reference.kind
+                for delta in self.deltas
+                for reference, _, _ in delta_properties(delta)
+            }
+        )
 
 
 class TransactionBook:
