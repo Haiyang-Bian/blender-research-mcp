@@ -35,6 +35,12 @@ def test_addon_registers_compact_view3d_and_full_scene_properties_panels() -> No
     assert "area_split" not in source
     assert "session_token" not in source
     assert "Authorized preview writes" in source
+    compact_status = source.split("def _draw_compact_status", 1)[1].split(
+        "def _draw_full_status", 1
+    )[0]
+    full_status = source.split("def _draw_full_status", 1)[1].split("class BRMCP_PT_status", 1)[0]
+    assert "Label:" not in compact_status
+    assert 'transaction_box.label(text=f"Label:' in full_status
     assert 'transaction_box.label(text=f"Deltas:' in source
     assert "Material input default value" in source
 

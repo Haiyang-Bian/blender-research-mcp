@@ -1,6 +1,6 @@
 ---
 name: blender-research-workflow
-description: Inspect, spatially diagnose, and reversibly preview bounded LookDev changes in a live Blender 4.2 scene through Blender Research MCP. Use for viewport evidence, capture-bound raycasts, evaluated mesh summaries, scale, visibility, modifier-state, shape-key, or material-input previews; do not use for arbitrary Python or saving blend files.
+description: Inspect, spatially diagnose, compare, and reversibly preview bounded LookDev changes in a live Blender 4.2 scene through Blender Research MCP. Use for viewport evidence, capture-bound raycasts, evaluated mesh summaries, or reviewed scale, visibility, modifier-state, shape-key, and material-input candidates; do not use for arbitrary Python or saving blend files.
 ---
 
 # Blender Research Workflow
@@ -9,8 +9,8 @@ Use the semantic `blender_research` MCP as the source of truth for live Blender 
 
 ## Start safely
 
-1. Call `connection.ping` before relying on the tools. Require protocol `1`, add-on
-   `0.5.x`, `viewport_capture >= 3`, `viewport_raycast >= 1`,
+1. Call `connection.ping` before relying on the tools. Require protocol `1`, a
+   capability-compatible add-on, `viewport_capture >= 3`, `viewport_raycast >= 1`,
    `geometry_inspection >= 1`, `lookdev_inspection >= 1`, and
    `transactions >= 2`.
 2. Call `context.get` and use exact object names. Never infer live connectivity from
@@ -54,5 +54,13 @@ If a context, property, generation, or idempotency conflict occurs, stop. Do not
 restore, overwrite user state, open a second transaction, or fall back to unrestricted
 Python. Connection loss may trigger the add-on's automatic rollback.
 
+Use `lookdev.compare` when the decision needs one to three absolute candidates for one
+already inspected property. Supply every exact target identity, preserve candidate
+order, and choose one evidence object/view that makes the difference reviewable. The
+tool must return the baseline first, restore after every candidate, and finish with all
+three restoration flags true. Treat visually indistinguishable candidates as evidence,
+not failure. Comparison never chooses, commits, or saves a result; after the user picks
+a direction, apply it through a new ordinary transaction.
+
 Read [references/tool-recipes.md](references/tool-recipes.md) when executing a
-multi-step observation, preview, reconnect, or recovery workflow.
+multi-step observation, comparison, preview, reconnect, or recovery workflow.

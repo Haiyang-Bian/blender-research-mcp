@@ -93,6 +93,25 @@ keys.
 Never write a linked, driven, read-only, unsupported, or library-linked socket. Do not
 rewire nodes or create a single-user material as a workaround.
 
+## Comparative LookDev review
+
+1. Inspect one exact writable target. For material inputs, inspect the exact slot and
+   retain object, material, node, socket, user-count, type, and range evidence.
+2. Choose one to three unique absolute candidates of the exact target type. Do not use
+   relative expressions, implicit conversion, clamps, or a value equal to the baseline.
+3. Call `lookdev.compare` with the closed target union, ordered labeled candidates, and
+   one evidence capture specification. A Boolean target accepts only the opposite value.
+4. Review content in order: baseline, then each candidate. Match images to
+   `content_index`; inspect hashes, writer/rollback results, and difference statistics.
+5. Accept the comparison only when `context_unchanged`, `object_unchanged`, and
+   `target_restored` are all true. An indistinguishable warning means the requested
+   change did not escape the rendered-noise threshold; it is not an automatic winner.
+6. Ask the user to select a direction. If they want it retained, start a new ordinary
+   transaction and apply that exact value; comparison itself never commits or saves.
+
+Any candidate failure stops the sequence. Do not combine partial images with an older
+baseline, retry over a property conflict, or manually force the original value.
+
 ## Recovery
 
 - `CAPABILITY_MISMATCH`: install the matching add-on ZIP, re-enable it, restart the
@@ -109,6 +128,8 @@ rewire nodes or create a single-user material as a workaround.
   mesh arrays or fall back to unrestricted Python.
 - Transaction conflict: preserve user state and report the exact conflict. Never force
   rollback over a value the user changed.
+- `COMPARISON_RESTORE_FAILED`: stop all further writes and re-inspect the target,
+  active transaction, user context, and evidence object before another comparison.
 - `SHARED_MATERIAL_CONFIRMATION_REQUIRED`: report the user count and affected objects;
   obtain intent before a shared preview.
 - `MATERIAL_USERS_CONFLICT`: re-inspect the material rather than reusing stale scope.

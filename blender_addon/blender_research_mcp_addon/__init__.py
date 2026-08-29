@@ -12,7 +12,7 @@ from .state import AddonState
 bl_info = {
     "name": "Blender Research MCP",
     "author": "Blender Research MCP contributors",
-    "version": (0, 5, 1),
+    "version": (0, 6, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Research MCP",
     "description": "Local semantic, observable, and reversible MCP bridge",
@@ -93,6 +93,8 @@ def _draw_full_status(layout: Any) -> None:
         transaction_box = layout.box()
         transaction_box.label(text="Active transaction", icon="MODIFIER")
         transaction_box.label(text=f"ID: {transaction.transaction_id[:8]}")
+        if transaction.label:
+            transaction_box.label(text=f"Label: {transaction.label}")
         transaction_box.label(text=f"Deltas: {len(transaction.deltas)}")
         kinds = ", ".join(transaction.delta_kinds()) or "none"
         transaction_box.label(text=f"Kinds: {kinds}")

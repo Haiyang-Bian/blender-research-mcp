@@ -5,20 +5,22 @@ in this order when starting a new implementation task:
 
 1. [Design and handoff](design.md) — architecture, safety boundaries, implemented
    phases, and open decisions.
-2. [Using Blender Research MCP](usage.md) — current 0.5.1 operator workflow and error
+2. [Using Blender Research MCP](usage.md) — current 0.6.0 operator workflow and error
    recovery.
 3. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
-   next implementation milestone and its completion criteria.
+   implemented contract and pending real Blender completion criteria.
 4. [Architecture decisions](decisions/README.md) — accepted protocol and authority
    decisions.
 5. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
 
 ## Current release
 
-Version 0.5.1 is live-validated on Blender 4.2.23 LTS. It provides authenticated local
-transport, context-safe GPU off-screen observation, capture-bound raycasts, evaluated
-mesh summaries, and reversible writes for scale, visibility, modifier enable state,
-shape-key values, and guarded material inputs.
+Version 0.6.0 adds rollback-safe comparative previews on the live-validated 0.5.1
+Blender authority. It provides authenticated local transport, context-safe GPU
+off-screen observation, capture-bound raycasts, evaluated mesh summaries, and
+reversible writes for scale, visibility, modifier enable state, shape-key values, and
+guarded material inputs. The comparison implementation has automated coverage; its
+real Blender acceptance remains pending.
 
 The public repository is
 [Haiyang-Bian/blender-research-mcp](https://github.com/Haiyang-Bian/blender-research-mcp).
@@ -32,9 +34,8 @@ decision explicitly changes the contract, the project still forbids arbitrary Py
 blend-file saving, external network services, asset import, node-topology edits,
 object location/rotation, and force-overwriting user changes.
 
-Roadmap documents describe planned behavior, not currently callable tools. User-facing
-instructions must label planned commands clearly until implementation and live
-validation are complete.
+Roadmap documents distinguish implemented behavior from pending live acceptance.
+User-facing instructions must not describe an automated gate as real Blender evidence.
 
 ## Development and validation
 

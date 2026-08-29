@@ -1,9 +1,9 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.5.1 bounded LookDev writes implemented and live-validated
-- Next milestone: 0.6.0 reversible comparative previews
+- Status: 0.6.0 reversible comparative previews implemented; live acceptance pending
+- Next milestone: complete the 0.6.0 real Blender comparison gate
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.5.1
+- Package and add-on version: 0.6.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,7 +12,7 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.5.1 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.6.0 now covers
 the validated observation and bounded-write path; the older bridge is no longer the
 primary interface for this repository.
 
@@ -231,9 +231,9 @@ are rejected unless the caller confirms the exact current material user count an
 - transaction.commit
 - transaction.rollback
 
-### Planned comparison composition
+### Implemented comparison composition
 
-The next milestone adds one external MCP orchestration tool, `lookdev.compare`, on top
+Version 0.6.0 adds one external MCP orchestration tool, `lookdev.compare`, on top
 of the existing inspected writers, capture backend, and transaction guards. It will
 compare the current baseline with one to three absolute candidates for exactly one
 allow-listed property. Each candidate gets its own begin, write, capture, rollback,
@@ -242,7 +242,7 @@ and restoration verification cycle.
 Comparison is transient mutation, not a read-only operation. It will never commit,
 save a blend file, rank candidates, or widen the Blender command surface. A selected
 candidate must be applied later through the existing explicit transaction workflow.
-The complete planned contract is recorded in
+The complete contract and acceptance gate are recorded in
 `docs/roadmap/0.6.0-comparative-previews.md`.
 
 Tool count is not a success metric. A small composable surface with precise
@@ -319,7 +319,7 @@ tools implemented and live-validated in 0.5.1.
 
 ### Phase 4 — reversible comparative evidence
 
-Status: next milestone, planned for 0.6.0.
+Status: implemented with automated coverage in 0.6.0; real Blender acceptance pending.
 
 - Add a typed, closed-world `lookdev.compare` orchestration tool.
 - Accept one inspected target and one to three unique absolute candidate values.
@@ -409,6 +409,6 @@ At the start of a new task:
 7. Prefer one vertical slice—connect, observe, mutate, rollback, verify—over a broad
    catalogue of unfinished tools. Use `observation.bundle` before adding new mutation
    authority.
-8. For the next implementation task, follow
+8. For the next completion task, follow the live acceptance section in
    `docs/roadmap/0.6.0-comparative-previews.md`; do not add new Blender write authority
-   while implementing that milestone.
+   before comparative evidence is validated in real work.

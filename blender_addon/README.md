@@ -15,7 +15,7 @@ uv run --no-sync python scripts/build_addon.py
 ~~~
 
 The ignored output is written to
-`artifacts/blender-research-mcp-addon-0.5.1.zip`. Install that ZIP in Blender
+`artifacts/blender-research-mcp-addon-0.6.0.zip`. Install that ZIP in Blender
 4.2, then enable **Blender Research MCP**. The listener binds only to
 `127.0.0.1:9877`, creates a random per-session token, and publishes its
 ephemeral manifest under the current user's local application data directory.
@@ -38,6 +38,10 @@ splits, or rearranges Blender areas automatically.
 The Scene Properties panel lists the authorized preview-write categories and, while a
 transaction is active, its ID prefix, delta count, and delta kinds. The compact N-panel
 remains limited to connection, capture, transaction, and error status.
+
+Comparative previews use transaction labels such as `compare:A`. The full Scene
+Properties panel shows that label beside the active command so the operator can follow
+candidate application, capture, and rollback without expanding the compact panel.
 
 Material writes require the exact inspected object, slot, material, node, and socket
 identities. Linked, driven, read-only, unsupported, and linked-library sockets are

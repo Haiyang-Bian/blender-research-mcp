@@ -2,7 +2,7 @@
 
 ## Start and connect
 
-1. Install `artifacts/blender-research-mcp-addon-0.5.1.zip` in Blender 4.2.23 and
+1. Install `artifacts/blender-research-mcp-addon-0.6.0.zip` in Blender 4.2.23 and
    enable **Blender Research MCP**.
 2. Keep the blend file open with at least one 3D Viewport.
 3. Configure the `blender_research` STDIO MCP as shown in the repository README and
@@ -60,7 +60,7 @@ Use the compact **Research MCP** N-panel for connection, capture backend, transa
 and error status. The complete status panel is under
 **Scene Properties > Blender Research MCP**. Neither panel changes Blender areas or
 workspaces. The full panel lists authorized write categories and shows the active
-transaction's delta count and kinds without exposing the session token.
+transaction's label, delta count, and kinds without exposing the session token.
 
 ## Inspect writable LookDev targets
 
@@ -112,23 +112,28 @@ rollback returns `CONTEXT_CONFLICT`, `PROPERTY_CONFLICT`, or
 Use a distinct idempotency key for each distinct payload; a replay of the same payload
 returns the cached result.
 
-## Compare candidates in 0.5.1
+## Compare candidates
 
-The current release has no batch comparison command. To compare two values safely:
+Use `lookdev.compare` after inspecting one exact target and choosing one to three
+absolute candidate values:
 
-1. Capture and retain the current baseline.
-2. Inspect one exact writable target.
-3. Preview one absolute candidate in a transaction.
-4. Capture evidence and roll back.
-5. Re-inspect the property and context before trying the next candidate.
+1. Build the matching discriminated `target` with every inspected session identity.
+2. Provide unique `{label, value}` candidates of the target's exact type and range.
+3. Choose one evidence object and capture view, display mode, overlays, and size.
+4. Review the returned images in order: baseline, then each candidate in request order.
+5. Check every candidate's writer, capture, rollback, difference statistics, and the
+   final `context_unchanged`, `object_unchanged`, and `target_restored` flags.
 
-Do not keep one candidate active while testing another, and do not infer that a later
-capture still represents the original baseline. Any conflict ends the comparison.
+The tool re-inspects before every candidate and uses a separate transaction for each
+begin, write, capture, and rollback cycle. Boolean targets accept only the one value
+opposite the baseline. Shared material inputs still require the exact user count and
+`allow_shared=true`. Visually indistinguishable candidates produce a warning rather
+than an error.
 
-The planned 0.6.0 `lookdev.compare` tool will automate this exact sequence for a
-baseline plus one to three candidates while retaining the same write authority. It
-will return ordered images and difference statistics, but it will not rank, commit, or
-save a candidate. See `roadmap/0.6.0-comparative-previews.md` for the planned contract.
+Comparison never ranks, commits, or saves a candidate. After the operator chooses a
+direction, apply that value through a new ordinary transaction. Any context, identity,
+property, capture, or rollback conflict stops the remaining candidates without a force
+path.
 
 ## Install the Codex workflow skill
 
@@ -145,10 +150,13 @@ Codex after the first installation so automatic skill discovery can see it.
 
 ## Common failures
 
-- `CAPABILITY_MISMATCH`: install and fully restart the matching 0.5 add-on.
+- `CAPABILITY_MISMATCH`: install and fully restart an add-on with the required
+  capability versions; do not infer compatibility from the version string alone.
 - `CAPTURE_GPU_UNAVAILABLE`: restore the Blender window and confirm a 3D Viewport exists.
 - `CAPTURE_BLANK`: discard the image; it is not valid evidence.
 - `SCENE_UNSTABLE`: stop playback/loading/editing and restart the observation.
+- `COMPARISON_RESTORE_FAILED`: stop all writes and inspect the target, transaction, and
+  user context before starting another comparison.
 - `OBSERVATION_CONTEXT_DRIFT` or `OBSERVATION_SCENE_CHANGED`: discard the whole bundle
   and capture it again.
 - `CAPTURE_NOT_FOUND`: the ID was evicted or the bridge/file restarted; capture again.

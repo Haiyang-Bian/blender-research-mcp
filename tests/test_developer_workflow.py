@@ -21,11 +21,11 @@ def load_quality_gate_module():
 
 
 def test_build_version_sources_are_synchronized() -> None:
-    assert addon_build.project_version() == "0.5.1"
-    assert addon_build.addon_runtime_version() == "0.5.1"
-    assert addon_build.addon_manifest_version() == "0.5.1"
-    assert addon_build.resolve_build_version("0.5.1") == "0.5.1"
-    assert addon_build.default_output("0.5.1").name == "blender-research-mcp-addon-0.5.1.zip"
+    assert addon_build.project_version() == "0.6.0"
+    assert addon_build.addon_runtime_version() == "0.6.0"
+    assert addon_build.addon_manifest_version() == "0.6.0"
+    assert addon_build.resolve_build_version("0.6.0") == "0.6.0"
+    assert addon_build.default_output("0.6.0").name == "blender-research-mcp-addon-0.6.0.zip"
 
 
 def test_build_rejects_requested_version_mismatch() -> None:
@@ -64,7 +64,7 @@ def test_shared_pycharm_run_configurations_are_uv_backed() -> None:
             "ShConfigurationType",
             (
                 'uv run --no-sync python scripts/build_addon.py --version '
-                '"$Prompt:Release version (for example 0.5.1)$"'
+                '"$Prompt:Release version (for example 0.6.0)$"'
             ),
         ),
         "Tests - Pytest": ("tests", ""),

@@ -15,7 +15,9 @@ Blender 会话发现。0.4.0 在不依赖窗口像素的 GPU 离屏捕获上增�
 包括诊断着色、绝对 orbit、正交/透视 raycast、geometry inspect、旧证据
 拒绝和事务回退。0.5.1 已实现并真实验证有类型、可回退的对象可见性、
 Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护、断线自动
-回退以及 Blender 被 Codex 完全遮挡时的离屏证据。验收记录见
+回退。0.6.0 新增 `lookdev.compare`，可针对一个已检查属性生成基线和 1–3 个
+候选证据，并在每个候选后独立回退与验证；当前已通过自动化门禁，真实 Blender
+对比验收尚待完成。验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
 [0.4.0 空间诊断](docs/validation/2026-08-29-spatial-diagnosis.md) 和
@@ -26,9 +28,9 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 [docs/README.md](docs/README.md)。公开仓库位于
 [Haiyang-Bian/blender-research-mcp](https://github.com/Haiyang-Bian/blender-research-mcp)。
 
-## 下一阶段：0.6.0 可比较预览
+## 0.6.0 可比较预览
 
-0.6.0 将先改善评审闭环，而不扩大 Blender 写权限。计划新增
+0.6.0 改善评审闭环而不扩大 Blender 写权限。新增
 `lookdev.compare`：针对一个已检查的受限属性，自动生成“当前基线 + 1–3 个
 绝对候选值”的并列图像、结构化 before/after 和像素差异；每个候选都在独立
 事务中应用、捕获并回退，最终必须恢复基线、用户上下文和场景状态。
@@ -68,7 +70,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.5.1
+uv run --no-sync python scripts/build_addon.py --version 0.6.0
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认
@@ -123,6 +125,11 @@ socket，并标明类型、范围、链接、驱动和可写原因。
 复制 single-user 材质，也不会改变节点拓扑。没有明确保留意图时应 rollback；
 commit 仅保留 Blender 内存状态，仍不会保存 `.blend`。
 
+当需要比较同一属性的多个绝对值时，`lookdev.compare` 会验证所有身份和实时
+基线，再按请求顺序为每个候选执行独立的 begin、单次写入、capture 和 rollback。
+只有全部候选都恢复成功时才返回完整图集和差异统计；工具不会给候选排名，也
+不会 commit。选定方向后仍应通过普通事务显式应用。
+
 ## Blender 控制区域
 
 3D Viewport 的 **Research MCP** N-panel 只显示紧凑状态。完整 endpoint、
@@ -138,7 +145,7 @@ Workspace；用户可以手动把任意现有 Area 切换为 Properties Editor�
 | 事务、受限 LookDev 写入、回退 | 否 |
 | 捕获、bundle、raycast、geometry inspect | 否；Blender 可被其他窗口遮挡 |
 
-Blender 必须保持运行并存在至少一个 `VIEW_3D`。最小化不是 0.5.1 的兼容
+Blender 必须保持运行并存在至少一个 `VIEW_3D`。最小化不是 0.6.0 的兼容
 保证；GPU 上下文不可用时捕获返回 `CAPTURE_GPU_UNAVAILABLE`，不会把黑图
 作为证据。捕获后端和焦点契约可通过 `connection.ping` 查看。
 
@@ -171,7 +178,7 @@ default_tools_approval_mode = "writes"
 ## 安装常用工作流 Skill
 
 仓库中的 `skills/blender-research-workflow` 定义了连接验证、多视图观察、
-二维到三维诊断、受限写入检查、单变量事务预览和安全恢复流程。安装到个人
+二维到三维诊断、受限写入检查、单变量事务预览、候选比较和安全恢复流程。安装到个人
 Codex skills：
 
 ~~~powershell
