@@ -1,0 +1,172 @@
+import importlib.util
+import sys
+from pathlib import Path
+
+import pytest
+
+
+def load_transaction_model():
+    path = (
+        Path(__file__).parents[1]
+        / "blender_addon"
+        / "blender_research_mcp_addon"
+        / "transaction_model.py"
+    )
+    spec = importlib.util.spec_from_file_location("transaction_model_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_transaction_book_is_single_owner_and_tracks_expected_properties() -> None:
+    model = load_transaction_model()
+    book = model.TransactionBook()
+    transaction = book.begin(
+        label="eye preview",
+        context_snapshot={"active": "目.L"},
+        context_fingerprint="fingerprint",
+        scene_generation=4,
+    )
+    transaction.deltas.extend(
+        [
+            model.ScaleDelta("Cutter", "object:1", {"z": 1.0}, {"z": 1.1}),
+            model.ScaleDelta("Cutter", "object:1", {"z": 1.1}, {"z": 1.2}),
+        ]
+    )
+
+    assert transaction.expected_properties() == {
+        model.PropertyRef("object_scale", ("Cutter", "object:1"), "z"): 1.2
+    }
+    assert transaction.delta_kinds() == ["object_scale"]
+    with pytest.raises(model.TransactionModelError, match="already active"):
+        book.begin(
+            label=None,
+            context_snapshot={},
+            context_fingerprint="other",
+            scene_generation=4,
+        )
+
+    book.finish(transaction, "rolled_back")
+    assert book.active is None
+    assert book.last_status == "rolled_back"
+
+
+def test_transaction_tracks_all_typed_delta_kinds_and_last_write_wins() -> None:
+    model = load_transaction_model()
+    transaction = model.Transaction(
+        transaction_id="tx",
+        label=None,
+        context_snapshot={},
+        context_fingerprint="context",
+        started_generation=1,
+    )
+    transaction.deltas.extend(
+        [
+            model.VisibilityDelta(
+                "Face",
+                "object:face",
+                {"hide_render": False},
+                {"hide_render": True},
+            ),
+            model.VisibilityDelta(
+                "Face",
+                "object:face",
+                {"hide_render": True},
+                {"hide_render": False},
+            ),
+            model.ModifierStateDelta(
+                "Face",
+                "object:face",
+                "Subdivision",
+                "modifier:subsurf",
+                {"show_viewport": True},
+                {"show_viewport": False},
+            ),
+            model.ShapeKeyDelta(
+                "Face",
+                "object:face",
+                "Smile",
+                "shape_key:smile",
+                0.0,
+                0.5,
+            ),
+            model.MaterialInputDelta(
+                "Face",
+                "object:face",
+                0,
+                "Skin",
+                "material:skin",
+                "Principled BSDF",
+                "node:principled",
+                "Roughness",
+                "socket:roughness",
+                "FLOAT",
+                0.5,
+                0.7,
+            ),
+        ]
+    )
+
+    expected = transaction.expected_properties()
+
+    assert expected[
+        model.PropertyRef(
+            "object_visibility",
+            ("Face", "object:face"),
+            "hide_render",
+        )
+    ] is False
+    assert transaction.delta_kinds() == [
+        "material_input",
+        "modifier_state",
+        "object_visibility",
+        "shape_key_value",
+    ]
+
+
+def test_property_values_compare_without_bool_or_vector_coercion() -> None:
+    model = load_transaction_model()
+
+    assert model.values_equal(0.5, 0.50000001)
+    assert model.values_equal((0.1, 0.2, 0.3), (0.1, 0.2, 0.30000001))
+    assert model.values_equal(True, True)
+    assert not model.values_equal(True, 1)
+    assert not model.values_equal((0.1, 0.2), (0.1, 0.2, 0.3))
+
+
+def test_idempotency_cache_replays_same_input_and_rejects_reuse() -> None:
+    model = load_transaction_model()
+    cache = model.IdempotencyCache(maximum=2)
+    request = {
+        "request_id": "first",
+        "command": "object.transform",
+        "params": {"scale": {"z": 1.1}},
+        "expected_scene_generation": 2,
+        "idempotency_key": "key-1",
+    }
+    fingerprint = model.request_fingerprint(request)
+    cache.store("key-1", fingerprint, {"ok": True, "result": {"after": 1.1}})
+
+    assert cache.lookup("key-1", fingerprint) == {
+        "ok": True,
+        "result": {"after": 1.1},
+    }
+    request["params"] = {"scale": {"z": 1.2}}
+    with pytest.raises(model.TransactionModelError, match="different input"):
+        cache.lookup("key-1", model.request_fingerprint(request))
+
+
+def test_idempotency_cache_can_remove_auto_rolled_back_transaction() -> None:
+    model = load_transaction_model()
+    cache = model.IdempotencyCache()
+    cache.store(
+        "begin-key",
+        "fingerprint",
+        {"result": {"transaction_id": "tx-1", "status": "active"}},
+    )
+
+    cache.remove_transaction("tx-1")
+
+    assert cache.lookup("begin-key", "fingerprint") is None

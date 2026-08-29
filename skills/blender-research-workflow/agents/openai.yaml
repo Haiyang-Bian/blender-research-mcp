@@ -1,0 +1,11 @@
+interface:
+  display_name: "Blender Research Workflow"
+  short_description: "Diagnose and safely preview bounded Blender LookDev"
+  default_prompt: "Use $blender-research-workflow to diagnose this Blender scene and preview one bounded, reversible LookDev change."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "blender_research"
+      description: "Local semantic Blender Research MCP server"
+policy:
+  allow_implicit_invocation: true

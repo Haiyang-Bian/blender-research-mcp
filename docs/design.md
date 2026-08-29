@@ -1,9 +1,10 @@
 # Blender Research MCP — design and handoff
 
-- Status: initial design
+- Status: 0.5.1 bounded LookDev writes implemented and live-validated
 - Primary Blender target: 4.2.23 LTS
-- Protocol version: 1 (proposed)
-- Development transport port: 9877 (proposed)
+- Package and add-on version: 0.5.1
+- Protocol version: 1
+- Development transport port: 9877
 
 ## 1. Why this project exists
 
@@ -103,7 +104,7 @@ The bridge runs with Blender-process authority. It must be local-first:
   artist.
 - Editing or migrating the existing portrait scene during bridge development.
 
-## 5. Proposed architecture
+## 5. Current architecture
 
 ~~~text
 Codex / another MCP client
@@ -180,33 +181,51 @@ state.
 Messages require explicit framing, preferably a four-byte length prefix. A
 single socket recv call must never be treated as one complete JSON message.
 
-## 7. Initial tool surface
+## 7. Tool surface
 
-### Observation
+### Implemented observation
 
 - connection.ping
 - context.get
 - context.snapshot
 - context.restore
-- selection.set
 - object.inspect
-- viewport.frame
-- viewport.orbit
+- object.geometry.inspect
+- object.lookdev.inspect
+- material.inspect
 - viewport.capture
 - viewport.raycast
+- observation.bundle
 
-### Bounded mutation
+`viewport.capture` uses GPU off-screen rendering and does not depend on foreground
+window pixels. `observation.bundle` composes one to three sequential captures and
+requires stable scene, object, and user-context evidence. Captures can use bounded
+diagnostic shading and absolute orbit parameters, and their session-local IDs ground
+normalized image coordinates for evaluated-scene raycasts.
+
+### Implemented bounded mutation
 
 - object.transform
 - object.visibility.set
-- modifier.set_input
-- material.set_input
+- modifier.set_state
 - shape_key.set_value
+- material.set_input
 
-### Transactions
+The 0.5 implementation accepts only absolute allow-listed fields. Object writes are
+limited to local `scale.x/y/z`, visibility flags, modifier viewport/render state, and
+non-Basis undriven shape-key values. Material writes are limited to unlinked,
+undriven Float, Int, Boolean, Vector, and Color input `default_value` properties.
+Node topology, modifier structure, location, rotation, lights, asset import, arbitrary
+Python, and file saving remain unavailable.
+
+Every new writer requires an active transaction, a current scene generation, a unique
+idempotency key, and exact session identities returned by inspection. Shared materials
+are rejected unless the caller confirms the exact current material user count and sets
+`allow_shared=true`; the bridge does not make implicit single-user copies.
+
+### Implemented transactions
 
 - transaction.begin
-- transaction.preview
 - transaction.commit
 - transaction.rollback
 
@@ -228,13 +247,18 @@ A context snapshot should record at least:
 Read-only inspection may temporarily change selection or view only when it
 restores the snapshot in a finally path.
 
-Mutation transactions should prefer explicit property deltas. Blender Undo may
-be used as a secondary mechanism, but it is not sufficient as the only rollback
-contract because user actions and agent actions can interleave.
+Mutation transactions use typed property deltas for scale, visibility, modifier state,
+shape-key value, and material input. Repeated writes guard the last agent value while
+reverse rollback restores the original value. Rollback only overwrites a property when
+its current value still matches the agent's last write; identity, context, or property
+conflicts preserve user state. Blender Undo is not the transaction contract because
+user actions and agent actions can interleave.
 
 ## 9. Development phases
 
 ### Phase 0 — transport spike
+
+Status: completed and live-validated on 2026-08-28.
 
 - Install a separate add-on using port 9877.
 - Implement handshake, ping, request IDs, timeouts, reconnect, and shutdown.
@@ -244,11 +268,23 @@ contract because user actions and agent actions can interleave.
 
 ### Phase 1 — active observation
 
+Status: completed and live-validated on Blender 4.2.23 in 0.4.0.
+
 - Implement context read/snapshot/restore.
-- Implement selection, frame, orbit, capture, and raycast.
+- Implement temporary selection, frame, absolute orbit, capture-bound raycast, and
+  evaluated geometry summaries.
 - Validate on the portrait scene without saving it.
 
+Standalone selection, frame, and incremental orbit tools are intentionally not
+exposed. Their observation use cases run inside one capture and restore the original
+context, avoiding persistent viewport debt.
+
 ### Phase 2 — transactions
+
+Status: typed reversible property transactions implemented in 0.5.1 and
+live-validated on Blender 4.2.23. The original absolute object-scale path was
+validated on 2026-08-28; the expanded visibility, modifier, shape-key, and material
+delta types were validated on 2026-08-29.
 
 - Implement property deltas and rollback tokens.
 - Change one eye-aperture parameter, capture evidence, and roll it back.
@@ -256,8 +292,14 @@ contract because user actions and agent actions can interleave.
 
 ### Phase 3 — bounded LookDev operations
 
-- Add modifier, material socket, shape-key, light, and render-region tools.
-- Build automatic local A/B/C comparisons.
+Status: object visibility, modifier state, shape-key value, and material input preview
+tools implemented and live-validated in 0.5.1.
+
+- Inspect writable targets before mutation and require exact session identities.
+- Keep each write absolute, typed, transaction-scoped, and reversible.
+- Bound inspection output and reject unsupported, linked, driven, or stale targets.
+- Keep light controls, modifier parameters, node topology, render-region controls, and
+  automatic A/B/C comparison outside the 0.5.1 authority boundary.
 
 ### Phase 4 — adoption
 
@@ -268,6 +310,8 @@ contract because user actions and agent actions can interleave.
   completes through the new bridge.
 
 ## 10. Acceptance criteria for the first milestone
+
+Completed on Blender 4.2.23 LTS; see the validation record under `docs/validation`.
 
 - Blender 4.2.23 remains responsive while commands execute.
 - The client reconnects after add-on restart.
@@ -287,6 +331,7 @@ contract because user actions and agent actions can interleave.
 blender_addon/            installable Blender-side package
 docs/                     design and decisions
 src/blender_research_mcp/ external MCP server
+skills/                   versioned Codex workflow skill source
 tests/                    fast server/protocol tests
 tests_blender/            future live Blender smoke scripts
 artifacts/                ignored local screenshots and diagnostics
@@ -298,14 +343,15 @@ research scenarios.
 
 ## 12. Open decisions
 
-- Whether protocol framing uses a length prefix or an established local RPC
-  transport.
-- Whether the Blender add-on is distributed as a zip, Blender Extension, or both.
-- Whether authentication uses an ephemeral token file or manual pairing.
-- How transaction conflicts are reported when the user edits during an agent
-  preview.
-- Which viewport operations are stable across Blender 4.2 and future 5.x.
-- Project license; decide before publishing or copying upstream code.
+- Whether a future capture backend should guarantee operation while Blender is
+  minimized; 0.3 guarantees only an unfocused or obscured running window.
+- Whether any future persistent viewport-control operation justifies a separate
+  context lease; 0.4 keeps navigation inside restored capture operations.
+- Whether the add-on should later ship as a Blender Extension in addition to the
+  current traditional ZIP.
+- Whether a bounded project-script capability is necessary; arbitrary inline Python
+  remains out of scope.
+- Blender 5.x capability policy and the project license; decide both before publishing.
 
 ## 13. Guidance for a new Codex task
 
@@ -315,7 +361,8 @@ At the start of a new task:
 2. Inspect Git status and do not overwrite uncommitted IDE or user changes.
 3. Use uv for all Python dependency and execution work.
 4. Keep Blender 4.2.23 and Python 3.11 add-on compatibility.
-5. Develop on port 9877 until the new bridge passes the acceptance suite.
+5. Develop on port 9877 and require explicit capability negotiation.
 6. Do not modify the portrait blend file while building transport infrastructure.
-7. Prefer one vertical slice—connect, observe, mutate, rollback, verify—over a
-   broad catalogue of unfinished tools.
+7. Prefer one vertical slice—connect, observe, mutate, rollback, verify—over a broad
+   catalogue of unfinished tools. Use `observation.bundle` before adding new mutation
+   authority.

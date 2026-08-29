@@ -1,0 +1,14 @@
+"""Shared protocol and transport constants."""
+
+from __future__ import annotations
+
+PROTOCOL_VERSION = 1
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 9877
+DEFAULT_DEADLINE_MS = 5_000
+CAPTURE_DEADLINE_MS = 15_000
+MIN_DEADLINE_MS = 100
+MAX_DEADLINE_MS = 30_000
+MAX_REQUEST_BYTES = 1 * 1024 * 1024
+MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+SESSION_DIRECTORY_NAME = "blender-research-mcp"
