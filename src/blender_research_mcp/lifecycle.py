@@ -484,7 +484,11 @@ class ApplicationManager:
         await self.client.close()
         deadline = asyncio.get_running_loop().time() + self.launch_timeout
         while asyncio.get_running_loop().time() < deadline:
-            process_running = pid_exists(manifest.pid)
+            managed_process = self._process
+            if managed_process is not None and managed_process.pid == manifest.pid:
+                process_running = managed_process.poll() is None
+            else:
+                process_running = pid_exists(manifest.pid)
             manifest_exists = self._instance_manifest_exists(
                 manifest.port,
                 manifest.instance_id,
@@ -559,7 +563,8 @@ class ApplicationManager:
             deadline = asyncio.get_running_loop().time() + self.launch_timeout
             last_error: BridgeError | None = None
             while asyncio.get_running_loop().time() < deadline:
-                if process.poll() is not None:
+                exit_code = process.poll()
+                if exit_code not in {None, 0}:
                     raise bridge_error(
                         ErrorKind.UNAVAILABLE,
                         "APPLICATION_LAUNCH_FAILED",
@@ -568,7 +573,7 @@ class ApplicationManager:
                             "pid": process.pid,
                             "launch_id": launch_id,
                             "log_path": str(log_path),
-                            "exit_code": process.poll(),
+                            "exit_code": exit_code,
                         },
                     )
                 await self.client.close()
@@ -582,7 +587,8 @@ class ApplicationManager:
                         status = await self.status()
                         return {
                             "status": "launched",
-                            "pid": process.pid,
+                            "pid": status["pid"],
+                            "launcher_pid": process.pid,
                             "launch_id": launch_id,
                             "log_path": str(log_path),
                             "resource_hash": resources.content_hash,

@@ -82,6 +82,10 @@ def test_managed_resources_are_versioned_hashed_and_repeatable(tmp_path: Path) -
         release_version="0.7.0",
     )
     assert repaired.bootstrap.is_file()
+    bootstrap_source = repaired.bootstrap.read_text(encoding="utf-8")
+    assert "addon_utils.disable(ADDON_MODULE, default_set=False)" in bootstrap_source
+    assert "sys.modules.pop" in bootstrap_source
+    assert "preferences.view.show_splash = False" in bootstrap_source
 
 
 class FakeProcess:
@@ -255,6 +259,8 @@ def test_managed_launch_uses_exact_argv_environment_and_coalesces(tmp_path: Path
     assert environment[PORT_ENV] == "9877"
     assert environment[ADDON_RESOURCE_ENV].endswith("addon")
     assert environment[LAUNCH_ID_ENV] == first["launch_id"]
+    assert first["pid"] == process.pid
+    assert first["launcher_pid"] == process.pid
 
 
 def test_launch_reports_early_process_exit(tmp_path: Path) -> None:
@@ -395,3 +401,19 @@ def test_application_quit_waits_for_process_and_manifest_removal(
     assert command == "application.quit"
     assert params == {"save_current": True, "save_current_as": None}
     assert options["idempotency_key"]
+
+
+def test_application_quit_uses_managed_process_poll_on_windows_handle_semantics(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    target = tmp_path / "target.blend"
+    client = FakeProjectClient(target)
+    manager = ApplicationManager(client, launch_timeout=1)  # type: ignore[arg-type]
+    manager._process = SimpleNamespace(pid=98765, poll=lambda: 0)  # type: ignore[assignment]
+    monkeypatch.setattr("blender_research_mcp.lifecycle.pid_exists", lambda _pid: True)
+    monkeypatch.setattr(manager, "_instance_manifest_exists", lambda _port, _instance: False)
+
+    result = asyncio.run(manager.quit())
+
+    assert result["status"] == "quit"

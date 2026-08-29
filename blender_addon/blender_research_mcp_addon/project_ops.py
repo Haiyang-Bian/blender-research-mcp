@@ -90,6 +90,19 @@ def project_status(
     }
 
 
+def transition_needs_save(
+    project_is_dirty: bool,
+    committed_transaction: dict[str, Any] | None,
+) -> bool:
+    """Include semantic transaction writes that Blender may not mark dirty."""
+    if project_is_dirty:
+        return True
+    if committed_transaction is None:
+        return False
+    delta_count = committed_transaction.get("delta_count", 0)
+    return isinstance(delta_count, int) and delta_count > 0
+
+
 def _require_finished(result: Any, code: str, operation: str) -> None:
     if not isinstance(result, set) or "FINISHED" not in result:
         raise ProjectOperationError(

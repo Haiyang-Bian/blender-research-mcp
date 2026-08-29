@@ -85,6 +85,19 @@ def test_addon_registers_project_lifecycle_without_expanding_compact_panel() -> 
     assert "last_operation" in full_status
 
 
+def test_addon_supports_session_only_managed_enable_without_saved_preferences() -> None:
+    source = (SOURCE / "__init__.py").read_text(encoding="utf-8")
+
+    preference_port = source.split("def _preference_port", 1)[1].split(
+        "class BRMCP_AddonPreferences",
+        1,
+    )[0]
+    register = source.split("def register()", 1)[1].split("def unregister()", 1)[0]
+    assert "preferences.addons.get(__package__)" in preference_port
+    assert "return DEFAULT_PORT" in preference_port
+    assert "_preference_port(bpy.context)" in register
+
+
 def test_addon_zip_has_an_installable_package_root(tmp_path: Path) -> None:
     output = build(tmp_path / "addon.zip")
     with zipfile.ZipFile(output) as archive:

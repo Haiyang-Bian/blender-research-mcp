@@ -118,6 +118,10 @@ uv run --no-sync python scripts/quality_gate.py
 `application.launch` 启动可见 Blender。服务不提供任意 Python 工具；保存和
 切换 `.blend` 只能通过明确的项目生命周期工具完成。
 
+Windows 托管启动应配置一个能直接接收命令行参数的真实 `blender.exe`；Microsoft
+Store 的 execution alias 会丢失受管 bootstrap 的环境和参数。已由用户启动的
+Store Blender 仍可作为普通现有会话被发现和复用。
+
 ## 空间诊断
 
 `viewport.capture` 和 `observation.bundle` 可临时使用 `WIREFRAME`、`SOLID`、

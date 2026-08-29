@@ -51,6 +51,7 @@ from .project_ops import (
     project_status,
     quit_application,
     save_project,
+    transition_needs_save,
     validate_open_path,
     validate_save_path,
 )
@@ -624,7 +625,7 @@ class AddonState:
             return None, {"status": "skipped", "reason": "save_current_false"}
         transaction = self._commit_active_transaction_for_lifecycle()
         current = self._project_status()
-        if not current["is_dirty"]:
+        if not transition_needs_save(current["is_dirty"], transaction):
             return transaction, {"status": "skipped", "reason": "clean"}
         if not current["filepath"] and save_current_as is None:
             raise ProjectOperationError(

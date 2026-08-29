@@ -80,6 +80,16 @@ def test_project_status_does_not_need_a_viewport(tmp_path: Path) -> None:
     }
 
 
+def test_committed_semantic_deltas_require_save_even_when_blender_is_clean() -> None:
+    data = SimpleNamespace(filepath="", is_saved=False, is_dirty=False)
+    module, _wm = load_project_ops(data)
+
+    assert module.transition_needs_save(True, None)
+    assert module.transition_needs_save(False, {"delta_count": 1})
+    assert not module.transition_needs_save(False, {"delta_count": 0})
+    assert not module.transition_needs_save(False, None)
+
+
 def test_save_as_overwrites_without_file_selector_and_becomes_current(tmp_path: Path) -> None:
     target = tmp_path / "saved-as.blend"
     data = SimpleNamespace(filepath="", is_saved=False, is_dirty=True)

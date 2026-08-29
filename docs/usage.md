@@ -5,6 +5,10 @@
 1. Configure the `blender_research` STDIO MCP as shown in the repository README.
 2. For managed launch, set `BLENDER_RESEARCH_MCP_BLENDER_EXECUTABLE` or pass
    `--blender-executable`. `application.launch` also searches `PATH` last.
+   On Windows, point this at a real `blender.exe` that accepts command-line arguments;
+   the Microsoft Store execution alias launches Blender but drops the managed bootstrap
+   environment and arguments. A manually started Store Blender session can still be
+   discovered normally.
 3. Call `application.status`. If `running=false` and the user wants Blender opened,
    call `application.launch`; this starts Blender but does not open a project.
 4. Call `connection.ping`. Protocol 1, `viewport_capture: 3`,

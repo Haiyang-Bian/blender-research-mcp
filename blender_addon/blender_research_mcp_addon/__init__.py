@@ -22,6 +22,7 @@ bl_info = {
 
 STATE: AddonState | None = None
 PORT_ENV = "BLENDER_RESEARCH_MCP_PORT"
+DEFAULT_PORT = 9877
 
 
 def _runtime_port(preference_port: int) -> int:
@@ -33,6 +34,14 @@ def _runtime_port(preference_port: int) -> int:
     except ValueError:
         return preference_port
     return port if 1 <= port <= 65535 else preference_port
+
+
+def _preference_port(context: bpy.types.Context) -> int:
+    """Return the saved port, or the default for a session-only managed add-on."""
+    addon = context.preferences.addons.get(__package__)
+    if addon is None:
+        return DEFAULT_PORT
+    return int(addon.preferences.port)
 
 
 class BRMCP_AddonPreferences(bpy.types.AddonPreferences):
@@ -54,11 +63,10 @@ class BRMCP_OT_restart(bpy.types.Operator):
 
     def execute(self, context: bpy.types.Context) -> set[str]:
         global STATE
-        preferences = context.preferences.addons[__package__].preferences
         if STATE is not None:
             STATE.stop()
         STATE = AddonState()
-        STATE.runtime.port = _runtime_port(preferences.port)
+        STATE.runtime.port = _runtime_port(_preference_port(context))
         STATE.start()
         return {"FINISHED"}
 
@@ -192,9 +200,8 @@ def register() -> None:
     global STATE
     for cls in CLASSES:
         bpy.utils.register_class(cls)
-    preferences = bpy.context.preferences.addons[__package__].preferences
     STATE = AddonState()
-    STATE.runtime.port = _runtime_port(preferences.port)
+    STATE.runtime.port = _runtime_port(_preference_port(bpy.context))
     STATE.start()
     bpy.app.handlers.depsgraph_update_post.append(_depsgraph_update)
     bpy.app.handlers.load_post.append(_load_post)
