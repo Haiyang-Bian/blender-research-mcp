@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import math
+import os
 import time
 import uuid
 from collections import OrderedDict
@@ -273,7 +274,13 @@ class AddonState:
         try:
             yield
         finally:
-            self._suppress_generation -= 1
+            try:
+                if self._suppress_generation == 1 and self.active_command in MUTATION_COMMANDS:
+                    view_layer = getattr(bpy.context, "view_layer", None)
+                    if view_layer is not None:
+                        view_layer.update()
+            finally:
+                self._suppress_generation -= 1
 
     def dispatch(self, request: dict[str, Any]) -> dict[str, Any]:
         request_id = request.get("request_id")
@@ -410,6 +417,30 @@ class AddonState:
                 "capture_focus_requirement": "none_when_window_exists",
                 "heartbeat": self.heartbeat,
                 "last_command_ms": self.last_command_ms,
+            }
+        if command == "_test.structure.touch":
+            if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":
+                raise ContextOperationError(
+                    "COMMAND_NOT_FOUND",
+                    f"Unsupported command: {command}",
+                    kind="not_found",
+                )
+            object_name = params.get("object_name")
+            obj = bpy.data.objects.get(str(object_name))
+            if obj is None:
+                raise ContextOperationError(
+                    "OBJECT_NOT_FOUND",
+                    f"Object does not exist: {object_name}",
+                    kind="not_found",
+                )
+            with self.suppress_generation():
+                obj.location.x = float(obj.location.x) + 0.25
+                bpy.context.view_layer.update()
+            return {
+                "test_hook": "structure_touch",
+                "object_name": obj.name,
+                "object_identity": session_identity("object", obj),
+                "location": list(obj.location),
             }
         if command == "context.get":
             with self.suppress_generation():

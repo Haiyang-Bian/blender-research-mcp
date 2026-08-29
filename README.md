@@ -20,13 +20,14 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 与 `.blend` 项目生命周期拆成独立工具：Agent 可启动环境变量配置的 Blender，
 随后按用户意图保存、打开、重载或关闭项目；该闭环已通过真实 Blender 4.2.23
 验收。0.8.0 新增从空项目创建对象、Principled 材质、本地图像、World、Camera，
-再以 Eevee Next 预览/导出的语义场景创作闭环；自动化门禁已通过，真实月光水面
-验收待记录。既有验收记录见
+再以 Eevee Next 预览/导出的语义场景创作闭环；自动化门禁和真实月光水面验收
+均已通过。既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
 [0.4.0 空间诊断](docs/validation/2026-08-29-spatial-diagnosis.md) 和
 [0.5.1 受限 LookDev 写入](docs/validation/2026-08-29-bounded-lookdev-writes.md)，以及
-[0.7.0 托管生命周期](docs/validation/2026-08-29-managed-lifecycle.md)。
+[0.7.0 托管生命周期](docs/validation/2026-08-29-managed-lifecycle.md)，以及
+[0.8.0 语义场景创作](docs/validation/2026-08-29-semantic-scene-authoring.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见

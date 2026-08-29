@@ -1,6 +1,6 @@
 # 0007 — bounded semantic scene authoring
 
-- Status: accepted and automated-gate validated in 0.8.0
+- Status: accepted, automated-gate validated, and live validated in 0.8.0
 - Date: 2026-08-29
 
 ## Context

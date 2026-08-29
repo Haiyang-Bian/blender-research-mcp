@@ -1,7 +1,8 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.8.0 semantic static-scene authoring implemented; automated gate passed
-- Next milestone: complete the 0.8.0 deterministic and moonlit-water Blender gate
+- Status: 0.8.0 semantic static-scene authoring implemented and live validated
+- Next milestone: adopt the bounded authoring loop in real projects while keeping the
+  independent 0.6 comparative-preview gate explicit
 - Primary Blender target: 4.2.23 LTS
 - Package and add-on version: 0.8.0
 - Protocol version: 1
@@ -398,7 +399,8 @@ Status: implemented and live-validated on Blender 4.2.23 in 0.7.0; see
 
 ### Phase 6 — semantic static-scene authoring
 
-Status: implemented with automated coverage in 0.8.0; real Blender acceptance pending.
+Status: implemented and validated on Blender 4.2.23 in 0.8.0. See
+`docs/validation/2026-08-29-semantic-scene-authoring.md`.
 
 - Upgrade transactions to structural delta capability version 3.
 - Add bounded primitives, complete object TRS, duplicate, and deferred delete.
@@ -412,7 +414,7 @@ Status: initial adoption complete. Codex is configured against the new MCP, vers
 0.2 through 0.5.1 have live Blender validation records, and the repository is public
 with its validated history merged into `main`.
 
-- Use the 0.8 authoring smoke as the next fixed acceptance suite while keeping the 0.6
+- Reuse the validated 0.8 authoring smoke as a regression suite while keeping the 0.6
   comparative real-Blender gate explicitly pending.
 - Keep any older bridge only as an external fallback; do not copy its unrestricted
   execution surface into this repository.
@@ -480,6 +482,5 @@ At the start of a new task:
 7. Prefer one vertical slice—connect, observe, mutate, rollback, verify—over a broad
    catalogue of unfinished tools. Use `observation.bundle` before adding new mutation
    authority.
-8. For the next completion task, follow the live acceptance section in
-   `docs/roadmap/0.8.0-semantic-scene-authoring.md`; report the older 0.6 comparative
-   live gate separately rather than implying it passed.
+8. Use `docs/validation/2026-08-29-semantic-scene-authoring.md` as the 0.8 live baseline;
+   report the older 0.6 comparative live gate separately rather than implying it passed.

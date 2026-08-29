@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import math
+import os
 import tempfile
 import time
 from array import array
@@ -140,7 +141,11 @@ def _world_nodes(
     before_surface_links = tuple(
         (link.from_socket, link.to_socket) for link in surface_links
     )
-    if surface_links and any(link.from_node is not background for link in surface_links):
+    background_identity = session_identity("node", background)
+    if surface_links and any(
+        session_identity("node", link.from_node) != background_identity
+        for link in surface_links
+    ):
         raise AuthoringOperationError(
             "WORLD_LINK_CONFLICT",
             "World Output Surface is controlled by an unsupported node graph",
@@ -407,7 +412,7 @@ def _validate_render_values(width: Any, height: Any, samples: Any, transparent: 
         )
 
 
-def _render_result_is_blank(image: Any) -> bool:
+def _image_is_blank(image: Any) -> bool:
     pixels = array("f", [0.0]) * (int(image.size[0]) * int(image.size[1]) * 4)
     image.pixels.foreach_get(pixels)
     minimum = 1.0
@@ -428,7 +433,9 @@ def _perform_render(
     height: Any,
     samples: Any,
     transparent: Any,
-) -> tuple[Any, dict[str, Any], float]:
+    output_path: Path,
+    file_format: str,
+) -> tuple[dict[str, Any], float]:
     _validate_render_values(width, height, samples, transparent)
     camera = _require_camera(camera_name, expected_camera_identity)
     scene = bpy.context.scene
@@ -436,27 +443,44 @@ def _perform_render(
     started = time.perf_counter()
     try:
         _configure_render(scene, camera, width, height, samples, transparent)
-        outcome = bpy.ops.render.render(write_still=False)
+        scene.render.filepath = str(output_path)
+        scene.render.image_settings.file_format = file_format
+        scene.render.image_settings.color_mode = "RGBA"
+        scene.render.image_settings.color_depth = "16" if file_format == "OPEN_EXR" else "8"
+        outcome = bpy.ops.render.render(write_still=True)
         if "FINISHED" not in outcome:
             raise AuthoringOperationError(
                 "RENDER_FAILED",
                 f"Blender render operator returned: {sorted(outcome)}",
                 kind="blender_api",
             )
-        image = bpy.data.images.get("Render Result")
-        if image is None or int(image.size[0]) != width or int(image.size[1]) != height:
+        if not output_path.is_file():
             raise AuthoringOperationError(
                 "RENDER_RESULT_INVALID",
-                "Render Result is missing or has unexpected dimensions",
+                "Blender did not write the temporary render result",
                 kind="blender_api",
             )
-        if _render_result_is_blank(image):
-            raise AuthoringOperationError(
-                "RENDER_BLANK",
-                "Render Result has no grayscale variation",
-                kind="blender_api",
-            )
-        return image, snapshot, (time.perf_counter() - started) * 1000
+        image = None
+        try:
+            image = bpy.data.images.load(str(output_path), check_existing=False)
+            actual_size = [int(image.size[0]), int(image.size[1])]
+            if actual_size != [width, height]:
+                raise AuthoringOperationError(
+                    "RENDER_RESULT_INVALID",
+                    f"Rendered image size {actual_size} does not match {[width, height]}",
+                    kind="blender_api",
+                    details={"expected_size": [width, height], "actual_size": actual_size},
+                )
+            if _image_is_blank(image):
+                raise AuthoringOperationError(
+                    "RENDER_BLANK",
+                    "Rendered image has no grayscale variation",
+                    kind="blender_api",
+                )
+        finally:
+            if image is not None:
+                bpy.data.images.remove(image)
+        return snapshot, (time.perf_counter() - started) * 1000
     except Exception:
         _restore_render_snapshot(scene, snapshot)
         raise
@@ -464,22 +488,21 @@ def _perform_render(
 
 def render_preview(params: dict[str, Any]) -> dict[str, Any]:
     scene = bpy.context.scene
-    image, snapshot, duration_ms = _perform_render(
-        str(params["camera_name"]),
-        str(params["expected_camera_identity"]),
-        params["width"],
-        params["height"],
-        params["samples"],
-        params["transparent"],
-    )
     temporary_path: Path | None = None
+    snapshot: dict[str, Any] | None = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temporary:
             temporary_path = Path(temporary.name)
-        scene.render.image_settings.file_format = "PNG"
-        scene.render.image_settings.color_mode = "RGBA"
-        scene.render.image_settings.color_depth = "8"
-        image.save_render(str(temporary_path), scene=scene)
+        snapshot, duration_ms = _perform_render(
+            str(params["camera_name"]),
+            str(params["expected_camera_identity"]),
+            params["width"],
+            params["height"],
+            params["samples"],
+            params["transparent"],
+            temporary_path,
+            "PNG",
+        )
         data = temporary_path.read_bytes()
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise AuthoringOperationError(
@@ -502,7 +525,8 @@ def render_preview(params: dict[str, Any]) -> dict[str, Any]:
             "settings_restored": True,
         }
     finally:
-        _restore_render_snapshot(scene, snapshot)
+        if snapshot is not None:
+            _restore_render_snapshot(scene, snapshot)
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
 
@@ -533,27 +557,35 @@ def _render_output_path(value: Any) -> tuple[Path, str]:
 def render_save(params: dict[str, Any]) -> dict[str, Any]:
     output_path, file_format = _render_output_path(params.get("path"))
     scene = bpy.context.scene
-    image, snapshot, duration_ms = _perform_render(
-        str(params["camera_name"]),
-        str(params["expected_camera_identity"]),
-        params["width"],
-        params["height"],
-        params["samples"],
-        params["transparent"],
-    )
+    temporary_path: Path | None = None
+    snapshot: dict[str, Any] | None = None
     try:
-        scene.render.image_settings.file_format = file_format
-        scene.render.image_settings.color_mode = "RGBA"
-        scene.render.image_settings.color_depth = "16" if file_format == "OPEN_EXR" else "8"
-        scene.render.filepath = str(output_path)
-        image.save_render(str(output_path), scene=scene)
-        if not output_path.is_file():
+        with tempfile.NamedTemporaryFile(
+            suffix=output_path.suffix,
+            dir=output_path.parent,
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+        snapshot, duration_ms = _perform_render(
+            str(params["camera_name"]),
+            str(params["expected_camera_identity"]),
+            params["width"],
+            params["height"],
+            params["samples"],
+            params["transparent"],
+            temporary_path,
+            file_format,
+        )
+        data = temporary_path.read_bytes()
+        try:
+            os.replace(temporary_path, output_path)
+        except OSError as exc:
             raise AuthoringOperationError(
                 "RENDER_SAVE_FAILED",
-                f"Blender did not write render output: {output_path}",
-                kind="blender_api",
-            )
-        data = output_path.read_bytes()
+                f"Could not replace render output: {output_path}",
+                kind="filesystem",
+            ) from exc
+        temporary_path = None
         return {
             "camera_name": params["camera_name"],
             "path": str(output_path),
@@ -569,4 +601,7 @@ def render_save(params: dict[str, Any]) -> dict[str, Any]:
             "settings_restored": True,
         }
     finally:
-        _restore_render_snapshot(scene, snapshot)
+        if snapshot is not None:
+            _restore_render_snapshot(scene, snapshot)
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)

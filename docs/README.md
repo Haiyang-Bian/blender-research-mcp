@@ -22,8 +22,9 @@ in this order when starting a new implementation task:
 Version 0.8.0 adds bounded semantic static-scene authoring and reviewed Eevee output on
 top of the live-validated 0.7 application/project lifecycle. Structural transaction v3
 supports exact create, unlink/delete, material-slot, node-link, World, and Camera
-rollback. The 0.8 implementation has automated coverage and awaits its real Blender
-moonlit-water gate. The older independent 0.6 real comparison gate remains pending.
+rollback. The automated suite and real Blender moonlit-water gate have both passed; see
+[the 0.8 validation record](validation/2026-08-29-semantic-scene-authoring.md). The older
+independent 0.6 real comparison gate remains pending.
 
 The public repository is
 [Haiyang-Bian/blender-research-mcp](https://github.com/Haiyang-Bian/blender-research-mcp).

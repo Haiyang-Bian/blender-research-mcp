@@ -125,6 +125,18 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
     )[0]
     assert "Semantic scene authoring" not in compact_status
     assert "Semantic scene authoring" in full_status
+    capabilities_source = state.split("CAPABILITIES =", 1)[1].split(
+        "CAPABILITY_VERSIONS =",
+        1,
+    )[0]
+    assert "_test.structure.touch" not in capabilities_source
+    assert 'os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1"' in state
+    assert 'self.active_command in MUTATION_COMMANDS' in state
+    assert "view_layer.update()" in state
+    world_render = (SOURCE / "world_render_ops.py").read_text(encoding="utf-8")
+    assert 'session_identity("node", link.from_node) != background_identity' in world_render
+    assert 'bpy.data.images.load(str(output_path), check_existing=False)' in world_render
+    assert "os.replace(temporary_path, output_path)" in world_render
 
 
 def test_addon_supports_session_only_managed_enable_without_saved_preferences() -> None:
