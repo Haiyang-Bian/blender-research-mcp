@@ -22,7 +22,21 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 [0.5.1 受限 LookDev 写入](docs/validation/2026-08-29-bounded-lookdev-writes.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
-[docs/usage.md](docs/usage.md)。
+[docs/usage.md](docs/usage.md)，完整文档导航见
+[docs/README.md](docs/README.md)。公开仓库位于
+[Haiyang-Bian/blender-research-mcp](https://github.com/Haiyang-Bian/blender-research-mcp)。
+
+## 下一阶段：0.6.0 可比较预览
+
+0.6.0 将先改善评审闭环，而不扩大 Blender 写权限。计划新增
+`lookdev.compare`：针对一个已检查的受限属性，自动生成“当前基线 + 1–3 个
+绝对候选值”的并列图像、结构化 before/after 和像素差异；每个候选都在独立
+事务中应用、捕获并回退，最终必须恢复基线、用户上下文和场景状态。
+
+该工具不会自动选择最佳候选、commit 或保存 `.blend`。用户选定方向后，仍需
+通过现有显式事务重新应用。灯光、任意 Modifier 参数、节点拓扑和位置/旋转仍
+不进入 0.6.0。详细接口、检查点与验收门槛见
+[0.6.0 路线图](docs/roadmap/0.6.0-comparative-previews.md)。
 
 ## 目录
 

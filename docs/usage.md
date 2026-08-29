@@ -112,6 +112,24 @@ rollback returns `CONTEXT_CONFLICT`, `PROPERTY_CONFLICT`, or
 Use a distinct idempotency key for each distinct payload; a replay of the same payload
 returns the cached result.
 
+## Compare candidates in 0.5.1
+
+The current release has no batch comparison command. To compare two values safely:
+
+1. Capture and retain the current baseline.
+2. Inspect one exact writable target.
+3. Preview one absolute candidate in a transaction.
+4. Capture evidence and roll back.
+5. Re-inspect the property and context before trying the next candidate.
+
+Do not keep one candidate active while testing another, and do not infer that a later
+capture still represents the original baseline. Any conflict ends the comparison.
+
+The planned 0.6.0 `lookdev.compare` tool will automate this exact sequence for a
+baseline plus one to three candidates while retaining the same write authority. It
+will return ordered images and difference statistics, but it will not rank, commit, or
+save a candidate. See `roadmap/0.6.0-comparative-previews.md` for the planned contract.
+
 ## Install the Codex workflow skill
 
 The repository copy under `skills/blender-research-workflow` is authoritative. Install

@@ -1,6 +1,7 @@
 # Blender Research MCP — design and handoff
 
 - Status: 0.5.1 bounded LookDev writes implemented and live-validated
+- Next milestone: 0.6.0 reversible comparative previews
 - Primary Blender target: 4.2.23 LTS
 - Package and add-on version: 0.5.1
 - Protocol version: 1
@@ -8,11 +9,12 @@
 
 ## 1. Why this project exists
 
-The current Blender research workflow uses the community
-ahujasid/blender-mcp. Its connected tool surface is useful for scene summaries,
-object information, viewport screenshots, and asset integrations, but
-existing-scene editing is effectively concentrated in one unrestricted
-execute_blender_code escape hatch.
+The workflow originally used the community ahujasid/blender-mcp. Its connected tool
+surface was useful for scene summaries, object information, viewport screenshots, and
+asset integrations, but existing-scene editing was effectively concentrated in one
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.5.1 now covers
+the validated observation and bounded-write path; the older bridge is no longer the
+primary interface for this repository.
 
 That shape creates a poor long-running LookDev loop:
 
@@ -229,6 +231,20 @@ are rejected unless the caller confirms the exact current material user count an
 - transaction.commit
 - transaction.rollback
 
+### Planned comparison composition
+
+The next milestone adds one external MCP orchestration tool, `lookdev.compare`, on top
+of the existing inspected writers, capture backend, and transaction guards. It will
+compare the current baseline with one to three absolute candidates for exactly one
+allow-listed property. Each candidate gets its own begin, write, capture, rollback,
+and restoration verification cycle.
+
+Comparison is transient mutation, not a read-only operation. It will never commit,
+save a blend file, rank candidates, or widen the Blender command surface. A selected
+candidate must be applied later through the existing explicit transaction workflow.
+The complete planned contract is recorded in
+`docs/roadmap/0.6.0-comparative-previews.md`.
+
 Tool count is not a success metric. A small composable surface with precise
 preconditions is preferable to dozens of overlapping convenience tools.
 
@@ -301,13 +317,37 @@ tools implemented and live-validated in 0.5.1.
 - Keep light controls, modifier parameters, node topology, render-region controls, and
   automatic A/B/C comparison outside the 0.5.1 authority boundary.
 
-### Phase 4 — adoption
+### Phase 4 — reversible comparative evidence
 
-- Run both bridges against a fixed acceptance suite.
-- Switch Codex to the new MCP only after reconnect, rollback, and UI-responsivity
-  tests pass.
-- Keep the old bridge available until at least one accepted research milestone
-  completes through the new bridge.
+Status: next milestone, planned for 0.6.0.
+
+- Add a typed, closed-world `lookdev.compare` orchestration tool.
+- Accept one inspected target and one to three unique absolute candidate values.
+- Capture a baseline and one image per candidate with bounded response size.
+- Roll back and verify the original property and user context after every candidate.
+- Return image hashes and deterministic difference statistics without aesthetic
+  ranking or automatic acceptance.
+- Stop on any context, generation, identity, property, or rollback conflict.
+
+This stage deliberately reuses the 0.5.1 Blender authority. Light controls, arbitrary
+modifier parameters, node topology, object location/rotation, and file saving remain
+out of scope. See `docs/roadmap/0.6.0-comparative-previews.md` for the implementation
+and acceptance checkpoints.
+
+### Phase 5 — adoption and reviewed authority expansion
+
+Status: initial adoption complete. Codex is configured against the new MCP, versions
+0.2 through 0.5.1 have live Blender validation records, and the repository is public
+with its validated history merged into `main`.
+
+- Use the 0.6 comparative smoke as the next fixed acceptance suite.
+- Complete at least one real LookDev choice through comparative evidence before adding
+  another Blender write domain.
+- Keep any older bridge only as an external fallback; do not copy its unrestricted
+  execution surface into this repository.
+- After comparative previews are validated in real work, evaluate bounded light
+  parameters and selected modifier families as separate capability proposals rather
+  than adding a generic RNA writer.
 
 ## 10. Acceptance criteria for the first milestone
 
@@ -351,6 +391,9 @@ research scenarios.
   current traditional ZIP.
 - Whether a bounded project-script capability is necessary; arbitrary inline Python
   remains out of scope.
+- Which single bounded authority should follow comparative previews: existing-light
+  energy/color controls or a narrowly selected modifier family. Do not combine both
+  into the same release.
 - Blender 5.x capability policy and the project license; decide both before publishing.
 
 ## 13. Guidance for a new Codex task
@@ -366,3 +409,6 @@ At the start of a new task:
 7. Prefer one vertical slice—connect, observe, mutate, rollback, verify—over a broad
    catalogue of unfinished tools. Use `observation.bundle` before adding new mutation
    authority.
+8. For the next implementation task, follow
+   `docs/roadmap/0.6.0-comparative-previews.md`; do not add new Blender write authority
+   while implementing that milestone.
