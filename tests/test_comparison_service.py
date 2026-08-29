@@ -315,6 +315,20 @@ def test_comparison_routes_every_target_and_restores_each_candidate(
     assert [item["content_index"] for item in result["candidates"]] == list(
         range(1, len(values) + 1)
     )
+    assert [item["content_index"] for item in result["items"]] == list(
+        range(len(values) + 1)
+    )
+    baseline = result["items"][0]
+    assert baseline["label"] == "baseline"
+    assert baseline["writer"] is None
+    assert baseline["rollback"] is None
+    assert baseline["difference"] == {
+        "max_channel_difference": 0,
+        "mean_absolute_difference": 0.0,
+        "rms_difference": 0.0,
+        "structure_mean_absolute_difference": 0.0,
+    }
+    assert baseline["elapsed_ms"] >= 0.0
     assert result["target_restored"] is True
     assert client.commands.count(writer) == len(values)
     assert client.commands.count("transaction.begin") == len(values)

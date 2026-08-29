@@ -874,6 +874,7 @@ async def run_lookdev_comparison(
     )
     _validate_live_candidates(request, baseline_target)
     capture = request.capture
+    baseline_started = time.perf_counter()
     baseline_image, baseline_capture = await capture_image(
         client,  # type: ignore[arg-type]
         object_name=capture.object_name,
@@ -901,6 +902,23 @@ async def run_lookdev_comparison(
     await _verify_restored(
         client, request, baseline_context, baseline_object, baseline_target
     )
+    baseline_result = {
+        "label": "baseline",
+        "requested_value": baseline_target.value,
+        "writer": None,
+        "capture": baseline_capture,
+        "rollback": None,
+        "difference": ImageDifferenceStatistics(
+            max_channel_difference=0,
+            mean_absolute_difference=0.0,
+            rms_difference=0.0,
+            structure_mean_absolute_difference=0.0,
+        ).model_dump(),
+        "content_index": 0,
+        "scene_generation_before": int(ping_before["scene_generation"]),
+        "scene_generation_after": int(baseline_capture["scene_generation"]),
+        "elapsed_ms": round((time.perf_counter() - baseline_started) * 1000, 3),
+    }
 
     images = [baseline_image]
     candidate_results: list[dict[str, Any]] = []
@@ -1049,6 +1067,7 @@ async def run_lookdev_comparison(
         "baseline_context": baseline_context,
         "baseline_object": baseline_object,
         "baseline_capture": baseline_capture,
+        "items": [baseline_result, *candidate_results],
         "candidates": candidate_results,
         "context_unchanged": True,
         "target_restored": True,
