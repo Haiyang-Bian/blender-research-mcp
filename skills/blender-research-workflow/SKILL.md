@@ -1,15 +1,32 @@
 ---
 name: blender-research-workflow
-description: Inspect, spatially diagnose, compare, and reversibly preview bounded LookDev changes in a live Blender 4.2 scene through Blender Research MCP. Use for viewport evidence, capture-bound raycasts, evaluated mesh summaries, or reviewed scale, visibility, modifier-state, shape-key, and material-input candidates; do not use for arbitrary Python or saving blend files.
+description: Launch Blender, manage .blend project lifecycle, inspect and spatially diagnose scenes, compare evidence, and reversibly preview bounded LookDev changes through Blender Research MCP. Use for starting Blender, opening, saving, reloading, or closing projects, viewport evidence, raycasts, mesh summaries, or reviewed scale, visibility, modifier, shape-key, and material-input candidates; do not use for arbitrary Python.
 ---
 
 # Blender Research Workflow
 
 Use the semantic `blender_research` MCP as the source of truth for live Blender state.
 
-## Start safely
+## Follow application and project intent
 
-1. Call `connection.ping` before relying on the tools. Require protocol `1`, a
+Treat application launch and project opening as separate decisions:
+
+1. When the user wants Blender started, call `application.status`; call
+   `application.launch` only when `running=false`. Never pass a project path to launch.
+2. When the user wants a project opened, call `application.status`, launch if needed,
+   then call `project.open` with the exact absolute `.blend` path.
+3. A direct request to save, switch, reload, or close is already authorization. Execute
+   the corresponding lifecycle chain without asking the same question again.
+
+`project.open` and `application.quit` save the current dirty project by default and
+commit an active transaction first. `project.reload` discards unsaved changes by
+default. Follow explicit `save_current=false/true`, `save_current_as`, `use_scripts`, or
+`load_ui` intent when the user specifies it. Project tools never launch Blender
+implicitly; handle `APPLICATION_NOT_RUNNING` with the separate status/launch sequence.
+
+After selecting the application/project state:
+
+1. Call `connection.ping` before relying on scene tools. Require protocol `1`, a
    capability-compatible add-on, `viewport_capture >= 3`, `viewport_raycast >= 1`,
    `geometry_inspection >= 1`, `lookdev_inspection >= 1`, and
    `transactions >= 2`.
@@ -19,9 +36,8 @@ Use the semantic `blender_research` MCP as the source of truth for live Blender 
    views. Use `object.inspect` or `object.geometry.inspect` when structured state
    answers the question without an image.
 
-Blender may be behind another window. It must remain running with a `VIEW_3D` area;
-minimized capture is not guaranteed. Treat `CAPTURE_GPU_UNAVAILABLE` as a request to
-restore the Blender window, not permission to use desktop automation or raw Python.
+Viewport capture requires a `VIEW_3D` area. Treat `CAPTURE_GPU_UNAVAILABLE` as a failed
+evidence capture, not permission to use desktop automation or raw Python.
 
 ## Ground image evidence
 
@@ -62,5 +78,6 @@ three restoration flags true. Treat visually indistinguishable candidates as evi
 not failure. Comparison never chooses, commits, or saves a result; after the user picks
 a direction, apply it through a new ordinary transaction.
 
-Read [references/tool-recipes.md](references/tool-recipes.md) when executing a
-multi-step observation, comparison, preview, reconnect, or recovery workflow.
+Read [references/tool-recipes.md](references/tool-recipes.md) when executing an
+application/project lifecycle, multi-step observation, comparison, preview, reconnect,
+or recovery workflow.

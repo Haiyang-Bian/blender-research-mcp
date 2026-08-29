@@ -9,7 +9,7 @@ boundaries as numbered files:
 
 Current records cover authenticated transport, reversible transactions,
 focus-independent off-screen observation, capture-bound spatial diagnosis, and
-bounded LookDev writes.
+bounded LookDev writes, plus separate managed application/project lifecycle.
 
 Each record should include context, decision, alternatives, consequences, and
 status. Do not use decision records for routine implementation details.

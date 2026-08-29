@@ -1,7 +1,40 @@
 # Blender Research MCP recipes
 
-Use only the tools registered by `blender_research`. These sequences preserve the
-current blend file and never authorize arbitrary Python.
+Use only the tools registered by `blender_research`. Lifecycle tools may intentionally
+save or replace the current blend file when that matches the user's request; they never
+authorize arbitrary Python.
+
+## Application and project lifecycle
+
+Choose the chain from user intent rather than combining tools implicitly:
+
+- **Start Blender only:** call `application.status`; if `running=false`, call
+  `application.launch`. Stop there unless the user also asked to open a project.
+- **Open or switch project:** call `application.status`, launch if needed, then call
+  `project.open(path)` with the user's exact absolute existing `.blend` path.
+- **Save:** call `project.save()`. For an untitled project, provide the absolute target
+  path the user supplied; a different path is Save As and becomes current.
+- **Reload:** call `project.reload()`. Its default discards unsaved changes. Use
+  `save_current=true` only when requested or when the user explicitly wants the edits
+  preserved before reload.
+- **Quit:** call `application.quit()`. It saves dirty current state by default. Use
+  `save_current=false` when the user asked to close without saving.
+
+The user's explicit save/open/switch/reload/close request is sufficient authorization;
+do not insert another confirmation. `project.open` and `application.quit` commit an
+active transaction and save a dirty current project by default. A dirty untitled
+project requires `save_current_as`; use the provided absolute path rather than
+inventing one.
+
+Opening and Save As paths may be anywhere accessible; there is no project-root
+allowlist. Open targets must exist and Save As parents must exist. Default
+`use_scripts=true` and `load_ui=true` honor trusted project scripts and saved UI. Pass
+false only when the caller requests that behavior.
+
+After an open or reload, accept success only after the tool returns a verified final
+`project.status` whose absolute path matches the target. `already_open` is a successful
+no-op; call reload when the user wants an actual disk reload. If a lifecycle call times
+out, inspect `application.status` or `project.status.last_operation` before retrying.
 
 ## Read-only diagnosis
 
@@ -114,6 +147,22 @@ baseline, retry over a property conflict, or manually force the original value.
 
 ## Recovery
 
+- `APPLICATION_NOT_RUNNING`: call `application.status`, then launch only if the user's
+  intent requires Blender to run; retry the project operation afterward.
+- `BLENDER_EXECUTABLE_NOT_CONFIGURED` or `BLENDER_EXECUTABLE_NOT_FOUND`: report the
+  required CLI/environment/PATH configuration. Do not turn project.open into a hidden
+  process launcher.
+- `APPLICATION_LAUNCH_FAILED` or `APPLICATION_LAUNCH_TIMEOUT`: report PID, launch ID,
+  and log path. Do not create an unbounded retry loop.
+- `CURRENT_PROJECT_UNTITLED`: use the user's absolute `path` or `save_current_as` and
+  repeat the requested save/open/quit chain.
+- `PROJECT_SAVE_FAILED`: the following open/quit was not scheduled; resolve the save
+  failure before retrying the original intent.
+- `PROJECT_OPEN_FAILED`, `PROJECT_OPEN_TIMEOUT`, or `PROJECT_PATH_MISMATCH`: inspect the
+  actual filepath and `last_operation`; do not report a switch that was not verified.
+- `PROJECT_RELOAD_UNAVAILABLE`: save the untitled project or open a named project first.
+- `APPLICATION_QUIT_TIMEOUT`: inspect status; do not claim Blender exited while its PID
+  or instance manifest remains.
 - `CAPABILITY_MISMATCH`: install the matching add-on ZIP, re-enable it, restart the
   bridge, then ping again.
 - `CAPTURE_GPU_UNAVAILABLE`: ensure Blender is open, not minimized, and has a `VIEW_3D`

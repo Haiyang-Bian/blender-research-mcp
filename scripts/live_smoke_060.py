@@ -574,12 +574,12 @@ async def run(args: argparse.Namespace) -> None:
         ) as session:
             ping_before = await initialize_session(session, report)
             report["ping_before"] = ping_before
-            if ping_before["addon_version"] not in {"0.5.1", "0.6.0"}:
+            if ping_before["addon_version"] not in {"0.5.1", "0.6.0", "0.7.0"}:
                 raise RuntimeError(
                     f"unexpected compatible add-on version: {ping_before['addon_version']}"
                 )
-            if args.verify_ui and ping_before["addon_version"] != "0.6.0":
-                raise RuntimeError("UI verification requires the 0.6.0 add-on")
+            if args.verify_ui and ping_before["addon_version"] not in {"0.6.0", "0.7.0"}:
+                raise RuntimeError("UI verification requires the 0.6.0+ add-on")
             baseline_context, _ = await call_structured(session, "context.get")
             if Path(baseline_context["blend_file"]).resolve() != temporary_blend:
                 raise RuntimeError("Blender is not displaying the prepared temporary blend")

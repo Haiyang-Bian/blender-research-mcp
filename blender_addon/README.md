@@ -15,7 +15,7 @@ uv run --no-sync python scripts/build_addon.py
 ~~~
 
 The ignored output is written to
-`artifacts/blender-research-mcp-addon-0.6.0.zip`. Install that ZIP in Blender
+`artifacts/blender-research-mcp-addon-0.7.0.zip`. Install that ZIP in Blender
 4.2, then enable **Blender Research MCP**. The listener binds only to
 `127.0.0.1:9877`, creates a random per-session token, and publishes its
 ephemeral manifest under the current user's local application data directory.
@@ -39,6 +39,11 @@ The Scene Properties panel lists the authorized preview-write categories and, wh
 transaction is active, its ID prefix, delta count, and delta kinds. The compact N-panel
 remains limited to connection, capture, transaction, and error status.
 
+The full panel also shows the current project path, dirty state, and most recent
+lifecycle operation. The add-on exposes `project.status/save/open/reload` and
+`application.quit`; open, reload, and quit are accepted in one request and executed on
+the next main-thread timer tick after the socket response can be sent.
+
 Comparative previews use transaction labels such as `compare:A`. The full Scene
 Properties panel shows that label beside the active command so the operator can follow
 candidate application, capture, and rollback without expanding the compact panel.
@@ -48,6 +53,7 @@ identities. Linked, driven, read-only, unsupported, and linked-library sockets a
 rejected. Shared materials require both the exact current user count and an explicit
 `allow_shared` confirmation; the add-on never makes a material single-user implicitly.
 
-Commit affects only the in-memory Blender session; rollback restores guarded
-property deltas and user context. The add-on does not save the blend file,
-execute arbitrary Python, enable telemetry, or contact third-party services.
+Ordinary transaction commit affects only the in-memory Blender session; rollback
+restores guarded property deltas and user context. Explicit project lifecycle tools may
+commit and save before switching or quitting according to the request. The add-on does
+not execute arbitrary Python, enable telemetry, or contact third-party services.

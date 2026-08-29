@@ -5,22 +5,23 @@ in this order when starting a new implementation task:
 
 1. [Design and handoff](design.md) — architecture, safety boundaries, implemented
    phases, and open decisions.
-2. [Using Blender Research MCP](usage.md) — current 0.6.0 operator workflow and error
+2. [Using Blender Research MCP](usage.md) — current 0.7.0 operator workflow and error
    recovery.
-3. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
-   implemented contract and pending real Blender completion criteria.
-4. [Architecture decisions](decisions/README.md) — accepted protocol and authority
+3. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
+   launch, project switching, implementation, and pending live completion criteria.
+4. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
+   implemented comparison contract and its separately pending real Blender gate.
+5. [Architecture decisions](decisions/README.md) — accepted protocol and authority
    decisions.
-5. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
+6. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
 
 ## Current release
 
-Version 0.6.0 adds rollback-safe comparative previews on the live-validated 0.5.1
-Blender authority. It provides authenticated local transport, context-safe GPU
-off-screen observation, capture-bound raycasts, evaluated mesh summaries, and
-reversible writes for scale, visibility, modifier enable state, shape-key values, and
-guarded material inputs. The comparison implementation has automated coverage; its
-real Blender acceptance remains pending.
+Version 0.7.0 adds managed visible Blender launch and explicit project save, open,
+reload, and quit tools on top of the 0.6 comparison surface. Application launch and
+project opening remain separate. The current implementation has automated coverage;
+its real Blender lifecycle acceptance remains pending, as does the older 0.6 real
+comparison gate.
 
 The public repository is
 [Haiyang-Bian/blender-research-mcp](https://github.com/Haiyang-Bian/blender-research-mcp).
@@ -31,8 +32,9 @@ removed after their commits were verified reachable from `main`.
 
 Documentation does not grant additional runtime authority. Unless a later accepted
 decision explicitly changes the contract, the project still forbids arbitrary Python,
-blend-file saving, external network services, asset import, node-topology edits,
-object location/rotation, and force-overwriting user changes.
+external network services, asset import, node-topology edits, object location/rotation,
+and force-overwriting transaction conflicts. Blend-file saving is available only
+through explicit lifecycle tools following user save/open/reload/quit intent.
 
 Roadmap documents distinguish implemented behavior from pending live acceptance.
 User-facing instructions must not describe an automated gate as real Blender evidence.

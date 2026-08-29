@@ -1,9 +1,9 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.6.0 reversible comparative previews implemented; live acceptance pending
-- Next milestone: complete the 0.6.0 real Blender comparison gate
+- Status: 0.7.0 managed application and project lifecycle implemented; live acceptance pending
+- Next milestone: complete the 0.7.0 cold-launch and project-switching Blender gate
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.6.0
+- Package and add-on version: 0.7.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,7 +12,7 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.6.0 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.7.0 now covers
 the validated observation and bounded-write path; the older bridge is no longer the
 primary interface for this repository.
 
@@ -95,6 +95,9 @@ The bridge runs with Blender-process authority. It must be local-first:
    reproduce asset marketplaces or generative 3D integrations.
 8. **Versioned** — protocol, schemas, capability negotiation, and migrations are
    explicit.
+9. **Intent-directed lifecycle** — starting Blender and opening a `.blend` remain
+   separate operations, while an explicit user request to save, switch, reload, or
+   quit directly authorizes that complete lifecycle action.
 
 ## 4. Non-goals
 
@@ -115,6 +118,10 @@ Codex / another MCP client
         v
 blender_research_mcp server (normal Python process)
         |
+        | managed launch: fixed bootstrap + versioned add-on resources
+        v
+visible Blender application (when application.launch is requested)
+        |
         | authenticated framed JSON over 127.0.0.1
         v
 Blender add-on socket thread
@@ -132,6 +139,8 @@ Responsibilities:
 - validation before contacting Blender;
 - request IDs, deadlines, retry classification, and structured errors;
 - connection handshake and capability negotiation;
+- configured Blender process launch, manifest association, reconnect, and lifecycle
+  completion verification;
 - decoding screenshots and other binary artifacts;
 - no direct Blender data mutation.
 
@@ -148,6 +157,7 @@ Responsibilities:
 - viewport capture and ray casting;
 - transaction bookkeeping;
 - concise UI for server status, authority, and current operation.
+- next-tick project open/reload/quit scheduling through semantic WM operations.
 
 ### 5.3 Project scripts
 
@@ -245,6 +255,26 @@ candidate must be applied later through the existing explicit transaction workfl
 The complete contract and acceptance gate are recorded in
 `docs/roadmap/0.6.0-comparative-previews.md`.
 
+### Implemented application and project lifecycle
+
+Version 0.7.0 adds an external managed launcher and a thin Blender-side project command
+surface:
+
+- `application.status`, `application.launch`, and `application.quit`;
+- `project.status`, `project.save`, `project.open`, and `project.reload`.
+
+`application.launch` never accepts a project path. It resolves Blender from CLI,
+environment, then `PATH`; starts it with a fixed packaged bootstrap; and associates the
+session through a launch ID in the authenticated manifest. The bootstrap enables the
+version-matched add-on for that Blender session without saving user preferences.
+
+Project tools require an existing 0.7-capable session and never launch Blender
+implicitly. Absolute `.blend` paths may be anywhere the user can access. Opening and
+quitting save the current dirty project by default; reloading discards unsaved changes
+by default. Explicit user intent is the authority gate—there is no second confirmation
+or project-root allowlist. The fixed bootstrap is not an arbitrary Python MCP surface.
+See `docs/roadmap/0.7.0-managed-lifecycle.md` for the detailed contract.
+
 Tool count is not a success metric. A small composable surface with precise
 preconditions is preferable to dozens of overlapping convenience tools.
 
@@ -334,15 +364,27 @@ modifier parameters, node topology, object location/rotation, and file saving re
 out of scope. See `docs/roadmap/0.6.0-comparative-previews.md` for the implementation
 and acceptance checkpoints.
 
-### Phase 5 — adoption and reviewed authority expansion
+### Phase 5 — managed application and project lifecycle
+
+Status: implemented with automated coverage in 0.7.0; real Blender acceptance pending.
+
+- Launch a visible configured Blender without requiring a preinstalled add-on.
+- Keep application launch separate from project opening.
+- Save, Save As, switch, reload, and quit through typed semantic tools.
+- Commit active preview transactions before default save/open/quit workflows.
+- Execute file-switching and quit operations on the tick after the acceptance response.
+- Reconnect and verify the actual absolute project path before reporting success.
+
+### Phase 6 — adoption and reviewed authority expansion
 
 Status: initial adoption complete. Codex is configured against the new MCP, versions
 0.2 through 0.5.1 have live Blender validation records, and the repository is public
 with its validated history merged into `main`.
 
-- Use the 0.6 comparative smoke as the next fixed acceptance suite.
-- Complete at least one real LookDev choice through comparative evidence before adding
-  another Blender write domain.
+- Use the 0.7 managed lifecycle smoke as the next fixed acceptance suite while keeping
+  the 0.6 comparative real-Blender gate explicitly pending.
+- Complete at least one real managed launch and project switch before adding another
+  Blender write domain.
 - Keep any older bridge only as an external fallback; do not copy its unrestricted
   execution surface into this repository.
 - After comparative previews are validated in real work, evaluate bounded light
@@ -389,8 +431,8 @@ research scenarios.
   context lease; 0.4 keeps navigation inside restored capture operations.
 - Whether the add-on should later ship as a Blender Extension in addition to the
   current traditional ZIP.
-- Whether a bounded project-script capability is necessary; arbitrary inline Python
-  remains out of scope.
+- Whether a bounded repository script tool is necessary beyond project-owned Blender
+  drivers/startup scripts; arbitrary inline Python remains out of scope.
 - Which single bounded authority should follow comparative previews: existing-light
   energy/color controls or a narrowly selected modifier family. Do not combine both
   into the same release.
@@ -405,10 +447,11 @@ At the start of a new task:
 3. Use uv for all Python dependency and execution work.
 4. Keep Blender 4.2.23 and Python 3.11 add-on compatibility.
 5. Develop on port 9877 and require explicit capability negotiation.
-6. Do not modify the portrait blend file while building transport infrastructure.
+6. Use temporary `.blend` copies for lifecycle validation; never switch to or save over
+   the source integration fixture.
 7. Prefer one vertical slice—connect, observe, mutate, rollback, verify—over a broad
    catalogue of unfinished tools. Use `observation.bundle` before adding new mutation
    authority.
 8. For the next completion task, follow the live acceptance section in
-   `docs/roadmap/0.6.0-comparative-previews.md`; do not add new Blender write authority
-   before comparative evidence is validated in real work.
+   `docs/roadmap/0.7.0-managed-lifecycle.md`; report the older 0.6 comparative live gate
+   separately rather than implying it passed.

@@ -2,19 +2,58 @@
 
 ## Start and connect
 
-1. Install `artifacts/blender-research-mcp-addon-0.6.0.zip` in Blender 4.2.23 and
-   enable **Blender Research MCP**.
-2. Keep the blend file open with at least one 3D Viewport.
-3. Configure the `blender_research` STDIO MCP as shown in the repository README and
-   restart Codex after changing its MCP configuration.
+1. Configure the `blender_research` STDIO MCP as shown in the repository README.
+2. For managed launch, set `BLENDER_RESEARCH_MCP_BLENDER_EXECUTABLE` or pass
+   `--blender-executable`. `application.launch` also searches `PATH` last.
+3. Call `application.status`. If `running=false` and the user wants Blender opened,
+   call `application.launch`; this starts Blender but does not open a project.
 4. Call `connection.ping`. Protocol 1, `viewport_capture: 3`,
    `viewport_raycast: 1`, `geometry_inspection: 1`, `lookdev_inspection: 1`,
    `transactions: 2`, and all advertised bounded-write capabilities at version 1 are
    required.
 
-Blender does not need focus for semantic operations or off-screen capture. It may be
-behind another window. Minimized capture is not guaranteed; restore the Blender window
-if `CAPTURE_GPU_UNAVAILABLE` is returned.
+Manual installation remains available through
+`artifacts/blender-research-mcp-addon-0.7.0.zip`. Managed launch instead materializes
+the version-matched add-on and fixed bootstrap for the current session without changing
+Blender preferences or the startup file.
+
+## Manage the Blender application and project
+
+Application launch and project opening are intentionally separate:
+
+1. For “start Blender”, call `application.status`, then `application.launch` only if
+   needed. Do not supply or infer a project path.
+2. For “open this project”, call `application.status`, launch if needed, then call
+   `project.open` with the user's absolute existing `.blend` path.
+3. Do not repeat a confirmation after the user has explicitly asked to save, open,
+   switch, reload, or close. That intent authorizes the corresponding lifecycle chain.
+
+`application.status` returns `running=false` normally when Blender is absent. A running
+session includes PID, instance and launch IDs, versions, port, managed status,
+capabilities, and a project summary; the session token is never returned.
+
+`project.status` works without a 3D Viewport and reports filepath, saved/dirty state,
+scene generation, active transaction, and the last lifecycle operation.
+
+- `project.save()` commits an active transaction and saves the current file. An
+  untitled project requires an absolute `path`; a different path performs Save As and
+  overwrites an existing target without a file selector.
+- `project.open(path)` defaults to committing the active transaction and saving a dirty
+  current project before switching. A dirty untitled current project requires
+  `save_current_as`. Set `save_current=false` to switch and discard the old unsaved
+  state. `use_scripts=true` and `load_ui=true` are the defaults.
+- Opening the already current path returns `already_open` after any required save. Use
+  `project.reload()` for a real disk reload.
+- `project.reload()` defaults to discarding unsaved changes. Set `save_current=true`
+  when the user wants to preserve them first.
+- `application.quit()` defaults to committing and saving before closing. A dirty
+  untitled project requires `save_current_as`; `save_current=false` closes without
+  saving.
+
+All file parameters must be absolute `.blend` paths. Open targets must exist; Save As
+targets may be new if their parent directory exists. Paths are not restricted to a
+project root. `project.*` never starts Blender implicitly and returns
+`APPLICATION_NOT_RUNNING` when no session exists.
 
 ## Observe a target
 
@@ -60,7 +99,8 @@ Use the compact **Research MCP** N-panel for connection, capture backend, transa
 and error status. The complete status panel is under
 **Scene Properties > Blender Research MCP**. Neither panel changes Blender areas or
 workspaces. The full panel lists authorized write categories and shows the active
-transaction's label, delta count, and kinds without exposing the session token.
+transaction's label, delta count, and kinds plus the current project path, dirty state,
+and last lifecycle operation, without exposing the session token.
 
 ## Inspect writable LookDev targets
 
@@ -150,6 +190,24 @@ Codex after the first installation so automatic skill discovery can see it.
 
 ## Common failures
 
+- `APPLICATION_NOT_RUNNING`: call `application.status`, then launch Blender only when
+  that matches the user's intent; retry the project operation afterward.
+- `BLENDER_EXECUTABLE_NOT_CONFIGURED` or `BLENDER_EXECUTABLE_NOT_FOUND`: configure the
+  executable through CLI, environment, or `PATH` and call `application.launch` again.
+- `APPLICATION_LAUNCH_FAILED` or `APPLICATION_LAUNCH_TIMEOUT`: inspect the returned
+  launch ID and log path; do not loop indefinitely.
+- `CURRENT_PROJECT_UNTITLED`: provide `path` for `project.save` or `save_current_as` for
+  the requested open/quit operation.
+- `PROJECT_PATH_INVALID` or `PROJECT_NOT_FOUND`: use an absolute `.blend` path with the
+  required existing target or parent directory.
+- `PROJECT_SAVE_FAILED`: the current project was not switched or closed; correct the
+  reported Blender/operator failure and retry the original intent.
+- `PROJECT_OPEN_FAILED`, `PROJECT_OPEN_TIMEOUT`, or `PROJECT_PATH_MISMATCH`: inspect
+  `project.status.last_operation` and the actual filepath before another switch.
+- `PROJECT_RELOAD_UNAVAILABLE`: save the untitled project first or open an existing
+  `.blend` file.
+- `APPLICATION_QUIT_TIMEOUT`: inspect `application.status`; the server does not kill
+  Blender after a timed-out semantic quit.
 - `CAPABILITY_MISMATCH`: install and fully restart an add-on with the required
   capability versions; do not infer compatibility from the version string alone.
 - `CAPTURE_GPU_UNAVAILABLE`: restore the Blender window and confirm a 3D Viewport exists.

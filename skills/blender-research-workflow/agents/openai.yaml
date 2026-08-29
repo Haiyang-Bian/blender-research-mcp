@@ -1,7 +1,7 @@
 interface:
   display_name: "Blender Research Workflow"
-  short_description: "Diagnose and safely preview bounded Blender LookDev"
-  default_prompt: "Use $blender-research-workflow to diagnose this Blender scene and preview one bounded, reversible LookDev change."
+  short_description: "Launch, manage, diagnose, and preview Blender projects"
+  default_prompt: "Use $blender-research-workflow to follow my Blender application and project intent, then diagnose or preview bounded LookDev changes as requested."
 dependencies:
   tools:
     - type: "mcp"

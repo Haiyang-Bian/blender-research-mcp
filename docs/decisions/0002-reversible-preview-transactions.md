@@ -18,8 +18,8 @@ and a lost socket response does not prove whether a mutation ran.
 - Reject commit, further mutation, or rollback if the user context or an
   agent-written property no longer matches its transaction guard.
 - Do not expose a force option that could overwrite user work.
-- Treat commit as an in-memory operation only; the bridge never saves a blend
-  file.
+- Treat transaction commit as an in-memory operation only; this command never saves a
+  blend file. Explicit project lifecycle tools are a separate authority added in 0.7.
 - On authenticated socket loss, allow two seconds for an idempotent reconnect.
   After that grace period, attempt rollback on Blender's main thread and
   invalidate cached success responses associated with that transaction.
