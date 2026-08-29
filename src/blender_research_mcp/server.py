@@ -22,12 +22,19 @@ from pydantic import (
 )
 
 from blender_research_mcp.authoring import (
+    ImageColorSpace,
     InitialTransform,
+    LinkIdentities,
     LocationAxisPatch,
+    MaterialAssignMode,
+    MaterialDefinition,
+    MaterialTextureChannel,
     ObjectDefinition,
     RotationAxisPatch,
     ScaleAxisPatch,
     SceneKinds,
+    TextureCoordinate,
+    TextureMapping,
     require_capability,
 )
 from blender_research_mcp.client import BridgeClient
@@ -97,6 +104,9 @@ NodeName = Annotated[str, Field(min_length=1, max_length=255)]
 SocketIdentifier = Annotated[str, Field(min_length=1, max_length=255)]
 MaterialUsers = Annotated[StrictInt, Field(ge=1)]
 ProjectPath = Annotated[str, Field(min_length=1, max_length=32767)]
+ImageName = Annotated[str, Field(min_length=1, max_length=255)]
+AssetPath = Annotated[str, Field(min_length=1, max_length=32767)]
+DataUsers = Annotated[StrictInt, Field(ge=1)]
 
 
 def _validate_material_input_value(value: Any) -> Any:
@@ -421,6 +431,23 @@ def create_server(
                 "object_name": object_name,
                 "material_slot_index": material_slot_index,
             },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="image.inspect",
+        description=(
+            "Inspect one exact Blender image data-block, including absolute path, identity, "
+            "dimensions, color space, users, and packed state."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def image_inspect(image_name: ImageName) -> dict[str, Any]:
+        await require_capability(client, "image_assets")
+        return await client.call(
+            "image.inspect",
+            {"image_name": image_name},
             read_only=True,
         )
 
@@ -885,6 +912,222 @@ def create_server(
                 "socket_identifier": socket_identifier,
                 "expected_socket_identity": expected_socket_identity,
                 "value": value,
+                "allow_shared": allow_shared,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="material.create",
+        description=(
+            "Create a uniquely named canonical Principled PBR material with bounded semantic "
+            "surface values inside the active structural transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def material_create(
+        transaction_id: TransactionId,
+        definition: MaterialDefinition,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "material_authoring")
+        client.require_capability("transactions", 3)
+        return await client.call(
+            "material.create",
+            {"transaction_id": transaction_id, "definition": definition.model_dump()},
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="material.assign",
+        description=(
+            "Append, replace, or clear one exact material slot on inspected object data. "
+            "Shared data requires its exact user count and explicit permission."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def material_assign(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_data_identity: SessionIdentity,
+        expected_data_users: DataUsers,
+        mode: MaterialAssignMode,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        slot_index: MaterialSlotIndex | None = None,
+        expected_slot_material_identity: SessionIdentity | None = None,
+        material_name: MaterialName | None = None,
+        expected_material_identity: SessionIdentity | None = None,
+        expected_material_users: Annotated[StrictInt, Field(ge=0)] | None = None,
+        allow_shared_data: StrictBool = False,
+    ) -> dict[str, Any]:
+        if mode == "append" and slot_index is not None:
+            raise ValueError("append does not accept slot_index")
+        if mode in {"replace", "clear"} and (
+            slot_index is None or expected_slot_material_identity is None
+        ):
+            raise ValueError(
+                "replace and clear require slot_index and expected_slot_material_identity"
+            )
+        if mode in {"append", "replace"} and (
+            material_name is None
+            or expected_material_identity is None
+            or expected_material_users is None
+        ):
+            raise ValueError(
+                "append and replace require exact material identity and user count"
+            )
+        await require_capability(client, "material_authoring")
+        client.require_capability("transactions", 3)
+        return await client.call(
+            "material.assign",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "expected_data_identity": expected_data_identity,
+                "expected_data_users": expected_data_users,
+                "mode": mode,
+                "slot_index": slot_index,
+                "expected_slot_material_identity": expected_slot_material_identity,
+                "material_name": material_name,
+                "expected_material_identity": expected_material_identity,
+                "expected_material_users": expected_material_users,
+                "allow_shared_data": allow_shared_data,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="image.load",
+        description=(
+            "Load or reuse an image from an arbitrary absolute local path with a bounded "
+            "color-space policy inside the active structural transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def image_load(
+        transaction_id: TransactionId,
+        path: AssetPath,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        colorspace: ImageColorSpace = "AUTO",
+    ) -> dict[str, Any]:
+        await require_capability(client, "image_assets")
+        client.require_capability("transactions", 3)
+        return await client.call(
+            "image.load",
+            {"transaction_id": transaction_id, "path": path, "colorspace": colorspace},
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="material.texture.bind",
+        description=(
+            "Bind one exact local image through generated semantic mapping nodes to a "
+            "Principled PBR channel. Existing links require an exact replacement guard."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def material_texture_bind(
+        transaction_id: TransactionId,
+        material_name: MaterialName,
+        expected_material_identity: SessionIdentity,
+        expected_material_users: Annotated[StrictInt, Field(ge=0)],
+        node_name: NodeName,
+        expected_node_identity: SessionIdentity,
+        image_name: ImageName,
+        expected_image_identity: SessionIdentity,
+        expected_image_users: Annotated[StrictInt, Field(ge=0)],
+        channel: MaterialTextureChannel,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        coordinates: TextureCoordinate = "UV",
+        mapping: TextureMapping | None = None,
+        replace_existing: StrictBool = False,
+        expected_link_identities: LinkIdentities | None = None,
+        allow_shared: StrictBool = False,
+    ) -> dict[str, Any]:
+        if replace_existing and expected_link_identities is None:
+            raise ValueError("replace_existing requires expected_link_identities")
+        if not replace_existing and expected_link_identities is not None:
+            raise ValueError("expected_link_identities requires replace_existing")
+        await require_capability(client, "material_authoring")
+        client.require_capability("image_assets", 1)
+        client.require_capability("transactions", 3)
+        return await client.call(
+            "material.texture.bind",
+            {
+                "transaction_id": transaction_id,
+                "material_name": material_name,
+                "expected_material_identity": expected_material_identity,
+                "expected_material_users": expected_material_users,
+                "node_name": node_name,
+                "expected_node_identity": expected_node_identity,
+                "image_name": image_name,
+                "expected_image_identity": expected_image_identity,
+                "expected_image_users": expected_image_users,
+                "channel": channel,
+                "coordinates": coordinates,
+                "mapping": (mapping or TextureMapping()).model_dump(),
+                "replace_existing": replace_existing,
+                "expected_link_identities": list(expected_link_identities or ()),
+                "allow_shared": allow_shared,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="material.texture.clear",
+        description=(
+            "Clear the exact inspected incoming link set from one Principled semantic channel "
+            "and restore it if the structural transaction rolls back."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def material_texture_clear(
+        transaction_id: TransactionId,
+        material_name: MaterialName,
+        expected_material_identity: SessionIdentity,
+        expected_material_users: Annotated[StrictInt, Field(ge=0)],
+        node_name: NodeName,
+        expected_node_identity: SessionIdentity,
+        channel: MaterialTextureChannel,
+        expected_link_identities: LinkIdentities,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        allow_shared: StrictBool = False,
+    ) -> dict[str, Any]:
+        await require_capability(client, "material_authoring")
+        client.require_capability("transactions", 3)
+        return await client.call(
+            "material.texture.clear",
+            {
+                "transaction_id": transaction_id,
+                "material_name": material_name,
+                "expected_material_identity": expected_material_identity,
+                "expected_material_users": expected_material_users,
+                "node_name": node_name,
+                "expected_node_identity": expected_node_identity,
+                "channel": channel,
+                "expected_link_identities": list(expected_link_identities),
                 "allow_shared": allow_shared,
             },
             expected_scene_generation=expected_scene_generation,

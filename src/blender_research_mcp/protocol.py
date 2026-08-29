@@ -30,6 +30,8 @@ class CapabilityVersions(BaseModel):
     object_transform: int = Field(default=0, ge=0)
     scene_inspection: int = Field(default=0, ge=0)
     object_authoring: int = Field(default=0, ge=0)
+    material_authoring: int = Field(default=0, ge=0)
+    image_assets: int = Field(default=0, ge=0)
     object_visibility: int = Field(default=0, ge=0)
     modifier_state: int = Field(default=0, ge=0)
     shape_key_value: int = Field(default=0, ge=0)

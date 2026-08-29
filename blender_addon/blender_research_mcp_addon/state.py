@@ -52,6 +52,17 @@ from .lookdev_ops import (
     session_identity,
     shape_key_is_driven,
 )
+from .material_authoring_ops import (
+    assign_material,
+    assignment_result,
+    bind_texture,
+    clear_texture,
+    create_material,
+    image_summary,
+    inspect_image,
+    load_image,
+    material_result,
+)
 from .project_ops import (
     ProjectOperationError,
     normalized_path,
@@ -97,6 +108,7 @@ CAPABILITIES = [
     "object.geometry.inspect",
     "object.lookdev.inspect",
     "material.inspect",
+    "image.inspect",
     "viewport.capture",
     "viewport.raycast",
     "transaction.begin",
@@ -110,6 +122,11 @@ CAPABILITIES = [
     "modifier.set_state",
     "shape_key.set_value",
     "material.set_input",
+    "material.create",
+    "material.assign",
+    "image.load",
+    "material.texture.bind",
+    "material.texture.clear",
     "project.status",
     "project.save",
     "project.open",
@@ -128,6 +145,8 @@ CAPABILITY_VERSIONS = {
     "object_transform": 1,
     "scene_inspection": 1,
     "object_authoring": 1,
+    "material_authoring": 1,
+    "image_assets": 1,
     "object_visibility": 1,
     "modifier_state": 1,
     "shape_key_value": 1,
@@ -147,6 +166,11 @@ MUTATION_COMMANDS = {
     "modifier.set_state",
     "shape_key.set_value",
     "material.set_input",
+    "material.create",
+    "material.assign",
+    "image.load",
+    "material.texture.bind",
+    "material.texture.clear",
     "project.save",
     "project.open",
     "project.reload",
@@ -499,6 +523,15 @@ class AddonState:
                 )
             with self.suppress_generation():
                 return inspect_material(object_name, material_slot_index)
+        if command == "image.inspect":
+            image_name = params.get("image_name")
+            if not isinstance(image_name, str) or not image_name:
+                raise AuthoringOperationError(
+                    "IMAGE_NAME_INVALID",
+                    "image_name must be a non-empty string",
+                    kind="validation",
+                )
+            return inspect_image(image_name)
         if command == "viewport.capture":
             object_name = params.get("object_name")
             if not isinstance(object_name, str) or not object_name:
@@ -680,6 +713,89 @@ class AddonState:
         if command == "material.set_input":
             transaction = self._require_transaction(params, request)
             return self._set_material_input(transaction, params)
+        if command == "material.create":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            definition = params.get("definition")
+            if not isinstance(definition, dict):
+                raise AuthoringOperationError(
+                    "MATERIAL_DEFINITION_INVALID",
+                    "definition must be an object",
+                    kind="validation",
+                )
+            with self.suppress_generation():
+                material, delta = create_material(transaction, definition)
+            self._record_delta(transaction, delta)
+            return {
+                "transaction_id": transaction.transaction_id,
+                "material": material_result(material),
+                "status": transaction.status,
+                "delta_count": len(transaction.deltas),
+                "delta_kinds": transaction.delta_kinds(),
+            }
+        if command == "material.assign":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            with self.suppress_generation():
+                obj, delta, slot_index = assign_material(transaction, params)
+                bpy.context.view_layer.update()
+            self._record_delta(transaction, delta)
+            return {
+                "transaction_id": transaction.transaction_id,
+                "assignment": assignment_result(obj, slot_index),
+                "mode": params.get("mode"),
+                "status": transaction.status,
+                "delta_count": len(transaction.deltas),
+                "delta_kinds": transaction.delta_kinds(),
+            }
+        if command == "image.load":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            with self.suppress_generation():
+                image, delta, reused = load_image(
+                    transaction,
+                    params.get("path"),
+                    str(params.get("colorspace", "AUTO")),
+                )
+            if delta is not None:
+                self._record_delta(transaction, delta)
+            return {
+                "transaction_id": transaction.transaction_id,
+                "image": image_summary(image),
+                "reused": reused,
+                "status": transaction.status,
+                "delta_count": len(transaction.deltas),
+                "delta_kinds": transaction.delta_kinds(),
+            }
+        if command == "material.texture.bind":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            with self.suppress_generation():
+                material, delta, binding = bind_texture(transaction, params)
+            self._record_delta(transaction, delta)
+            return {
+                "transaction_id": transaction.transaction_id,
+                "material": material_result(material),
+                "binding": binding,
+                "status": transaction.status,
+                "delta_count": len(transaction.deltas),
+                "delta_kinds": transaction.delta_kinds(),
+            }
+        if command == "material.texture.clear":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            with self.suppress_generation():
+                material, delta, removed_links = clear_texture(transaction, params)
+            self._record_delta(transaction, delta)
+            return {
+                "transaction_id": transaction.transaction_id,
+                "material": material_result(material),
+                "channel": params.get("channel"),
+                "removed_link_identities": removed_links,
+                "status": transaction.status,
+                "delta_count": len(transaction.deltas),
+                "delta_kinds": transaction.delta_kinds(),
+            }
         if command == "transaction.commit":
             transaction = self._require_transaction(params, request)
             self._validate_transaction_guards(transaction)
@@ -1188,6 +1304,7 @@ class AddonState:
         params: dict[str, Any],
     ) -> dict[str, Any]:
         self._validate_transaction_guards(transaction)
+        transaction.ensure_capacity()
         object_name = params.get("object_name")
         if not isinstance(object_name, str) or not object_name:
             raise ContextOperationError(
@@ -1261,6 +1378,7 @@ class AddonState:
         params: dict[str, Any],
     ) -> dict[str, Any]:
         self._validate_transaction_guards(transaction)
+        transaction.ensure_capacity()
         object_name = params.get("object_name")
         modifier_name = params.get("modifier_name")
         if not isinstance(object_name, str) or not object_name:
@@ -1343,6 +1461,7 @@ class AddonState:
         params: dict[str, Any],
     ) -> dict[str, Any]:
         self._validate_transaction_guards(transaction)
+        transaction.ensure_capacity()
         object_name = params.get("object_name")
         shape_key_name = params.get("shape_key_name")
         raw_value = params.get("value")
@@ -1450,6 +1569,7 @@ class AddonState:
         params: dict[str, Any],
     ) -> dict[str, Any]:
         self._validate_transaction_guards(transaction)
+        transaction.ensure_capacity()
         object_name = params.get("object_name")
         material_slot_index = params.get("material_slot_index")
         material_name = params.get("material_name")
@@ -1583,6 +1703,7 @@ class AddonState:
                 socket.default_value = after
                 node_tree.update_tag()
                 bpy.context.view_layer.update()
+                refresh_structure_guard_if_present(transaction, "material", material)
             self._record_delta(
                 transaction,
                 MaterialInputDelta(

@@ -27,6 +27,20 @@ def _rounded(values: Any) -> list[float]:
     return [round(float(value), 9) for value in values]
 
 
+def _socket_value(socket: Any) -> Any:
+    if not hasattr(socket, "default_value"):
+        return None
+    value = socket.default_value
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return round(float(value), 9)
+    try:
+        return _rounded(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _node_tree_summary(node_tree: Any) -> dict[str, Any] | None:
     if node_tree is None:
         return None
@@ -35,6 +49,19 @@ def _node_tree_summary(node_tree: Any) -> dict[str, Any] | None:
             "name": node.name,
             "type": node.bl_idname,
             "identity": session_identity("node", node),
+            "image": (
+                session_identity("image", node.image)
+                if hasattr(node, "image") and node.image is not None
+                else None
+            ),
+            "inputs": [
+                {
+                    "identifier": socket.identifier,
+                    "identity": session_identity("socket", socket),
+                    "value": _socket_value(socket),
+                }
+                for socket in node.inputs
+            ],
         }
         for node in node_tree.nodes
     ]
@@ -251,6 +278,29 @@ def restore_structural_delta(delta: StructuralDelta) -> dict[str, Any]:
         for material in delta.payload["before"]:
             data.materials.append(material)
         return {"kind": delta.kind, "action": delta.action, "restored": True}
+    if delta.action == "image_colorspace":
+        image = delta.payload["image"]
+        image.colorspace_settings.name = delta.payload["before"]
+        return {
+            "kind": delta.kind,
+            "action": delta.action,
+            "colorspace": image.colorspace_settings.name,
+        }
+    if delta.action == "node_graph":
+        material = delta.payload["material"]
+        tree = material.node_tree
+        for node in reversed(delta.payload["created_nodes"]):
+            if tree.nodes.get(node.name) is node:
+                tree.nodes.remove(node)
+        for from_socket, to_socket in delta.payload["replaced_links"]:
+            tree.links.new(from_socket, to_socket)
+        return {"kind": delta.kind, "action": delta.action, "restored": True}
+    if delta.action == "node_graph_clear":
+        material = delta.payload["material"]
+        tree = material.node_tree
+        for from_socket, to_socket in delta.payload["removed_links"]:
+            tree.links.new(from_socket, to_socket)
+        return {"kind": delta.kind, "action": delta.action, "restored": True}
     if delta.action == "scene_camera":
         scene = delta.payload["scene"]
         scene.camera = delta.payload["before"]
@@ -268,6 +318,15 @@ def restore_structural_delta(delta: StructuralDelta) -> dict[str, Any]:
 def finalize_structural_delta(delta: StructuralDelta) -> dict[str, Any] | None:
     """Complete deferred destructive work after every transaction guard is valid."""
 
+    if delta.action == "node_graph_clear":
+        material = delta.payload["material"]
+        tree = material.node_tree
+        removed = []
+        for node in reversed(delta.payload["tagged_nodes"]):
+            if tree.nodes.get(node.name) is node:
+                removed.append(node.name)
+                tree.nodes.remove(node)
+        return {"kind": delta.kind, "action": delta.action, "removed_nodes": removed}
     if delta.action != "unlink_object":
         return None
     obj = delta.payload["object"]

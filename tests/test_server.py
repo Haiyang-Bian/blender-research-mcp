@@ -27,6 +27,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "object.geometry.inspect",
         "object.lookdev.inspect",
         "material.inspect",
+        "image.inspect",
         "viewport.capture",
         "viewport.raycast",
         "observation.bundle",
@@ -40,6 +41,11 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "modifier.set_state",
         "shape_key.set_value",
         "material.set_input",
+        "material.create",
+        "material.assign",
+        "image.load",
+        "material.texture.bind",
+        "material.texture.clear",
         "transaction.commit",
         "transaction.rollback",
     ]
@@ -170,6 +176,42 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert material_input.annotations.idempotentHint is True
     assert material_input.inputSchema["properties"]["expected_material_users"]["minimum"] == 1
     assert len(material_input.inputSchema["properties"]["value"]["oneOf"]) == 5
+    image_inspect = tools_by_name["image.inspect"]
+    assert image_inspect.annotations is not None
+    assert image_inspect.annotations.readOnlyHint is True
+    material_create = tools_by_name["material.create"]
+    color_schema = material_create.inputSchema["$defs"]["MaterialDefinition"]["properties"][
+        "base_color"
+    ]
+    assert color_schema["discriminator"]["propertyName"] == "type"
+    assert len(color_schema["oneOf"]) == 2
+    material_assign = tools_by_name["material.assign"]
+    assert material_assign.inputSchema["properties"]["mode"]["enum"] == [
+        "append",
+        "replace",
+        "clear",
+    ]
+    image_load = tools_by_name["image.load"]
+    assert image_load.inputSchema["properties"]["colorspace"]["enum"] == [
+        "AUTO",
+        "SRGB",
+        "NON_COLOR",
+    ]
+    texture_bind = tools_by_name["material.texture.bind"]
+    assert texture_bind.inputSchema["properties"]["channel"]["enum"] == [
+        "base_color",
+        "roughness",
+        "metallic",
+        "normal",
+        "bump",
+        "emission",
+        "alpha",
+    ]
+    assert texture_bind.inputSchema["properties"]["replace_existing"]["default"] is False
+    texture_clear = tools_by_name["material.texture.clear"]
+    assert texture_clear.inputSchema["properties"]["expected_link_identities"][
+        "minItems"
+    ] == 1
 
 
 def test_material_input_value_preserves_json_types() -> None:

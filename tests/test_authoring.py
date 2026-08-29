@@ -3,10 +3,14 @@ from pydantic import TypeAdapter, ValidationError
 
 from blender_research_mcp.authoring import (
     ConeDefinition,
+    HexColor,
     InitialTransform,
     LocationAxisPatch,
+    MaterialDefinition,
     ObjectDefinition,
+    RGBAColor,
     ScaleAxisPatch,
+    TextureMapping,
 )
 
 
@@ -58,3 +62,26 @@ def test_initial_transform_uses_absolute_xyz_values() -> None:
         "z": 0.0,
     }
     assert transform.scale.model_dump() == {"x": 1.0, "y": 1.0, "z": 1.0}
+
+
+def test_material_definition_accepts_hex_or_explicit_rgba_only() -> None:
+    material = MaterialDefinition(
+        name="Moon",
+        base_color=HexColor(value="#EFF0EA"),
+        emission_color=RGBAColor(value=(0.1, 0.2, 0.3, 1.0)),
+        roughness=0.7,
+    )
+
+    assert material.base_color.type == "hex_srgb"
+    assert material.emission_color.type == "rgba"
+    with pytest.raises(ValidationError):
+        RGBAColor(value=(1.1, 0.2, 0.3, 1.0))
+    with pytest.raises(ValidationError):
+        MaterialDefinition.model_validate({"name": "Bad", "metallic": True})
+
+
+def test_texture_mapping_rejects_zero_scale_and_extra_fields() -> None:
+    with pytest.raises(ValidationError):
+        TextureMapping(scale={"x": 0, "y": 1, "z": 1})
+    with pytest.raises(ValidationError):
+        TextureMapping.model_validate({"unsupported": 1})

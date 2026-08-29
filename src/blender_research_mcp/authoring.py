@@ -206,6 +206,85 @@ SceneKind = Literal["objects", "collections", "materials", "images", "world", "c
 SceneKinds = Annotated[tuple[SceneKind, ...], Field(min_length=1, max_length=7)]
 
 
+class HexColor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["hex_srgb"] = "hex_srgb"
+    value: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
+
+
+class RGBAColor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["rgba"] = "rgba"
+    value: tuple[FiniteNumber, FiniteNumber, FiniteNumber, FiniteNumber]
+
+    @model_validator(mode="after")
+    def validate_components(self) -> RGBAColor:
+        if any(not 0.0 <= component <= 1.0 for component in self.value):
+            raise ValueError("RGBA components must be between 0 and 1")
+        return self
+
+
+ColorSpec = Annotated[HexColor | RGBAColor, Field(discriminator="type")]
+
+
+class MaterialDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=255)
+    base_color: ColorSpec = Field(
+        default_factory=lambda: HexColor(value="#CCCCCC")
+    )
+    metallic: FiniteNumber = Field(default=0.0, ge=0, le=1)
+    roughness: FiniteNumber = Field(default=0.5, ge=0, le=1)
+    ior: FiniteNumber = Field(default=1.5, ge=1, le=4)
+    transmission: FiniteNumber = Field(default=0.0, ge=0, le=1)
+    emission_color: ColorSpec = Field(
+        default_factory=lambda: HexColor(value="#000000")
+    )
+    emission_strength: FiniteNumber = Field(default=0.0, ge=0, le=1_000_000)
+    alpha: FiniteNumber = Field(default=1.0, ge=0, le=1)
+
+
+MaterialAssignMode = Literal["append", "replace", "clear"]
+ImageColorSpace = Literal["AUTO", "SRGB", "NON_COLOR"]
+MaterialTextureChannel = Literal[
+    "base_color",
+    "roughness",
+    "metallic",
+    "normal",
+    "bump",
+    "emission",
+    "alpha",
+]
+TextureCoordinate = Literal["UV", "GENERATED"]
+LinkIdentities = Annotated[tuple[str, ...], Field(min_length=1, max_length=8)]
+
+
+class TextureMapping(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    location: Vector3 = Field(default_factory=Vector3)
+    rotation_euler_degrees: Vector3 = Field(default_factory=Vector3)
+    scale: Vector3 = Field(default_factory=lambda: Vector3(x=1.0, y=1.0, z=1.0))
+
+    @model_validator(mode="after")
+    def validate_scale(self) -> TextureMapping:
+        if any(abs(value) > 1_000_000 for value in self.location.model_dump().values()):
+            raise ValueError("mapping location components are out of range")
+        if any(
+            abs(value) > 360_000
+            for value in self.rotation_euler_degrees.model_dump().values()
+        ):
+            raise ValueError("mapping rotation components are out of range")
+        if any(
+            not 0.000001 <= value <= 1000 for value in self.scale.model_dump().values()
+        ):
+            raise ValueError("mapping scale components must be between 0.000001 and 1000")
+        return self
+
+
 async def require_capability(client: BridgeClient, name: str, version: int = 1) -> None:
     await client.connect()
     client.require_capability(name, version)
