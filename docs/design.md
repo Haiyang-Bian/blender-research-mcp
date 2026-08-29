@@ -1,6 +1,6 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.10.0 bounded typed Modifier authoring implemented; live acceptance pending
+- Status: 0.10.0 bounded typed Modifier authoring implemented and live-validated
 - Next milestone: design semantic Mesh topology snapshots and editing for 0.11
 - Primary Blender target: 4.2.23 LTS
 - Package and add-on version: 0.10.0
@@ -464,8 +464,7 @@ Status: implemented and Blender 4.2.23 live-validated in 0.9.0.
 
 ### Phase 8 — bounded typed Modifier authoring
 
-Status: implemented with automated gates in 0.10.0; Blender 4.2.23 live acceptance is
-pending.
+Status: implemented and Blender 4.2.23 live-validated in 0.10.0.
 
 - Inspect exact full ordered Modifier stacks and guard them with one fingerprint.
 - Create, configure, reorder, and defer deletion for four bounded Modifier families.

@@ -25,7 +25,7 @@ from .transaction_model import (
 
 SUPPORTED_MODIFIER_TYPES = {"BEVEL", "SUBSURF", "SOLIDIFY", "BOOLEAN"}
 MODIFIER_LIMIT = 256
-PENDING_DELETE_KEY = "_brmcp_pending_delete"
+_PENDING_DELETE_TOKENS: dict[str, str] = {}
 
 _FIELD_SPECS: dict[str, dict[str, tuple[str, str]]] = {
     "BEVEL": {
@@ -209,8 +209,13 @@ def modifier_settings(modifier: Any) -> dict[str, Any]:
 
 
 def modifier_pending_delete(modifier: Any) -> bool:
-    getter = getattr(modifier, "get", None)
-    return bool(getter(PENDING_DELETE_KEY)) if getter is not None else False
+    return session_identity("modifier", modifier) in _PENDING_DELETE_TOKENS
+
+
+def clear_modifier_pending_deletes() -> None:
+    """Forget session-only pending markers after file load or add-on shutdown."""
+
+    _PENDING_DELETE_TOKENS.clear()
 
 
 def modifier_summary(obj: Any, modifier: Any, stack_index: int) -> dict[str, Any]:
@@ -222,18 +227,14 @@ def modifier_summary(obj: Any, modifier: Any, stack_index: int) -> dict[str, Any
         public_name: modifier_is_driven(obj, modifier, rna_name)
         for public_name, (rna_name, _kind) in fields.items()
     }
-    driven.update(
-        {field: modifier_is_driven(obj, modifier, field) for field in _COMMON_FIELDS}
-    )
+    driven.update({field: modifier_is_driven(obj, modifier, field) for field in _COMMON_FIELDS})
     readonly = {
         public_name: _is_readonly(modifier, rna_name)
         for public_name, (rna_name, _kind) in fields.items()
     }
     readonly.update({field: _is_readonly(modifier, field) for field in _COMMON_FIELDS})
     writable = [
-        field
-        for field in fields
-        if not linked and not driven[field] and not readonly[field]
+        field for field in fields if not linked and not driven[field] and not readonly[field]
     ]
     result: dict[str, Any] = {
         "name": str(modifier.name),
@@ -263,18 +264,14 @@ def modifier_summary(obj: Any, modifier: Any, stack_index: int) -> dict[str, Any
 
 
 def modifier_stack_summary(obj: Any) -> list[dict[str, Any]]:
-    return [
-        modifier_summary(obj, modifier, index)
-        for index, modifier in enumerate(obj.modifiers)
-    ]
+    return [modifier_summary(obj, modifier, index) for index, modifier in enumerate(obj.modifiers)]
 
 
 def modifier_stack_fingerprint(obj: Any) -> str:
     summary = modifier_stack_summary(obj)
     for item, modifier in zip(summary, obj.modifiers, strict=True):
-        getter = getattr(modifier, "get", None)
-        item["_pending_delete_token"] = (
-            getter(PENDING_DELETE_KEY) if getter is not None else None
+        item["_pending_delete_token"] = _PENDING_DELETE_TOKENS.get(
+            session_identity("modifier", modifier)
         )
     encoded = json.dumps(
         summary,
@@ -283,6 +280,63 @@ def modifier_stack_fingerprint(obj: Any) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def touch_modifier_for_test(params: dict[str, Any]) -> dict[str, Any]:
+    """Deterministically simulate one user Modifier edit for private live tests."""
+
+    object_name = _require_text(params.get("object_name"), "object_name")
+    modifier_name = _require_text(params.get("modifier_name"), "modifier_name")
+    obj = bpy.data.objects.get(object_name)
+    if obj is None or obj.type != "MESH":
+        raise AuthoringOperationError(
+            "OBJECT_NOT_FOUND",
+            f"Mesh object does not exist: {object_name}",
+            kind="not_found",
+        )
+    modifier = obj.modifiers.get(modifier_name)
+    if modifier is None:
+        raise AuthoringOperationError(
+            "MODIFIER_NOT_FOUND",
+            f"Modifier does not exist: {modifier_name}",
+            kind="not_found",
+        )
+    action = params.get("action")
+    if action == "setting":
+        field = _require_text(params.get("property"), "property")
+        if field not in _COMMON_FIELDS | set(_FIELD_SPECS.get(str(modifier.type), {})):
+            raise AuthoringOperationError(
+                "TEST_MODIFIER_TOUCH_INVALID",
+                f"Unsupported Modifier test property: {field}",
+                kind="validation",
+            )
+        value = _validate_public_value(str(modifier.type), field, params.get("value"))
+        _write_public_setting(modifier, field, value)
+        detail = {"property": field, "value": value}
+    elif action == "move":
+        target_index = _stack_index(
+            params.get("target_stack_index"),
+            maximum=len(obj.modifiers),
+            allow_append=False,
+        )
+        current_index = list(obj.modifiers).index(modifier)
+        obj.modifiers.move(current_index, target_index)
+        detail = {"before_index": current_index, "target_stack_index": target_index}
+    else:
+        raise AuthoringOperationError(
+            "TEST_MODIFIER_TOUCH_INVALID",
+            "action must be setting or move",
+            kind="validation",
+        )
+    bpy.context.view_layer.update()
+    return {
+        "test_hook": "modifier_touch",
+        "action": action,
+        "object_name": object_name,
+        "modifier_name": modifier_name,
+        "stack_fingerprint": modifier_stack_fingerprint(obj),
+        **detail,
+    }
 
 
 def inspect_modifiers(object_name: str, scene_generation: int) -> dict[str, Any]:
@@ -537,7 +591,7 @@ def _resolve_boolean_operand(source: Any, raw: Any) -> Any:
             kind="conflict",
             details={"expected": identity, "actual": actual},
         )
-    if operand is source:
+    if session_identity("object", operand) == session_identity("object", source):
         raise AuthoringOperationError(
             "BOOLEAN_OPERAND_SELF",
             "A Boolean Modifier cannot use its own object as operand",
@@ -557,7 +611,7 @@ def _boolean_reaches(start: Any, target: Any, visited: set[str]) -> bool:
     if identity in visited:
         return False
     visited.add(identity)
-    if start is target:
+    if session_identity("object", start) == session_identity("object", target):
         return True
     for modifier in start.modifiers:
         if modifier.type != "BOOLEAN" or modifier_pending_delete(modifier):
@@ -733,7 +787,12 @@ def _require_exact_modifier(
             kind="conflict",
         )
     modifier = obj.modifiers[stack_index]
-    if modifier.name != modifier_name or obj.modifiers.get(modifier_name) is not modifier:
+    named_modifier = obj.modifiers.get(modifier_name)
+    if (
+        modifier.name != modifier_name
+        or named_modifier is None
+        or session_identity("modifier", named_modifier) != session_identity("modifier", modifier)
+    ):
         raise AuthoringOperationError(
             "MODIFIER_STACK_INDEX_MISMATCH",
             f"Modifier is no longer at the inspected stack index: {modifier_name}",
@@ -864,10 +923,20 @@ def create_modifier(transaction: Transaction, params: dict[str, Any]) -> dict[st
             obj.modifiers.move(current_index, target_index)
         bpy.context.view_layer.update()
     except Exception as exc:
-        if modifier is not None and obj.modifiers.get(modifier.name) is modifier:
+        existing = obj.modifiers.get(modifier.name) if modifier is not None else None
+        if (
+            modifier is not None
+            and existing is not None
+            and session_identity("modifier", existing) == session_identity("modifier", modifier)
+        ):
             obj.modifiers.remove(modifier)
         bpy.context.view_layer.update()
-        if modifier is not None and obj.modifiers.get(modifier_name) is modifier:
+        remaining = obj.modifiers.get(modifier_name)
+        if (
+            modifier is not None
+            and remaining is not None
+            and session_identity("modifier", remaining) == session_identity("modifier", modifier)
+        ):
             raise AuthoringOperationError(
                 "MODIFIER_CREATE_RESTORE_FAILED",
                 f"Failed to restore the stack after creating {modifier_name}",
@@ -1107,9 +1176,7 @@ def move_modifier(transaction: Transaction, params: dict[str, Any]) -> dict[str,
         "after_stack_fingerprint": after_fingerprint,
         "modifier": modifier_summary(obj, modifier, target_index),
         "stack": modifier_stack_summary(obj),
-        "changes": [
-            {"path": "stack_index", "before": before_index, "after": target_index}
-        ],
+        "changes": [{"path": "stack_index", "before": before_index, "after": target_index}],
         "delta_type": "modifier_move",
     }
 
@@ -1143,14 +1210,13 @@ def delete_modifier(transaction: Transaction, params: dict[str, Any]) -> dict[st
     try:
         modifier.show_viewport = False
         modifier.show_render = False
-        modifier[PENDING_DELETE_KEY] = transaction.transaction_id
+        _PENDING_DELETE_TOKENS[modifier_identity] = transaction.transaction_id
         bpy.context.view_layer.update()
     except Exception as exc:
         try:
             modifier.show_viewport = before["show_viewport"]
             modifier.show_render = before["show_render"]
-            if PENDING_DELETE_KEY in modifier:
-                del modifier[PENDING_DELETE_KEY]
+            _PENDING_DELETE_TOKENS.pop(modifier_identity, None)
             bpy.context.view_layer.update()
         except Exception:
             raise AuthoringOperationError(
@@ -1315,8 +1381,7 @@ def restore_modifier_delta(delta: Any) -> dict[str, Any]:
         return {"kind": "modifier_move", "modifier_name": delta.modifier_name}
     if isinstance(delta, ModifierDeleteDelta):
         _obj, modifier = _require_delta_modifier(delta)
-        if PENDING_DELETE_KEY in modifier:
-            del modifier[PENDING_DELETE_KEY]
+        _PENDING_DELETE_TOKENS.pop(delta.modifier_identity, None)
         modifier.show_viewport = delta.before["show_viewport"]
         modifier.show_render = delta.before["show_render"]
         return {"kind": "modifier_delete", "modifier_name": delta.modifier_name}
@@ -1334,5 +1399,6 @@ def finalize_modifier_delta(delta: Any) -> dict[str, Any] | None:
     if not isinstance(delta, ModifierDeleteDelta):
         return None
     obj, modifier = _require_delta_modifier(delta)
+    _PENDING_DELETE_TOKENS.pop(delta.modifier_identity, None)
     obj.modifiers.remove(modifier)
     return {"kind": "modifier_delete", "modifier_name": delta.modifier_name}

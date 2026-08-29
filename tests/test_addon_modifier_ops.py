@@ -6,11 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-SOURCE = (
-    Path(__file__).parents[1]
-    / "blender_addon"
-    / "blender_research_mcp_addon"
-)
+SOURCE = Path(__file__).parents[1] / "blender_addon" / "blender_research_mcp_addon"
 PACKAGE = "modifier_ops_test_package"
 
 
@@ -147,6 +143,29 @@ class FakeModifiers:
         self._values.reverse()
 
 
+class FakeModifierWrapper:
+    def __init__(self, target: FakeModifier) -> None:
+        object.__setattr__(self, "_target", target)
+
+    def __getattr__(self, name: str):
+        return getattr(self._target, name)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        setattr(self._target, name, value)
+
+    def as_pointer(self) -> int:
+        return self._target.as_pointer()
+
+
+class UnstableWrapperModifiers(FakeModifiers):
+    def __getitem__(self, index: int) -> FakeModifierWrapper:
+        return FakeModifierWrapper(self._values[index])
+
+    def get(self, name: str) -> FakeModifierWrapper | None:
+        value = super().get(name)
+        return FakeModifierWrapper(value) if value is not None else None
+
+
 class FakeID:
     def __init__(self, name: str) -> None:
         self.name = name
@@ -200,7 +219,7 @@ def _load_modules(obj: FakeObject):
     sys.modules[authoring.__name__] = authoring
 
     lookdev = types.ModuleType(f"{PACKAGE}.lookdev_ops")
-    lookdev.session_identity = lambda kind, value: f"{kind}:{id(value)}"
+    lookdev.session_identity = lambda kind, value: f"{kind}:{value.as_pointer()}"
 
     def require_object(name: str, identity: str):
         if name != obj.name or identity != f"object:{id(obj)}":
@@ -261,6 +280,53 @@ def test_modifier_fingerprint_covers_order_identity_and_settings() -> None:
 
     assert baseline != changed_setting
     assert changed_setting != changed_order
+
+
+def test_exact_modifier_uses_rna_session_identity_not_python_wrapper_identity() -> None:
+    modifier = FakeModifier("Soft Edges", "BEVEL")
+    obj = FakeObject([modifier])
+    obj.modifiers = UnstableWrapperModifiers([modifier])
+    ops, _model = _load_modules(obj)
+
+    resolved = ops._require_exact_modifier(
+        obj,
+        modifier_name="Soft Edges",
+        modifier_identity=f"modifier:{id(modifier)}",
+        modifier_type="BEVEL",
+        stack_index=0,
+    )
+
+    assert resolved.as_pointer() == modifier.as_pointer()
+
+
+def test_private_modifier_touch_hook_changes_setting_and_order_deterministically() -> None:
+    bevel = FakeModifier("Soft Edges", "BEVEL")
+    subsurf = FakeModifier("Smooth", "SUBSURF")
+    obj = FakeObject([bevel, subsurf])
+    ops, _model = _load_modules(obj)
+
+    setting = ops.touch_modifier_for_test(
+        {
+            "action": "setting",
+            "object_name": "Mesh",
+            "modifier_name": "Soft Edges",
+            "property": "width",
+            "value": 0.77,
+        }
+    )
+    moved = ops.touch_modifier_for_test(
+        {
+            "action": "move",
+            "object_name": "Mesh",
+            "modifier_name": "Smooth",
+            "target_stack_index": 0,
+        }
+    )
+
+    assert bevel.width == 0.77
+    assert list(obj.modifiers) == [subsurf, bevel]
+    assert setting["test_hook"] == moved["test_hook"] == "modifier_touch"
+    assert setting["stack_fingerprint"] != moved["stack_fingerprint"]
 
 
 def test_modifier_stack_guard_tracks_agent_writes_and_detects_user_drift() -> None:
@@ -449,8 +515,7 @@ def test_create_uses_exact_position_rejects_duplicate_name_and_checks_capacity()
 
     full = _transaction(model)
     full.deltas.extend(
-        model.ScaleDelta("Other", "object:other", {"x": 1.0}, {"x": 2.0})
-        for _index in range(256)
+        model.ScaleDelta("Other", "object:other", {"x": 1.0}, {"x": 2.0}) for _index in range(256)
     )
     capacity_params = _base_params(ops, obj)
     capacity_params["definition"] = {"type": "SOLIDIFY", "name": "Too Late"}
@@ -538,9 +603,7 @@ def test_boolean_create_requires_exact_mesh_operand_and_respects_solver_options(
     modifier = source.modifiers.get("Cut")
     assert modifier is not None
     assert modifier.object is operand
-    assert result["modifier"]["settings"]["operand"]["object_identity"] == (
-        f"object:{id(operand)}"
-    )
+    assert result["modifier"]["settings"]["operand"]["object_identity"] == (f"object:{id(operand)}")
 
     set_params = _target_params(ops, source, modifier)
     set_params["settings"] = {

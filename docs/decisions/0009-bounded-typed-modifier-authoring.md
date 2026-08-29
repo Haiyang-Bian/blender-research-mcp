@@ -1,6 +1,6 @@
 # 0009 — bounded typed Modifier-stack authoring
 
-- Status: accepted and automated-gate validated in 0.10.0
+- Status: accepted and automated/live-gate validated in 0.10.0
 - Date: 2026-08-30
 
 ## Context

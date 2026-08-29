@@ -65,6 +65,7 @@ from .material_authoring_ops import (
     material_result,
 )
 from .modifier_ops import (
+    clear_modifier_pending_deletes,
     create_modifier,
     delete_modifier,
     finalize_modifier_delta,
@@ -73,6 +74,7 @@ from .modifier_ops import (
     restore_modifier_delta,
     set_modifier,
     set_modifier_state_compat,
+    touch_modifier_for_test,
     validate_modifier_stack_guards,
     validate_restored_modifier_stacks,
 )
@@ -251,6 +253,7 @@ class AddonState:
             self.runtime.stop()
             self.snapshots.clear()
             self.captures.clear()
+            clear_modifier_pending_deletes()
 
     def restart(self) -> None:
         self.stop()
@@ -285,6 +288,7 @@ class AddonState:
     def on_file_loaded(self) -> None:
         self.snapshots.clear()
         self.captures.clear()
+        clear_modifier_pending_deletes()
         if self.transactions.active is not None:
             self.transactions.abandon("abandoned_file_load")
             self.last_error = "TRANSACTION_ABANDONED: a different blend file was loaded"
@@ -398,6 +402,7 @@ class AddonState:
                 "blender_api",
                 "BLENDER_COMMAND_FAILED",
                 f"Blender command failed: {type(exc).__name__}",
+                details={"error_type": type(exc).__name__, "message": str(exc)},
             )
         finally:
             self.last_command_ms = (time.perf_counter() - started) * 1000
@@ -532,6 +537,15 @@ class AddonState:
                 "target_type": target_type,
                 "value": value,
             }
+        if command == "_test.modifier.touch":
+            if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":
+                raise ContextOperationError(
+                    "COMMAND_NOT_FOUND",
+                    f"Unsupported command: {command}",
+                    kind="not_found",
+                )
+            with self.suppress_generation():
+                return touch_modifier_for_test(params)
         if command == "context.get":
             with self.suppress_generation():
                 return context_summary()

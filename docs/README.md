@@ -34,8 +34,8 @@ automated and real Blender gates have both passed; see
 [the 0.9 validation record](validation/2026-08-30-unified-object-settings.md). The
 independent 0.6 real comparison gate has also passed; see
 [its validation record](validation/2026-08-30-comparative-previews.md).
-The 0.10 automated gate has passed; its real Blender record remains pending until the
-isolated-port smoke completes.
+The 0.10 automated and real Blender gates have both passed; see
+[the 0.10 validation record](validation/2026-08-30-modifier-authoring.md).
 
 The public repository is
 [Haiyang-Bian/blender-research-mcp](https://github.com/Haiyang-Bian/blender-research-mcp).

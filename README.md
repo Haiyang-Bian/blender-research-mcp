@@ -24,7 +24,7 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 均已通过。0.9.0 新增统一且封闭类型的 `object.set`，可在一次原子调用中设置同一
 对象的 TRS、可见性与 Light/Camera 数据；自动化门禁和真实 Blender 4.2.23 验收
 均已通过。0.10.0 新增四类有界 Modifier 的完整栈创作：精确检查、创建、类型化
-设置、排序、延迟删除和候选比较；自动化门禁已通过，真实 Blender 验收正在记录。
+设置、排序、延迟删除和候选比较；自动化门禁和真实 Blender 4.2.23 验收均已通过。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -35,6 +35,8 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 独立比较预览回归见
 [0.6.0 比较预览](docs/validation/2026-08-30-comparative-previews.md)，统一对象设置见
 [0.9.0 对象设置](docs/validation/2026-08-30-unified-object-settings.md)。
+0.10 Modifier 创作见
+[0.10.0 验收记录](docs/validation/2026-08-30-modifier-authoring.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
