@@ -2,9 +2,10 @@
 
 This directory contains the installable Blender-side package.
 
-The first implementation milestone is deliberately limited to local transport,
-main-thread dispatch, context observation, viewport capture, and rollback. Do
-not add asset marketplaces, telemetry, or arbitrary network integrations.
+The add-on remains limited to local transport, main-thread semantic dispatch,
+observation, bounded static-scene authoring, reviewed Eevee output, and rollback. Do
+not add asset marketplaces, telemetry, arbitrary network integrations, or arbitrary
+Python/RNA execution.
 
 Add-on source must remain compatible with Blender 4.2's Python 3.11 runtime.
 
@@ -15,7 +16,7 @@ uv run --no-sync python scripts/build_addon.py
 ~~~
 
 The ignored output is written to
-`artifacts/blender-research-mcp-addon-0.7.0.zip`. Install that ZIP in Blender
+`artifacts/blender-research-mcp-addon-0.8.0.zip`. Install that ZIP in Blender
 4.2, then enable **Blender Research MCP**. The listener binds only to
 `127.0.0.1:9877`, creates a random per-session token, and publishes its
 ephemeral manifest under the current user's local application data directory.
@@ -23,7 +24,9 @@ ephemeral manifest under the current user's local application data directory.
 The current surface includes authenticated ping, context snapshots, exact object and
 evaluated-mesh inspection, focus-independent GPU off-screen viewport capture,
 capture-bound raycasts, bounded LookDev inspection, and transaction-scoped absolute
-scale, visibility, modifier-state, shape-key, and material-input preview operations.
+scale, visibility, modifier-state, shape-key, and material-input preview operations,
+plus structural transaction v3 object/material/image/World/Camera authoring and bounded
+Eevee preview/export.
 Captures can temporarily use solid, material, wireframe, or rendered shading and an
 absolute orbit while restoring the user's original context. Blender may be obscured by
 another window, but it must remain running with a `VIEW_3D`; minimized capture is not
@@ -35,7 +38,7 @@ heartbeat, generation, command timing, transaction, and error information is als
 available under **Scene Properties > Blender Research MCP**. The add-on never creates,
 splits, or rearranges Blender areas automatically.
 
-The Scene Properties panel lists the authorized preview-write categories and, while a
+The Scene Properties panel lists the semantic authoring categories and, while a
 transaction is active, its ID prefix, delta count, and delta kinds. The compact N-panel
 remains limited to connection, capture, transaction, and error status.
 
@@ -54,6 +57,8 @@ rejected. Shared materials require both the exact current user count and an expl
 `allow_shared` confirmation; the add-on never makes a material single-user implicitly.
 
 Ordinary transaction commit affects only the in-memory Blender session; rollback
-restores guarded property deltas and user context. Explicit project lifecycle tools may
+restores guarded property/structure deltas and user context. Structural operations are
+limited to supported primitives, canonical Principled channels, absolute local images,
+World/Camera state, and reviewed Eevee renders. Explicit project lifecycle tools may
 commit and save before switching or quitting according to the request. The add-on does
 not execute arbitrary Python, enable telemetry, or contact third-party services.

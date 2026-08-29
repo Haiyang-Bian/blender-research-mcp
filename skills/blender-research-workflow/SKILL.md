@@ -1,6 +1,6 @@
 ---
 name: blender-research-workflow
-description: Launch Blender, manage .blend project lifecycle, inspect and spatially diagnose scenes, compare evidence, and reversibly preview bounded LookDev changes through Blender Research MCP. Use for starting Blender, opening, saving, reloading, or closing projects, viewport evidence, raycasts, mesh summaries, or reviewed scale, visibility, modifier, shape-key, and material-input candidates; do not use for arbitrary Python.
+description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, or static scene delivery; do not use for arbitrary Python, arbitrary node graphs, animation, or mesh-component editing.
 ---
 
 # Blender Research Workflow
@@ -38,6 +38,27 @@ After selecting the application/project state:
 
 Viewport capture requires a `VIEW_3D` area. Treat `CAPTURE_GPU_UNAVAILABLE` as a failed
 evidence capture, not permission to use desktop automation or raw Python.
+
+## Follow scene-authoring intent
+
+When the user asks to build or modify a static scene, that request authorizes the
+complete in-memory authoring chain. Inspect exact scene/resource identities, begin one
+structural transaction, execute the bounded object/material/image/World/Camera writes,
+render the smallest useful preview, and commit when the structured and visual checks
+succeed. Do not stop for per-object or per-material confirmation. On any write,
+preview, context, property, or structure conflict, roll the whole transaction back and
+report the preserved state.
+
+Authoring requires `transactions >= 3` plus the capability for each requested domain.
+Use `scene.inspect`, `image.inspect`, and the extended `material.inspect` rather than
+guessing names, slots, nodes, links, users, or session identities. Use only the exposed
+primitive, Principled PBR channel, local-image, World, Camera, and Eevee tools; do not
+substitute arbitrary Python or generic node/RNA operations.
+
+`transaction.commit` retains the successful scene only in Blender memory. Call
+`project.save` when the user asked to save or deliver a `.blend`. Call `render.save`
+only for an explicit image export path; a failed export may be retried after commit
+without repeating the scene transaction.
 
 ## Ground image evidence
 
@@ -79,5 +100,5 @@ not failure. Comparison never chooses, commits, or saves a result; after the use
 a direction, apply it through a new ordinary transaction.
 
 Read [references/tool-recipes.md](references/tool-recipes.md) when executing an
-application/project lifecycle, multi-step observation, comparison, preview, reconnect,
-or recovery workflow.
+application/project lifecycle, multi-step scene authoring, material/texture binding,
+rendering, observation, comparison, preview, reconnect, or recovery workflow.

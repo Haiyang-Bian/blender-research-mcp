@@ -13,7 +13,7 @@ from .state import AddonState
 bl_info = {
     "name": "Blender Research MCP",
     "author": "Blender Research MCP contributors",
-    "version": (0, 7, 0),
+    "version": (0, 8, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Research MCP",
     "description": "Local semantic, observable, and reversible MCP bridge",
@@ -130,8 +130,11 @@ def _draw_full_status(layout: Any) -> None:
         kinds = ", ".join(transaction.delta_kinds()) or "none"
         transaction_box.label(text=f"Kinds: {kinds}")
     authority_box = layout.box()
-    authority_box.label(text="Authorized preview writes", icon="LOCKVIEW_ON")
-    authority_box.label(text="Object scale and visibility")
+    authority_box.label(text="Semantic scene authoring", icon="LOCKVIEW_ON")
+    authority_box.label(text="Objects, transforms, and material slots")
+    authority_box.label(text="Principled materials and local images")
+    authority_box.label(text="World, active Camera, and Eevee renders")
+    authority_box.label(text="Object visibility")
     authority_box.label(text="Modifier viewport/render state")
     authority_box.label(text="Shape key value")
     authority_box.label(text="Material input default value")

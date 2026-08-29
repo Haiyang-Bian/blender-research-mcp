@@ -18,12 +18,15 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 回退。0.6.0 新增 `lookdev.compare`，可针对一个已检查属性生成基线和 1–3 个
 候选证据，并在每个候选后独立回退与验证。0.7.0 进一步把 Blender 应用启动
 与 `.blend` 项目生命周期拆成独立工具：Agent 可启动环境变量配置的 Blender，
-随后按用户意图保存、打开、重载或关闭项目。0.7.0 已通过自动化门禁，真实 Blender
-冷启动与项目切换验收尚待记录。既有验收记录见
+随后按用户意图保存、打开、重载或关闭项目；该闭环已通过真实 Blender 4.2.23
+验收。0.8.0 新增从空项目创建对象、Principled 材质、本地图像、World、Camera，
+再以 Eevee Next 预览/导出的语义场景创作闭环；自动化门禁已通过，真实月光水面
+验收待记录。既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
 [0.4.0 空间诊断](docs/validation/2026-08-29-spatial-diagnosis.md) 和
-[0.5.1 受限 LookDev 写入](docs/validation/2026-08-29-bounded-lookdev-writes.md)。
+[0.5.1 受限 LookDev 写入](docs/validation/2026-08-29-bounded-lookdev-writes.md)，以及
+[0.7.0 托管生命周期](docs/validation/2026-08-29-managed-lifecycle.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -63,6 +66,19 @@ Agent 在用户要求“打开项目”时依次调用 `application.status`、�
 file。完整契约见
 [0.7.0 路线图](docs/roadmap/0.7.0-managed-lifecycle.md)。
 
+## 0.8.0 语义场景创作
+
+0.8.0 把事务升级到结构 delta v3，并新增 `scene.inspect`、对象创建/复制/删除与
+完整 TRS、标准 Principled 材质、本地图像加载、七类语义贴图通道、World/活动
+Camera，以及 Eevee Next 预览和 PNG/EXR 导出。用户明确要求搭建或修改静态场景
+时，Agent 可在一个事务内自动完成“发现 → 多步写入 → 预览 → commit”；任何
+属性、上下文、结构、链接或用户数冲突都会停止并整批回退。
+
+该版本仍不开放任意 Python、任意节点图、网格组件编辑、Geometry Nodes、动画、
+Cycles 或网络资产下载。`transaction.commit` 只保留内存状态；只有明确要求保存
+或交付 `.blend` 时才调用 `project.save`。详细契约见
+[0.8.0 路线图](docs/roadmap/0.8.0-semantic-scene-authoring.md)。
+
 ## 目录
 
 ~~~text
@@ -93,7 +109,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.7.0
+uv run --no-sync python scripts/build_addon.py --version 0.8.0
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认
@@ -204,7 +220,7 @@ Blender 未启动时完成初始化；此时 `application.status` 正常返回
 ## 安装常用工作流 Skill
 
 仓库中的 `skills/blender-research-workflow` 定义了连接验证、多视图观察、
-项目生命周期、二维到三维诊断、受限写入检查、单变量事务预览、候选比较和恢复流程。安装到个人
+项目生命周期、二维到三维诊断、意图驱动场景创作、受限写入检查、单变量事务预览、候选比较和恢复流程。安装到个人
 Codex skills：
 
 ~~~powershell

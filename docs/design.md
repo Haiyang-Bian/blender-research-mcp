@@ -1,9 +1,9 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.7.0 managed application and project lifecycle implemented; live acceptance pending
-- Next milestone: complete the 0.7.0 cold-launch and project-switching Blender gate
+- Status: 0.8.0 semantic static-scene authoring implemented; automated gate passed
+- Next milestone: complete the 0.8.0 deterministic and moonlit-water Blender gate
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.7.0
+- Package and add-on version: 0.8.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,9 +12,9 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.7.0 now covers
-the validated observation and bounded-write path; the older bridge is no longer the
-primary interface for this repository.
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.8.0 now covers
+the validated observation/lifecycle path plus bounded static-scene authoring; the older
+bridge is no longer the primary interface for this repository.
 
 That shape creates a poor long-running LookDev loop:
 
@@ -275,6 +275,25 @@ by default. Explicit user intent is the authority gate—there is no second conf
 or project-root allowlist. The fixed bootstrap is not an arbitrary Python MCP surface.
 See `docs/roadmap/0.7.0-managed-lifecycle.md` for the detailed contract.
 
+### Implemented semantic scene authoring
+
+Version 0.8.0 adds exact scene/resource discovery and a structural transaction v3
+surface:
+
+- create, duplicate, transform, and delete bounded objects;
+- create canonical Principled materials and assign exact material slots;
+- load absolute local images and bind/clear fixed semantic PBR channels;
+- create or modify the current World and assign the active Camera;
+- render reviewed Eevee Next PNG evidence and explicit PNG/EXR outputs.
+
+Structural writes require an active transaction, current generation, per-operation
+idempotency UUID, exact identities, and the domain capability. A direct static-scene
+creation/modification request authorizes a coherent multi-step transaction and commit
+after successful preview. Any property, context, identity, structure, link, users, or
+preview failure stops the batch and rolls it back. Commit remains memory-only; project
+save and render export are separate explicit deliverable operations. See
+`docs/roadmap/0.8.0-semantic-scene-authoring.md`.
+
 Tool count is not a success metric. A small composable surface with precise
 preconditions is preferable to dozens of overlapping convenience tools.
 
@@ -293,12 +312,13 @@ A context snapshot should record at least:
 Read-only inspection may temporarily change selection or view only when it
 restores the snapshot in a finally path.
 
-Mutation transactions use typed property deltas for scale, visibility, modifier state,
-shape-key value, and material input. Repeated writes guard the last agent value while
-reverse rollback restores the original value. Rollback only overwrites a property when
-its current value still matches the agent's last write; identity, context, or property
-conflicts preserve user state. Blender Undo is not the transaction contract because
-user actions and agent actions can interleave.
+Mutation transactions combine typed property and structural deltas, with at most 256
+deltas. Repeated property writes guard the last Agent value. Structural writes guard
+identity, users, and fingerprints for supported objects/data, slots, nodes, links,
+images, World, and active Camera. Reverse rollback restores original state; object
+deletion is finalized only after all commit guards pass. Rollback only overwrites state
+that still matches the last Agent write. Blender Undo is not the transaction contract
+because user and Agent actions can interleave.
 
 ## 9. Development phases
 
@@ -366,7 +386,8 @@ and acceptance checkpoints.
 
 ### Phase 5 — managed application and project lifecycle
 
-Status: implemented with automated coverage in 0.7.0; real Blender acceptance pending.
+Status: implemented and live-validated on Blender 4.2.23 in 0.7.0; see
+`docs/validation/2026-08-29-managed-lifecycle.md`.
 
 - Launch a visible configured Blender without requiring a preinstalled add-on.
 - Keep application launch separate from project opening.
@@ -375,16 +396,24 @@ Status: implemented with automated coverage in 0.7.0; real Blender acceptance pe
 - Execute file-switching and quit operations on the tick after the acceptance response.
 - Reconnect and verify the actual absolute project path before reporting success.
 
-### Phase 6 — adoption and reviewed authority expansion
+### Phase 6 — semantic static-scene authoring
+
+Status: implemented with automated coverage in 0.8.0; real Blender acceptance pending.
+
+- Upgrade transactions to structural delta capability version 3.
+- Add bounded primitives, complete object TRS, duplicate, and deferred delete.
+- Add canonical Principled materials, exact slots, local images, and semantic textures.
+- Add World/Camera controls and temporary Eevee preview plus explicit PNG/EXR export.
+- Validate a deterministic fixture and a complete moonlit-water scene in temporary files.
+
+### Phase 7 — adoption and reviewed authority expansion
 
 Status: initial adoption complete. Codex is configured against the new MCP, versions
 0.2 through 0.5.1 have live Blender validation records, and the repository is public
 with its validated history merged into `main`.
 
-- Use the 0.7 managed lifecycle smoke as the next fixed acceptance suite while keeping
-  the 0.6 comparative real-Blender gate explicitly pending.
-- Complete at least one real managed launch and project switch before adding another
-  Blender write domain.
+- Use the 0.8 authoring smoke as the next fixed acceptance suite while keeping the 0.6
+  comparative real-Blender gate explicitly pending.
 - Keep any older bridge only as an external fallback; do not copy its unrestricted
   execution surface into this repository.
 - After comparative previews are validated in real work, evaluate bounded light
@@ -433,9 +462,8 @@ research scenarios.
   current traditional ZIP.
 - Whether a bounded repository script tool is necessary beyond project-owned Blender
   drivers/startup scripts; arbitrary inline Python remains out of scope.
-- Which single bounded authority should follow comparative previews: existing-light
-  energy/color controls or a narrowly selected modifier family. Do not combine both
-  into the same release.
+- Which bounded modeling domain should follow static authoring: selected Modifier
+  families or a narrow mesh-component operation. Do not combine both in one release.
 - Blender 5.x capability policy and the project license; decide both before publishing.
 
 ## 13. Guidance for a new Codex task
@@ -453,5 +481,5 @@ At the start of a new task:
    catalogue of unfinished tools. Use `observation.bundle` before adding new mutation
    authority.
 8. For the next completion task, follow the live acceptance section in
-   `docs/roadmap/0.7.0-managed-lifecycle.md`; report the older 0.6 comparative live gate
-   separately rather than implying it passed.
+   `docs/roadmap/0.8.0-semantic-scene-authoring.md`; report the older 0.6 comparative
+   live gate separately rather than implying it passed.

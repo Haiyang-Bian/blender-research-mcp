@@ -13,11 +13,12 @@
    call `application.launch`; this starts Blender but does not open a project.
 4. Call `connection.ping`. Protocol 1, `viewport_capture: 3`,
    `viewport_raycast: 1`, `geometry_inspection: 1`, `lookdev_inspection: 1`,
-   `transactions: 2`, and all advertised bounded-write capabilities at version 1 are
-   required.
+   `transactions: 2`, and all advertised legacy bounded-write capabilities at version 1
+   are required. Static authoring additionally requires `transactions: 3` and the
+   relevant 0.8 authoring/render capability.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.7.0.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.8.0.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -123,6 +124,44 @@ socket identities, socket identifier, value range, material user count, and affe
 object list. At most 256 shape keys, 64 material slots, and 256 material sockets are
 returned; check `warnings` before assuming the list is complete.
 
+## Author a bounded static scene
+
+A direct request to create or materially revise a static scene authorizes one complete
+in-memory authoring batch:
+
+1. Call `scene.inspect` for the resource kinds needed by the request. Use exact object,
+   collection, material, image, World, and Camera identities rather than remembered
+   names.
+2. Begin one transaction with `transactions: 3`. Each distinct writer gets one UUID;
+   only a transport replay of the same payload reuses it.
+3. Create supported primitives, Empty, Camera, or lights with `object.create`; use
+   `object.duplicate` for linked or independent data; use the expanded
+   `object.transform` for absolute location, XYZ Euler degrees, and scale.
+4. Create a canonical Principled material, assign its exact slot, load absolute local
+   images, and bind base color, roughness, metallic, normal, bump, emission, or alpha.
+   `material.inspect` returns exact node/socket/link evidence; replacing a link requires
+   the complete current link-identity set.
+5. Set the World background/environment and active Camera when required. Shared mesh
+   data, materials, World, and images retain exact identity/user-count guards.
+6. Re-inspect critical resources and call `render.preview` for final-camera evidence.
+   On success, commit automatically; the original scene-building request is already the
+   retention intent. On any context/property/structure/link/preview failure, roll the
+   whole transaction back and verify current state.
+7. After commit, call `render.save` for requested absolute PNG/EXR deliverables.
+   Call `project.save` only when the user requested a saved/delivered `.blend`.
+
+Transactions contain at most 256 property plus structural deltas. `object.delete`
+unlinks first, restores links on rollback, and removes the object only after commit
+guards pass. 0.8 does not expose arbitrary mesh editing, arbitrary shader nodes,
+Geometry Nodes, modifier parameters, animation, rigs, compositor operations, Cycles,
+network downloads, or image pack/unpack/reload.
+
+`render.preview` and `render.save` use Eevee Next, exact Camera identity, dimensions
+from 256 to 1000, and 1–64 samples. Both restore the previous Camera, engine,
+resolution, transparency, output settings, and sample count. Preview returns a PNG only
+after dimension/hash/byte-count/nonblank validation. Save overwrites an absolute `.png`
+or `.exr` whose parent directory exists and reports the actual file hash.
+
 ## Preview one supported change
 
 1. Observe or inspect the object and retain the latest `scene_generation`.
@@ -135,10 +174,11 @@ returned; check `warnings` before assuming the list is complete.
 5. Roll back unless the result should explicitly remain in Blender memory. Commit does
    not save the blend file.
 
-Supported writers are `object.transform`, `object.visibility.set`,
-`modifier.set_state`, `shape_key.set_value`, and `material.set_input`. They never
-change object location/rotation, add or reorder modifiers, edit node topology, change
-lights, import assets, or save files.
+Legacy single-property preview writers are `object.transform`, `object.visibility.set`,
+`modifier.set_state`, `shape_key.set_value`, and `material.set_input`. The 0.8
+authoring tools separately permit bounded location/rotation, fixed semantic node links,
+lights, and local images inside structural transactions; neither surface permits
+arbitrary modifiers/nodes/Python or implicit `.blend` saving.
 
 Shape-key values must be finite and inside the inspected slider range; no clamp occurs.
 Material input values preserve their inspected Boolean, Int, Float, three-component
@@ -232,3 +272,13 @@ Codex after the first installation so automatic skill discovery can see it.
 - Material socket linked/driven/read-only/type/range failure: choose a different
   inspected writable socket or revise the absolute value. Do not edit node topology or
   fall back to arbitrary Python.
+- `STRUCTURE_CONFLICT`: preserve user state, stop the batch, and re-inspect identities,
+  users, slots, nodes, links, World, Camera, and transaction status.
+- Object, collection, data, material, or image identity/user conflict: discard stale
+  evidence and rebuild the remaining authoring steps from current inspection.
+- `MATERIAL_LINK_CONFLICT` or `MATERIAL_LINK_IDENTITY_MISMATCH`: inspect the complete
+  Principled incoming-link set; do not partially replace or guess links.
+- `RENDER_FAILED`, `RENDER_RESULT_INVALID`, or `RENDER_BLANK`: reject the preview and
+  roll back an uncommitted authoring batch. Inspect Camera, World, and visibility.
+- Render output path or save failure after commit: preserve the committed in-memory
+  scene and retry only the explicit export with a valid absolute path and parent.

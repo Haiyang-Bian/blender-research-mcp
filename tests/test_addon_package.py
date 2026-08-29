@@ -34,7 +34,7 @@ def test_addon_registers_compact_view3d_and_full_scene_properties_panels() -> No
     source = source_path.read_text(encoding="utf-8")
     assert "area_split" not in source
     assert "session_token" not in source
-    assert "Authorized preview writes" in source
+    assert "Semantic scene authoring" in source
     compact_status = source.split("def _draw_compact_status", 1)[1].split(
         "def _draw_full_status", 1
     )[0]
@@ -83,6 +83,48 @@ def test_addon_registers_project_lifecycle_without_expanding_compact_panel() -> 
     assert "Project lifecycle" not in compact_status
     assert "Project lifecycle" in full_status
     assert "last_operation" in full_status
+
+
+def test_addon_registers_structural_authoring_without_expanding_compact_panel() -> None:
+    state = (SOURCE / "state.py").read_text(encoding="utf-8")
+    source = (SOURCE / "__init__.py").read_text(encoding="utf-8")
+
+    for command in (
+        "scene.inspect",
+        "object.create",
+        "object.duplicate",
+        "object.delete",
+        "material.create",
+        "material.assign",
+        "image.load",
+        "material.texture.bind",
+        "material.texture.clear",
+        "world.set",
+        "scene.camera.set",
+        "render.preview",
+        "render.save",
+    ):
+        assert command in state
+    for capability in (
+        '"transactions": 3',
+        '"scene_inspection": 1',
+        '"object_authoring": 1',
+        '"material_authoring": 1',
+        '"image_assets": 1',
+        '"world_authoring": 1',
+        '"render_preview": 1',
+        '"render_export": 1',
+    ):
+        assert capability in state
+    compact_status = source.split("def _draw_compact_status", 1)[1].split(
+        "def _draw_full_status", 1
+    )[0]
+    full_status = source.split("def _draw_full_status", 1)[1].split(
+        "class BRMCP_PT_status",
+        1,
+    )[0]
+    assert "Semantic scene authoring" not in compact_status
+    assert "Semantic scene authoring" in full_status
 
 
 def test_addon_supports_session_only_managed_enable_without_saved_preferences() -> None:
