@@ -22,6 +22,8 @@ from pydantic import (
 )
 
 from blender_research_mcp.authoring import (
+    ColorSpec,
+    FiniteNumber,
     ImageColorSpace,
     InitialTransform,
     LinkIdentities,
@@ -30,6 +32,8 @@ from blender_research_mcp.authoring import (
     MaterialDefinition,
     MaterialTextureChannel,
     ObjectDefinition,
+    RenderSamples,
+    RenderSize,
     RotationAxisPatch,
     ScaleAxisPatch,
     SceneKinds,
@@ -55,6 +59,7 @@ from blender_research_mcp.observation import (
     collect_observation_bundle,
     settle_capture_generation,
 )
+from blender_research_mcp.rendering import request_render_preview, request_render_save
 
 READ_ONLY = ToolAnnotations(
     readOnlyHint=True,
@@ -1133,6 +1138,175 @@ def create_server(
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,
             read_only=False,
+        )
+
+    @server.tool(
+        name="world.set",
+        description=(
+            "Create or modify the current World background and an optional exact local "
+            "environment image inside the active structural transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def world_set(
+        transaction_id: TransactionId,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        expected_world_identity: SessionIdentity | None = None,
+        expected_world_users: Annotated[StrictInt, Field(ge=1)] | None = None,
+        color: ColorSpec | None = None,
+        strength: Annotated[FiniteNumber, Field(ge=0, le=1_000_000)] | None = None,
+        environment_image_name: ImageName | None = None,
+        expected_environment_image_identity: SessionIdentity | None = None,
+        expected_environment_image_users: Annotated[StrictInt, Field(ge=0)] | None = None,
+        rotation_z_degrees: Annotated[FiniteNumber, Field(ge=-360_000, le=360_000)]
+        | None = None,
+        allow_shared: StrictBool = False,
+    ) -> dict[str, Any]:
+        if (expected_world_identity is None) != (expected_world_users is None):
+            raise ValueError("World identity and user count must be supplied together")
+        environment_values = (
+            environment_image_name,
+            expected_environment_image_identity,
+            expected_environment_image_users,
+        )
+        if any(value is not None for value in environment_values) and any(
+            value is None for value in environment_values
+        ):
+            raise ValueError("Environment image name, identity, and users are required together")
+        if color is None and strength is None and environment_image_name is None:
+            raise ValueError("color, strength, and/or environment image is required")
+        await require_capability(client, "world_authoring")
+        client.require_capability("transactions", 3)
+        if environment_image_name is not None:
+            client.require_capability("image_assets", 1)
+        return await client.call(
+            "world.set",
+            {
+                "transaction_id": transaction_id,
+                "expected_world_identity": expected_world_identity,
+                "expected_world_users": expected_world_users,
+                "color": color.model_dump() if color is not None else None,
+                "strength": strength,
+                "environment_image_name": environment_image_name,
+                "expected_environment_image_identity": expected_environment_image_identity,
+                "expected_environment_image_users": expected_environment_image_users,
+                "rotation_z_degrees": rotation_z_degrees,
+                "allow_shared": allow_shared,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="scene.camera.set",
+        description=(
+            "Set one exact Camera object as the active scene camera inside the structural "
+            "transaction and restore the previous camera on rollback."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def scene_camera_set(
+        transaction_id: TransactionId,
+        camera_name: ObjectName,
+        expected_camera_identity: SessionIdentity,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "world_authoring")
+        client.require_capability("transactions", 3)
+        return await client.call(
+            "scene.camera.set",
+            {
+                "transaction_id": transaction_id,
+                "camera_name": camera_name,
+                "expected_camera_identity": expected_camera_identity,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="render.preview",
+        description=(
+            "Render one exact Camera with temporary bounded Eevee Next settings, return PNG "
+            "evidence, and restore all camera and render settings."
+        ),
+        annotations=PREVIEW_MUTATION,
+        structured_output=False,
+    )
+    async def render_preview_tool(
+        camera_name: ObjectName,
+        expected_camera_identity: SessionIdentity,
+        width: RenderSize,
+        height: RenderSize,
+        samples: RenderSamples,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        transparent: StrictBool = False,
+    ) -> CallToolResult:
+        image_bytes, result = await request_render_preview(
+            client,
+            {
+                "camera_name": camera_name,
+                "expected_camera_identity": expected_camera_identity,
+                "width": width,
+                "height": height,
+                "samples": samples,
+                "transparent": transparent,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+        )
+        return CallToolResult(
+            content=[
+                ImageContent(
+                    type="image",
+                    data=base64.b64encode(image_bytes).decode("ascii"),
+                    mimeType="image/png",
+                ),
+                TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2)),
+            ],
+            structuredContent=result,
+        )
+
+    @server.tool(
+        name="render.save",
+        description=(
+            "Render one exact Camera with bounded Eevee Next settings and overwrite an "
+            "absolute PNG or EXR output path whose parent already exists."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def render_save_tool(
+        camera_name: ObjectName,
+        expected_camera_identity: SessionIdentity,
+        path: AssetPath,
+        width: RenderSize,
+        height: RenderSize,
+        samples: RenderSamples,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        transparent: StrictBool = False,
+    ) -> dict[str, Any]:
+        return await request_render_save(
+            client,
+            {
+                "camera_name": camera_name,
+                "expected_camera_identity": expected_camera_identity,
+                "path": path,
+                "width": width,
+                "height": height,
+                "samples": samples,
+                "transparent": transparent,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
         )
 
     @server.tool(

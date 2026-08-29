@@ -19,6 +19,7 @@ _DATA_COLLECTIONS = {
     "material": "materials",
     "mesh": "meshes",
     "object": "objects",
+    "scene": "scenes",
     "world": "worlds",
 }
 
@@ -153,6 +154,21 @@ def structure_summary(kind: str, resource: Any) -> dict[str, Any]:
         )
     elif kind == "camera":
         summary.update({"type": resource.type, "lens": round(float(resource.lens), 9)})
+    elif kind == "scene":
+        summary.update(
+            {
+                "camera": (
+                    session_identity("object", resource.camera)
+                    if resource.camera is not None
+                    else None
+                ),
+                "world": (
+                    session_identity("world", resource.world)
+                    if resource.world is not None
+                    else None
+                ),
+            }
+        )
     elif kind == "light":
         summary.update(
             {
@@ -308,6 +324,31 @@ def restore_structural_delta(delta: StructuralDelta) -> dict[str, Any]:
     if delta.action == "world_assignment":
         scene = delta.payload["scene"]
         scene.world = delta.payload["before"]
+        return {"kind": delta.kind, "action": delta.action, "restored": True}
+    if delta.action == "world_state":
+        scene = delta.payload["scene"]
+        world = delta.payload["world"]
+        if delta.payload["created_world"]:
+            scene.world = delta.payload["before_world"]
+            if int(world.users) == 0:
+                bpy.data.worlds.remove(world)
+            return {"kind": delta.kind, "action": delta.action, "restored": True}
+        tree = world.node_tree if world.use_nodes else None
+        background = delta.payload["background"]
+        output = delta.payload["output"]
+        background.inputs["Color"].default_value = delta.payload["before_color"]
+        background.inputs["Strength"].default_value = delta.payload["before_strength"]
+        if tree is not None:
+            for link in list(output.inputs["Surface"].links):
+                tree.links.remove(link)
+            for from_socket, to_socket in delta.payload["before_surface_links"]:
+                tree.links.new(from_socket, to_socket)
+            for node in reversed(delta.payload["created_nodes"]):
+                if tree.nodes.get(node.name) is node:
+                    tree.nodes.remove(node)
+            for from_socket, to_socket in delta.payload["replaced_links"]:
+                tree.links.new(from_socket, to_socket)
+        world.use_nodes = delta.payload["before_use_nodes"]
         return {"kind": delta.kind, "action": delta.action, "restored": True}
     raise TransactionModelError(
         "STRUCTURE_DELTA_INVALID",

@@ -62,6 +62,9 @@ def test_capability_versions_default_to_incompatible_zeroes() -> None:
     assert versions.object_authoring == 0
     assert versions.material_authoring == 0
     assert versions.image_assets == 0
+    assert versions.world_authoring == 0
+    assert versions.render_preview == 0
+    assert versions.render_export == 0
     assert versions.modifier_state == 0
     assert versions.shape_key_value == 0
     assert versions.material_input == 0

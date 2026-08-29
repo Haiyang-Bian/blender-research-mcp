@@ -97,6 +97,7 @@ from .transaction_model import (
     values_equal,
 )
 from .wire import PROTOCOL_VERSION
+from .world_render_ops import render_preview, render_save, set_scene_camera, set_world
 
 CAPABILITIES = [
     "connection.ping",
@@ -127,6 +128,10 @@ CAPABILITIES = [
     "image.load",
     "material.texture.bind",
     "material.texture.clear",
+    "world.set",
+    "scene.camera.set",
+    "render.preview",
+    "render.save",
     "project.status",
     "project.save",
     "project.open",
@@ -147,6 +152,9 @@ CAPABILITY_VERSIONS = {
     "object_authoring": 1,
     "material_authoring": 1,
     "image_assets": 1,
+    "world_authoring": 1,
+    "render_preview": 1,
+    "render_export": 1,
     "object_visibility": 1,
     "modifier_state": 1,
     "shape_key_value": 1,
@@ -171,6 +179,10 @@ MUTATION_COMMANDS = {
     "image.load",
     "material.texture.bind",
     "material.texture.clear",
+    "world.set",
+    "scene.camera.set",
+    "render.preview",
+    "render.save",
     "project.save",
     "project.open",
     "project.reload",
@@ -532,6 +544,14 @@ class AddonState:
                     kind="validation",
                 )
             return inspect_image(image_name)
+        if command == "render.preview":
+            self._require_scene_generation(request)
+            with self.suppress_generation():
+                return render_preview(params)
+        if command == "render.save":
+            self._require_scene_generation(request)
+            with self.suppress_generation():
+                return render_save(params)
         if command == "viewport.capture":
             object_name = params.get("object_name")
             if not isinstance(object_name, str) or not object_name:
@@ -792,6 +812,36 @@ class AddonState:
                 "material": material_result(material),
                 "channel": params.get("channel"),
                 "removed_link_identities": removed_links,
+                "status": transaction.status,
+                "delta_count": len(transaction.deltas),
+                "delta_kinds": transaction.delta_kinds(),
+            }
+        if command == "world.set":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            with self.suppress_generation():
+                _world, delta, world_result = set_world(transaction, params)
+            self._record_delta(transaction, delta)
+            return {
+                "transaction_id": transaction.transaction_id,
+                "world": world_result,
+                "status": transaction.status,
+                "delta_count": len(transaction.deltas),
+                "delta_kinds": transaction.delta_kinds(),
+            }
+        if command == "scene.camera.set":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            with self.suppress_generation():
+                camera, delta = set_scene_camera(
+                    transaction,
+                    str(params.get("camera_name", "")),
+                    self._required_identity(params, "expected_camera_identity"),
+                )
+            self._record_delta(transaction, delta)
+            return {
+                "transaction_id": transaction.transaction_id,
+                "camera": object_summary(camera),
                 "status": transaction.status,
                 "delta_count": len(transaction.deltas),
                 "delta_kinds": transaction.delta_kinds(),

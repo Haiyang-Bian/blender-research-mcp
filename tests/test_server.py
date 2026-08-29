@@ -46,6 +46,10 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "image.load",
         "material.texture.bind",
         "material.texture.clear",
+        "world.set",
+        "scene.camera.set",
+        "render.preview",
+        "render.save",
         "transaction.commit",
         "transaction.rollback",
     ]
@@ -212,6 +216,25 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert texture_clear.inputSchema["properties"]["expected_link_identities"][
         "minItems"
     ] == 1
+    world_set = tools_by_name["world.set"]
+    assert world_set.inputSchema["properties"]["allow_shared"]["default"] is False
+    assert world_set.annotations is not None
+    assert world_set.annotations.destructiveHint is True
+    scene_camera = tools_by_name["scene.camera.set"]
+    assert scene_camera.inputSchema["properties"]["expected_camera_identity"][
+        "maxLength"
+    ] == 128
+    render_preview = tools_by_name["render.preview"]
+    assert render_preview.annotations is not None
+    assert render_preview.annotations.readOnlyHint is False
+    assert render_preview.annotations.destructiveHint is False
+    assert render_preview.inputSchema["properties"]["width"]["minimum"] == 256
+    assert render_preview.inputSchema["properties"]["width"]["maximum"] == 1000
+    assert render_preview.inputSchema["properties"]["samples"]["maximum"] == 64
+    render_save = tools_by_name["render.save"]
+    assert render_save.annotations is not None
+    assert render_save.annotations.destructiveHint is True
+    assert render_save.inputSchema["properties"]["transparent"]["default"] is False
 
 
 def test_material_input_value_preserves_json_types() -> None:

@@ -285,6 +285,10 @@ class TextureMapping(BaseModel):
         return self
 
 
+RenderSize = Annotated[int, Field(ge=256, le=1000)]
+RenderSamples = Annotated[int, Field(ge=1, le=64)]
+
+
 async def require_capability(client: BridgeClient, name: str, version: int = 1) -> None:
     await client.connect()
     client.require_capability(name, version)
