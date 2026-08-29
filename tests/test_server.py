@@ -142,7 +142,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     ] == 1000
     target_schema = comparison.inputSchema["properties"]["target"]
     assert target_schema["discriminator"]["propertyName"] == "type"
-    assert len(target_schema["oneOf"]) == 6
+    assert len(target_schema["oneOf"]) == 7
     scene_inspect = tools_by_name["scene.inspect"]
     assert scene_inspect.annotations is not None
     assert scene_inspect.annotations.readOnlyHint is True

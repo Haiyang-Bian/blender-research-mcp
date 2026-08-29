@@ -47,6 +47,7 @@ from blender_research_mcp.comparison import (
     ComparisonCapture,
     ComparisonRequest,
     ComparisonTarget,
+    ModifierSettingTarget,
     ObjectSettingTarget,
     run_lookdev_comparison,
 )
@@ -602,6 +603,8 @@ def create_server(
     ) -> CallToolResult:
         if isinstance(target, ObjectSettingTarget):
             await require_capability(client, "object_settings")
+        if isinstance(target, ModifierSettingTarget):
+            await require_capability(client, "modifier_authoring")
         request = ComparisonRequest(target=target, candidates=candidates, capture=capture)
         images, result = await run_lookdev_comparison(client, request)
         content: list[ContentBlock] = [

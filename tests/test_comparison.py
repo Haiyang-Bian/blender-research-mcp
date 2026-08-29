@@ -59,6 +59,16 @@ def target(target_type: str) -> dict[str, object]:
                 "property": "lens",
             },
         }
+    if target_type == "modifier_setting":
+        return {
+            **common,
+            "modifier_name": "Soft Edges",
+            "expected_modifier_identity": "modifier-bevel-id",
+            "expected_modifier_type": "BEVEL",
+            "expected_stack_index": 0,
+            "expected_stack_fingerprint": "f" * 64,
+            "property": "width",
+        }
     raise AssertionError(target_type)
 
 
@@ -71,6 +81,7 @@ def target(target_type: str) -> dict[str, object]:
         "shape_key_value",
         "material_input",
         "object_setting",
+        "modifier_setting",
     ],
 )
 def test_comparison_target_is_a_closed_discriminated_union(target_type: str) -> None:
@@ -135,6 +146,50 @@ def test_target_specific_candidate_types_are_strict() -> None:
     ComparisonRequest.model_validate(request("object_setting", (35.0, 85.0)))
     with pytest.raises(ValidationError, match="floating-point"):
         ComparisonRequest.model_validate(request("object_setting", (35,)))
+    ComparisonRequest.model_validate(request("modifier_setting", (0.2, 0.3)))
+    integer_target = {**target("modifier_setting"), "property": "segments"}
+    parsed = ComparisonRequest.model_validate(
+        {**request(), "target": integer_target, "candidates": [{"label": "A", "value": 3}]}
+    )
+    assert parsed.candidates[0].value == 3
+    with pytest.raises(ValidationError, match="JSON integers"):
+        ComparisonRequest.model_validate(
+            {
+                **request(),
+                "target": integer_target,
+                "candidates": [{"label": "A", "value": 3.0}],
+            }
+        )
+
+
+def test_modifier_setting_target_rejects_wrong_type_fields_and_candidate_kinds() -> None:
+    with pytest.raises(ValidationError, match="not valid"):
+        TypeAdapter(ComparisonTarget).validate_python(
+            {**target("modifier_setting"), "property": "thickness"}
+        )
+    boolean_target = {**target("modifier_setting"), "property": "clamp_overlap"}
+    ComparisonRequest.model_validate(
+        {**request(), "target": boolean_target, "candidates": [{"label": "A", "value": False}]}
+    )
+    with pytest.raises(ValidationError, match="exactly one"):
+        ComparisonRequest.model_validate(
+            {
+                **request(),
+                "target": boolean_target,
+                "candidates": [
+                    {"label": "A", "value": False},
+                    {"label": "B", "value": True},
+                ],
+            }
+        )
+    enum_target = {**target("modifier_setting"), "property": "width_mode"}
+    ComparisonRequest.model_validate(
+        {
+            **request(),
+            "target": enum_target,
+            "candidates": [{"label": "A", "value": "WIDTH"}],
+        }
+    )
 
 
 def test_object_setting_locators_validate_typed_candidates_and_color_equivalence() -> None:
