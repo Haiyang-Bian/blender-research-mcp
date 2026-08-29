@@ -23,6 +23,7 @@ class FakeComparisonClient:
         self.material_value: Any = 0.5
         self.material_kind = "FLOAT"
         self.material_users = 1
+        self.camera_lens = 50.0
         self.active: dict[str, Any] | None = None
         self.rollback_no_restore = False
         self.commands: list[str] = []
@@ -66,8 +67,35 @@ class FakeComparisonClient:
                 "name": params["object_name"],
                 "session_identity": self.object_identity,
                 "scale": list(self.scale),
+                "location": [0.0, 0.0, 0.0],
+                "rotation_euler_degrees": [0.0, 0.0, 0.0],
                 "hide_viewport": False,
                 "hide_render": self.hide_render,
+                "visibility": {
+                    "hide_viewport": False,
+                    "hide_render": self.hide_render,
+                },
+                "data": {
+                    "name": "Camera Data",
+                    "type": "camera",
+                    "session_identity": "camera-id",
+                    "users": 1,
+                    "shared": False,
+                    "library": None,
+                    "writable": True,
+                    "settings": {
+                        "camera_type": "PERSP",
+                        "lens": self.camera_lens,
+                        "sensor_width": 36.0,
+                        "clip_start": 0.1,
+                        "clip_end": 1000.0,
+                        "shift_x": 0.0,
+                        "shift_y": 0.0,
+                    },
+                    "writable_fields": {
+                        "lens": {"minimum": 1.0, "maximum": 250.0},
+                    },
+                },
                 "visible": True,
                 "scene_generation": self.generation,
             }
@@ -148,6 +176,7 @@ class FakeComparisonClient:
             "modifier.set_state",
             "shape_key.set_value",
             "material.set_input",
+            "object.set",
         }:
             return self._write(command, params)
         if command == "transaction.rollback":
@@ -161,6 +190,7 @@ class FakeComparisonClient:
             "modifier": self.modifier_state,
             "shape_key": self.shape_key_value,
             "material": self.material_value,
+            "camera": self.camera_lens,
         }[kind]
 
     def _set_value(self, kind: str, value: Any) -> None:
@@ -172,6 +202,8 @@ class FakeComparisonClient:
             self.modifier_state = value
         elif kind == "shape_key":
             self.shape_key_value = value
+        elif kind == "camera":
+            self.camera_lens = value
         else:
             self.material_value = value
 
@@ -185,6 +217,14 @@ class FakeComparisonClient:
             kind, value = "modifier", params["state"]["show_viewport"]
         elif command == "shape_key.set_value":
             kind, value = "shape_key", params["value"]
+        elif command == "object.set":
+            patch = params["patches"][0]
+            if patch["type"] == "transform":
+                kind, value = "scale", patch["scale"]["z"]
+            elif patch["type"] == "visibility":
+                kind, value = "visibility", patch["hide_render"]
+            else:
+                kind, value = "camera", patch["lens"]
         else:
             kind, value = "material", params["value"]
         before = self._current_value(kind)
@@ -231,6 +271,128 @@ class FakeComparisonClient:
             + int(self.modifier_state) * 31
             + self.shape_key_value * 71
             + float(self.material_value) * 89
+            + self.camera_lens * 3
+        )
+        color = int(magnitude) % 180 + 20
+        image = Image.new("RGB", (32, 16), (color, 30, 210 - color))
+        image.putpixel((0, 0), (255, 255, 255))
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+        return output.getvalue()
+
+
+class FakeLightComparisonClient(FakeComparisonClient):
+    def __init__(self, property_name: str, *, users: int = 1) -> None:
+        super().__init__()
+        self.property_name = property_name
+        self.light_type = "AREA" if property_name in {"shape", "size", "size_y"} else "POINT"
+        self.light_users = users
+        self.light_values: dict[str, Any] = {
+            "energy": 1000.0,
+            "color": "#FFFFFF",
+            "radius": 0.25,
+            "shape": "RECTANGLE",
+            "size": 2.0,
+            "size_y": 1.0,
+        }
+
+    async def call(
+        self,
+        command: str,
+        params: dict[str, Any] | None = None,
+        *,
+        deadline_ms: int = 5000,
+        expected_scene_generation: int | None = None,
+        idempotency_key: str | None = None,
+        read_only: bool,
+    ) -> dict[str, Any]:
+        if command != "object.inspect":
+            return await super().call(
+                command,
+                params,
+                deadline_ms=deadline_ms,
+                expected_scene_generation=expected_scene_generation,
+                idempotency_key=idempotency_key,
+                read_only=read_only,
+            )
+        params = params or {}
+        self.commands.append(command)
+        writable_fields: dict[str, dict[str, Any]] = {
+            "energy": {"minimum": 0.0, "maximum": 10_000_000.0},
+            "color": {"format": "#RRGGBB_sRGB"},
+            "radius": {"minimum": 0.0, "maximum": 100_000.0},
+            "shape": {"enum": ["SQUARE", "RECTANGLE", "DISK", "ELLIPSE"]},
+            "size": {"minimum": 0.000001, "maximum": 100_000.0},
+            "size_y": {"minimum": 0.000001, "maximum": 100_000.0},
+        }
+        return {
+            "name": params["object_name"],
+            "session_identity": self.object_identity,
+            "scale": list(self.scale),
+            "location": [0.0, 0.0, 0.0],
+            "rotation_euler_degrees": [0.0, 0.0, 0.0],
+            "visibility": {"hide_viewport": False, "hide_render": self.hide_render},
+            "data": {
+                "name": "Light Data",
+                "type": "light",
+                "session_identity": "light-id",
+                "users": self.light_users,
+                "shared": self.light_users > 1,
+                "library": None,
+                "writable": True,
+                "settings": {"light_type": self.light_type, **self.light_values},
+                "writable_fields": writable_fields,
+            },
+            "scene_generation": self.generation,
+        }
+
+    def _current_value(self, kind: str) -> Any:
+        if kind.startswith("light_"):
+            return self.light_values[kind.removeprefix("light_")]
+        return super()._current_value(kind)
+
+    def _set_value(self, kind: str, value: Any) -> None:
+        if kind.startswith("light_"):
+            self.light_values[kind.removeprefix("light_")] = value
+        else:
+            super()._set_value(kind, value)
+
+    def _write(self, command: str, params: dict[str, Any]) -> dict[str, Any]:
+        if command != "object.set":
+            return super()._write(command, params)
+        assert self.active is not None
+        patch = params["patches"][0]
+        property_name = next(
+            key
+            for key in patch
+            if key
+            not in {
+                "type",
+                "expected_data_identity",
+                "expected_data_users",
+                "expected_light_type",
+                "allow_shared_data",
+            }
+        )
+        kind = f"light_{property_name}"
+        value = patch[property_name]
+        before = self._current_value(kind)
+        self._set_value(kind, value)
+        self.active.update({"kind": kind, "before": before, "after": value})
+        self.generation += 1
+        return {
+            "transaction_id": "tx",
+            "before": before,
+            "after": value,
+            "scene_generation": self.generation,
+        }
+
+    def _image(self) -> bytes:
+        current = self.light_values[self.property_name]
+        magnitude = (
+            int(current[1:3], 16)
+            if isinstance(current, str) and current.startswith("#")
+            else sum(ord(character) for character in str(current)) % 180
         )
         color = int(magnitude) % 180 + 20
         image = Image.new("RGB", (32, 16), (color, 30, 210 - color))
@@ -263,6 +425,17 @@ def target(target_type: str) -> dict[str, Any]:
             "shape_key_name": "Smile",
             "expected_shape_key_identity": "shape-key-id",
         }
+    if target_type == "object_setting":
+        return {
+            **common,
+            "locator": {
+                "type": "camera",
+                "expected_data_identity": "camera-id",
+                "expected_data_users": 1,
+                "expected_camera_type": "PERSP",
+                "property": "lens",
+            },
+        }
     return {
         **common,
         "material_slot_index": 0,
@@ -289,6 +462,27 @@ def request(target_type: str, values: tuple[Any, ...]) -> ComparisonRequest:
     )
 
 
+def object_setting_request(
+    locator: dict[str, Any],
+    values: tuple[Any, ...],
+) -> ComparisonRequest:
+    return ComparisonRequest.model_validate(
+        {
+            "target": {
+                "type": "object_setting",
+                "object_name": "mesh",
+                "expected_object_identity": "object-id",
+                "locator": locator,
+            },
+            "candidates": [
+                {"label": chr(ord("A") + index), "value": value}
+                for index, value in enumerate(values)
+            ],
+            "capture": {"object_name": "mesh", "view": "FRONT", "max_size": 512},
+        }
+    )
+
+
 @pytest.mark.parametrize(
     ("target_type", "values", "writer"),
     [
@@ -297,6 +491,7 @@ def request(target_type: str, values: tuple[Any, ...]) -> ComparisonRequest:
         ("modifier_state", (False,), "modifier.set_state"),
         ("shape_key_value", (0.1, 0.2), "shape_key.set_value"),
         ("material_input", (0.4, 0.6), "material.set_input"),
+        ("object_setting", (35.0, 85.0), "object.set"),
     ],
 )
 def test_comparison_routes_every_target_and_restores_each_candidate(
@@ -335,6 +530,97 @@ def test_comparison_routes_every_target_and_restores_each_candidate(
     assert client.commands.count("transaction.rollback") == len(values)
     assert "transaction.commit" not in client.commands
     assert len(client.mutation_keys) == len(set(client.mutation_keys))
+
+
+@pytest.mark.parametrize(
+    ("locator", "values", "kind"),
+    [
+        ({"type": "transform", "channel": "scale", "axis": "z"}, (1.2, 1.4), "scale"),
+        ({"type": "visibility", "property": "hide_render"}, (True,), "visibility"),
+    ],
+)
+def test_object_setting_comparison_routes_transform_and_visibility_locators(
+    locator: dict[str, Any],
+    values: tuple[Any, ...],
+    kind: str,
+) -> None:
+    client = FakeComparisonClient()
+    baseline = client._current_value(kind)
+
+    images, result = asyncio.run(
+        run_lookdev_comparison(client, object_setting_request(locator, values))
+    )
+
+    assert len(images) == len(values) + 1
+    assert client._current_value(kind) == baseline
+    assert client.commands.count("object.set") == len(values)
+    assert result["target_restored"] is True
+
+
+@pytest.mark.parametrize(
+    ("property_name", "values"),
+    [
+        ("energy", (500.0, 1500.0)),
+        ("color", ("#C9DeE5", "#214268")),
+        ("size", (1.5, 3.0)),
+        ("shape", ("SQUARE", "ELLIPSE")),
+    ],
+)
+def test_object_setting_comparison_routes_typed_light_values(
+    property_name: str,
+    values: tuple[Any, ...],
+) -> None:
+    client = FakeLightComparisonClient(property_name)
+    locator = {
+        "type": "light",
+        "expected_data_identity": "light-id",
+        "expected_data_users": 1,
+        "expected_light_type": client.light_type,
+        "property": property_name,
+    }
+    baseline = client.light_values[property_name]
+
+    _images, result = asyncio.run(
+        run_lookdev_comparison(client, object_setting_request(locator, values))
+    )
+
+    assert client.light_values[property_name] == baseline
+    assert [item["requested_value"] for item in result["candidates"]] == list(values)
+    assert result["target_restored"] is True
+
+
+def test_object_setting_comparison_normalizes_color_and_requires_shared_authorization() -> None:
+    client = FakeLightComparisonClient("color")
+    locator = {
+        "type": "light",
+        "expected_data_identity": "light-id",
+        "expected_data_users": 1,
+        "expected_light_type": "POINT",
+        "property": "color",
+    }
+    with pytest.raises(BridgeError) as same_color:
+        asyncio.run(
+            run_lookdev_comparison(
+                client,
+                object_setting_request(locator, ("#ffffff",)),
+            )
+        )
+    assert same_color.value.error.code == "CANDIDATE_EQUALS_BASELINE"
+
+    shared_client = FakeLightComparisonClient("energy", users=2)
+    shared_locator = {
+        **locator,
+        "expected_data_users": 2,
+        "property": "energy",
+    }
+    with pytest.raises(BridgeError) as shared:
+        asyncio.run(
+            run_lookdev_comparison(
+                shared_client,
+                object_setting_request(shared_locator, (500.0,)),
+            )
+        )
+    assert shared.value.error.code == "SHARED_OBJECT_DATA_CONFIRMATION_REQUIRED"
 
 
 def test_repeating_the_same_comparison_is_safe_and_not_cached() -> None:

@@ -130,10 +130,11 @@ def object_data_summary(obj: Any) -> dict[str, Any] | None:
             writable.update(
                 {
                     "shape": {"enum": ["SQUARE", "RECTANGLE", "DISK", "ELLIPSE"]},
-                    "size": {"exclusive_minimum": 0.0, "maximum": 100_000.0},
-                    "size_y": {"exclusive_minimum": 0.0, "maximum": 100_000.0},
+                    "size": {"minimum": 0.000001, "maximum": 100_000.0},
                 }
             )
+            if data.shape in {"RECTANGLE", "ELLIPSE"}:
+                writable["size_y"] = {"minimum": 0.000001, "maximum": 100_000.0}
         if data.type == "SPOT":
             settings.update(
                 {
@@ -143,7 +144,7 @@ def object_data_summary(obj: Any) -> dict[str, Any] | None:
             )
             writable.update(
                 {
-                    "spot_size_degrees": {"exclusive_minimum": 0.0, "maximum": 179.0},
+                    "spot_size_degrees": {"minimum": 0.000001, "maximum": 179.0},
                     "spot_blend": {"minimum": 0.0, "maximum": 1.0},
                 }
             )

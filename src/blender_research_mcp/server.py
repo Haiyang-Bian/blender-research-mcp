@@ -47,6 +47,7 @@ from blender_research_mcp.comparison import (
     ComparisonCapture,
     ComparisonRequest,
     ComparisonTarget,
+    ObjectSettingTarget,
     run_lookdev_comparison,
 )
 from blender_research_mcp.constants import DEFAULT_PORT, PACKAGE_VERSION
@@ -576,6 +577,8 @@ def create_server(
         candidates: ComparisonCandidates,
         capture: ComparisonCapture,
     ) -> CallToolResult:
+        if isinstance(target, ObjectSettingTarget):
+            await require_capability(client, "object_settings")
         request = ComparisonRequest(target=target, candidates=candidates, capture=capture)
         images, result = await run_lookdev_comparison(client, request)
         content: list[ContentBlock] = [

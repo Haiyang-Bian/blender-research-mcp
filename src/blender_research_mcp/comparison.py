@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import math
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -47,6 +48,8 @@ def _validate_candidate_value(value: Any) -> Any:
         if not math.isfinite(value):
             raise ValueError("candidate floating-point values must be finite")
         return value
+    if type(value) is str:
+        return value
     if (
         isinstance(value, list)
         and len(value) in {3, 4}
@@ -54,7 +57,7 @@ def _validate_candidate_value(value: Any) -> Any:
     ):
         return value
     raise ValueError(
-        "candidate value must be a boolean, integer, finite float, or 3/4 finite floats"
+        "candidate value must be a boolean, integer, finite float, string, or 3/4 finite floats"
     )
 
 
@@ -67,6 +70,7 @@ CandidateValue = Annotated[
                 {"type": "boolean"},
                 {"type": "integer"},
                 {"type": "number"},
+                {"type": "string"},
                 {
                     "type": "array",
                     "items": {"type": "number"},
@@ -141,12 +145,109 @@ class MaterialInputTarget(BaseModel):
     allow_shared: StrictBool = False
 
 
+class ObjectTransformSettingLocator(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["transform"]
+    channel: Literal["location", "rotation_euler_degrees", "scale"]
+    axis: Literal["x", "y", "z"]
+
+
+class ObjectVisibilitySettingLocator(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["visibility"]
+    property: Literal["hide_viewport", "hide_render"]
+
+
+class ObjectLightSettingLocator(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["light"]
+    expected_data_identity: SessionIdentity
+    expected_data_users: MaterialUsers
+    expected_light_type: Literal["POINT", "SUN", "SPOT", "AREA"]
+    allow_shared_data: StrictBool = False
+    property: Literal[
+        "energy",
+        "color",
+        "radius",
+        "shape",
+        "size",
+        "size_y",
+        "spot_size_degrees",
+        "spot_blend",
+        "angle_degrees",
+    ]
+
+    @model_validator(mode="after")
+    def validate_property_for_light_type(self) -> ObjectLightSettingLocator:
+        common = {"energy", "color"}
+        allowed = {
+            "POINT": common | {"radius"},
+            "SPOT": common | {"radius", "spot_size_degrees", "spot_blend"},
+            "SUN": common | {"angle_degrees"},
+            "AREA": common | {"shape", "size", "size_y"},
+        }[self.expected_light_type]
+        if self.property not in allowed:
+            raise ValueError(
+                f"{self.expected_light_type} light does not support {self.property}"
+            )
+        return self
+
+
+class ObjectCameraSettingLocator(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["camera"]
+    expected_data_identity: SessionIdentity
+    expected_data_users: MaterialUsers
+    expected_camera_type: Literal["PERSP", "ORTHO"]
+    allow_shared_data: StrictBool = False
+    property: Literal[
+        "lens",
+        "sensor_width",
+        "clip_start",
+        "clip_end",
+        "ortho_scale",
+        "shift_x",
+        "shift_y",
+    ]
+
+    @model_validator(mode="after")
+    def validate_property_for_camera_type(self) -> ObjectCameraSettingLocator:
+        if self.expected_camera_type == "PERSP" and self.property == "ortho_scale":
+            raise ValueError("ortho_scale is only valid for ORTHO cameras")
+        if self.expected_camera_type == "ORTHO" and self.property in {"lens", "sensor_width"}:
+            raise ValueError("lens and sensor_width are only valid for PERSP cameras")
+        return self
+
+
+ObjectSettingLocator = Annotated[
+    ObjectTransformSettingLocator
+    | ObjectVisibilitySettingLocator
+    | ObjectLightSettingLocator
+    | ObjectCameraSettingLocator,
+    Field(discriminator="type"),
+]
+
+
+class ObjectSettingTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["object_setting"]
+    object_name: ObjectName
+    expected_object_identity: SessionIdentity
+    locator: ObjectSettingLocator
+
+
 ComparisonTarget = Annotated[
     ObjectScaleAxisTarget
     | ObjectVisibilityTarget
     | ModifierStateTarget
     | ShapeKeyValueTarget
-    | MaterialInputTarget,
+    | MaterialInputTarget
+    | ObjectSettingTarget,
     Field(discriminator="type"),
 ]
 
@@ -203,6 +304,8 @@ def property_values_equal(left: Any, right: Any) -> bool:
         return type(left) is type(right) and left == right
     if isinstance(left, float) and isinstance(right, float):
         return abs(left - right) <= 1e-7
+    if isinstance(left, str) or isinstance(right, str):
+        return type(left) is type(right) and left == right
     return False
 
 
@@ -220,19 +323,51 @@ class ComparisonRequest(BaseModel):
             raise ValueError("candidate labels must be unique")
         for index, candidate in enumerate(self.candidates):
             if any(
-                property_values_equal(candidate.value, previous.value)
+                _target_values_equal(self.target, candidate.value, previous.value)
                 for previous in self.candidates[:index]
             ):
                 raise ValueError("candidate values must be unique")
 
-        if isinstance(self.target, (ObjectVisibilityTarget, ModifierStateTarget)):
+        if isinstance(self.target, (ObjectVisibilityTarget, ModifierStateTarget)) or (
+            isinstance(self.target, ObjectSettingTarget)
+            and isinstance(self.target.locator, ObjectVisibilitySettingLocator)
+        ):
             if len(self.candidates) != 1 or type(self.candidates[0].value) is not bool:
                 raise ValueError("boolean targets require exactly one boolean candidate")
+        elif isinstance(self.target, ObjectSettingTarget):
+            locator = self.target.locator
+            if isinstance(locator, ObjectLightSettingLocator) and locator.property == "color":
+                if any(
+                    type(candidate.value) is not str
+                    or re.fullmatch(r"#[0-9A-Fa-f]{6}", candidate.value) is None
+                    for candidate in self.candidates
+                ):
+                    raise ValueError("Light color candidates must use #RRGGBB sRGB")
+            elif isinstance(locator, ObjectLightSettingLocator) and locator.property == "shape":
+                if any(
+                    candidate.value not in {"SQUARE", "RECTANGLE", "DISK", "ELLIPSE"}
+                    for candidate in self.candidates
+                ):
+                    raise ValueError("Area shape candidates must use the supported enum")
+            elif any(type(candidate.value) is not float for candidate in self.candidates):
+                raise ValueError("numeric object-setting candidates must be floating-point values")
         elif isinstance(self.target, (ObjectScaleAxisTarget, ShapeKeyValueTarget)) and any(
             type(candidate.value) is not float for candidate in self.candidates
         ):
             raise ValueError("scale and shape-key candidates must be floating-point values")
         return self
+
+
+def _target_values_equal(target: ComparisonTarget, left: Any, right: Any) -> bool:
+    if (
+        isinstance(target, ObjectSettingTarget)
+        and isinstance(target.locator, ObjectLightSettingLocator)
+        and target.locator.property == "color"
+        and isinstance(left, str)
+        and isinstance(right, str)
+    ):
+        return left.upper() == right.upper()
+    return property_values_equal(left, right)
 
 
 class ImageDifferenceStatistics(BaseModel):
@@ -427,6 +562,185 @@ async def _resolve_target(
             value_kind="FLOAT",
             minimum=0.000001,
             maximum=1000.0,
+        )
+
+    if isinstance(target, ObjectSettingTarget):
+        inspected = await client.call(
+            "object.inspect", {"object_name": target.object_name}, read_only=True
+        )
+        _require_identity(
+            inspected.get("session_identity"), target.expected_object_identity, kind="object"
+        )
+        locator = target.locator
+        locator_guard = locator.model_dump()
+        object_setting_guard = {
+            "type": target.type,
+            "object_name": target.object_name,
+            "object_identity": target.expected_object_identity,
+            "locator": locator_guard,
+        }
+        if isinstance(locator, ObjectTransformSettingLocator):
+            values = inspected.get(locator.channel)
+            if not isinstance(values, list) or len(values) != 3:
+                raise comparison_error(
+                    ErrorKind.BLENDER_API,
+                    "TARGET_INSPECTION_INVALID",
+                    "Object inspection did not return the requested transform channel",
+                )
+            value = float(values[{"x": 0, "y": 1, "z": 2}[locator.axis]])
+            minimum, maximum = {
+                "location": (-1_000_000.0, 1_000_000.0),
+                "rotation_euler_degrees": (-360_000.0, 360_000.0),
+                "scale": (0.000001, 1000.0),
+            }[locator.channel]
+            return ResolvedTarget(
+                value=value,
+                guard=object_setting_guard,
+                evidence={
+                    **object_setting_guard,
+                    "value": value,
+                    "minimum": minimum,
+                    "maximum": maximum,
+                },
+                scene_generation=int(inspected["scene_generation"]),
+                value_kind="FLOAT",
+                minimum=minimum,
+                maximum=maximum,
+            )
+        if isinstance(locator, ObjectVisibilitySettingLocator):
+            visibility = inspected.get("visibility")
+            value = visibility.get(locator.property) if isinstance(visibility, dict) else None
+            if type(value) is not bool:
+                raise comparison_error(
+                    ErrorKind.BLENDER_API,
+                    "TARGET_INSPECTION_INVALID",
+                    "Object inspection did not return the requested visibility property",
+                )
+            return ResolvedTarget(
+                value=value,
+                guard=object_setting_guard,
+                evidence={**object_setting_guard, "value": value},
+                scene_generation=int(inspected["scene_generation"]),
+                value_kind="BOOLEAN",
+            )
+
+        data = inspected.get("data")
+        if not isinstance(data, dict) or data.get("type") != locator.type:
+            raise comparison_error(
+                ErrorKind.CONFLICT,
+                "OBJECT_TYPE_MISMATCH",
+                f"The inspected object no longer has {locator.type} data",
+                retryable=True,
+            )
+        _require_identity(
+            data.get("session_identity"), locator.expected_data_identity, kind="object data"
+        )
+        actual_users = data.get("users")
+        if actual_users != locator.expected_data_users:
+            raise comparison_error(
+                ErrorKind.CONFLICT,
+                "OBJECT_DATA_USERS_MISMATCH",
+                "The object data user count changed after inspection",
+                retryable=True,
+                details={"expected": locator.expected_data_users, "actual": actual_users},
+            )
+        if locator.expected_data_users > 1 and not locator.allow_shared_data:
+            raise comparison_error(
+                ErrorKind.PRECONDITION,
+                "SHARED_OBJECT_DATA_CONFIRMATION_REQUIRED",
+                "Shared object data requires allow_shared_data=true for comparison",
+                details={"users": locator.expected_data_users},
+            )
+        if not data.get("writable"):
+            raise comparison_error(
+                ErrorKind.PRECONDITION,
+                "OBJECT_DATA_NOT_WRITABLE",
+                "The inspected object data is not writable",
+                details={"library": data.get("library")},
+            )
+        settings = data.get("settings")
+        writable_fields = data.get("writable_fields")
+        if not isinstance(settings, dict) or not isinstance(writable_fields, dict):
+            raise comparison_error(
+                ErrorKind.BLENDER_API,
+                "TARGET_INSPECTION_INVALID",
+                "Object inspection did not return typed object data settings",
+            )
+        expected_type = (
+            locator.expected_light_type
+            if isinstance(locator, ObjectLightSettingLocator)
+            else locator.expected_camera_type
+        )
+        type_field = "light_type" if locator.type == "light" else "camera_type"
+        if settings.get(type_field) != expected_type:
+            raise comparison_error(
+                ErrorKind.CONFLICT,
+                "OBJECT_TYPE_MISMATCH",
+                "The object data type changed after inspection",
+                retryable=True,
+                details={"expected": expected_type, "actual": settings.get(type_field)},
+            )
+        field = locator.property
+        metadata = writable_fields.get(field)
+        if field not in settings or not isinstance(metadata, dict):
+            raise comparison_error(
+                ErrorKind.PRECONDITION,
+                "OBJECT_SETTING_NOT_WRITABLE",
+                f"The inspected {locator.type}.{field} setting is not writable",
+            )
+        value = settings[field]
+        setting_minimum: float | int | None = metadata.get("minimum")
+        setting_maximum: float | int | None = metadata.get("maximum")
+        if locator.type == "camera" and field == "clip_start":
+            if setting_maximum is None:
+                raise comparison_error(
+                    ErrorKind.BLENDER_API,
+                    "TARGET_INSPECTION_INVALID",
+                    "Camera clip_start inspection did not return a maximum",
+                )
+            setting_maximum = min(
+                float(setting_maximum), float(settings["clip_end"]) - 0.0000001
+            )
+        elif locator.type == "camera" and field == "clip_end":
+            if setting_minimum is None:
+                raise comparison_error(
+                    ErrorKind.BLENDER_API,
+                    "TARGET_INSPECTION_INVALID",
+                    "Camera clip_end inspection did not return a minimum",
+                )
+            setting_minimum = max(
+                float(setting_minimum), float(settings["clip_start"]) + 0.0000001
+            )
+        value_kind = "FLOAT"
+        if locator.type == "light" and field == "color":
+            value = str(value).upper()
+            value_kind = "HEX_COLOR"
+        elif locator.type == "light" and field == "shape":
+            value = str(value)
+            value_kind = "ENUM"
+        else:
+            value = float(value)
+        guard = {
+            **object_setting_guard,
+            "data_name": data.get("name"),
+            "data_identity": locator.expected_data_identity,
+            "data_users": locator.expected_data_users,
+            "data_type": expected_type,
+            "writable": True,
+        }
+        return ResolvedTarget(
+            value=value,
+            guard=guard,
+            evidence={
+                **guard,
+                "value": value,
+                "minimum": setting_minimum,
+                "maximum": setting_maximum,
+            },
+            scene_generation=int(inspected["scene_generation"]),
+            value_kind=value_kind,
+            minimum=setting_minimum,
+            maximum=setting_maximum,
         )
 
     if isinstance(target, MaterialInputTarget):
@@ -638,6 +952,8 @@ def _validate_live_candidates(
         "FLOAT": (float, None),
         "VECTOR": (list, 3),
         "COLOR": (list, 4),
+        "HEX_COLOR": (str, None),
+        "ENUM": (str, None),
     }
     expected = expected_types.get(baseline.value_kind)
     if expected is None:
@@ -663,7 +979,7 @@ def _validate_live_candidates(
                 f"Candidate {candidate.label} has the wrong component count",
                 details={"candidate_label": candidate.label},
             )
-        if property_values_equal(value, baseline.value):
+        if _target_values_equal(request.target, value, baseline.value):
             raise comparison_error(
                 ErrorKind.VALIDATION,
                 "CANDIDATE_EQUALS_BASELINE",
@@ -778,7 +1094,41 @@ async def _call_writer(
 ) -> dict[str, Any]:
     params: dict[str, Any]
     command: str
-    if isinstance(target, ObjectScaleAxisTarget):
+    if isinstance(target, ObjectSettingTarget):
+        command = "object.set"
+        locator = target.locator
+        if isinstance(locator, ObjectTransformSettingLocator):
+            patch: dict[str, Any] = {
+                "type": "transform",
+                locator.channel: {locator.axis: value},
+            }
+        elif isinstance(locator, ObjectVisibilitySettingLocator):
+            patch = {"type": "visibility", locator.property: value}
+        elif isinstance(locator, ObjectLightSettingLocator):
+            patch = {
+                "type": "light",
+                "expected_data_identity": locator.expected_data_identity,
+                "expected_data_users": locator.expected_data_users,
+                "expected_light_type": locator.expected_light_type,
+                "allow_shared_data": locator.allow_shared_data,
+                locator.property: value,
+            }
+        else:
+            patch = {
+                "type": "camera",
+                "expected_data_identity": locator.expected_data_identity,
+                "expected_data_users": locator.expected_data_users,
+                "expected_camera_type": locator.expected_camera_type,
+                "allow_shared_data": locator.allow_shared_data,
+                locator.property: value,
+            }
+        params = {
+            "transaction_id": transaction_id,
+            "object_name": target.object_name,
+            "expected_object_identity": target.expected_object_identity,
+            "patches": [patch],
+        }
+    elif isinstance(target, ObjectScaleAxisTarget):
         command = "object.transform"
         params = {
             "transaction_id": transaction_id,
