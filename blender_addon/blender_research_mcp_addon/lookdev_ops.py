@@ -11,6 +11,7 @@ from .lookdev_model import resolve_material_range
 from .transaction_model import (
     MaterialInputDelta,
     ModifierStateDelta,
+    ObjectTransformDelta,
     PropertyRef,
     PropertyValue,
     ScaleDelta,
@@ -455,8 +456,17 @@ def require_material_socket(target: tuple[str, ...]) -> tuple[Any, Any, Any, Any
 
 
 def read_property(reference: PropertyRef) -> PropertyValue:
-    if reference.kind in {"object_scale", "object_visibility"}:
+    if reference.kind in {
+        "object_location",
+        "object_rotation_euler",
+        "object_scale",
+        "object_visibility",
+    }:
         obj = require_object(*reference.target)
+        if reference.kind == "object_location":
+            return float(obj.location[AXIS_INDEX[reference.attribute]])
+        if reference.kind == "object_rotation_euler":
+            return float(obj.rotation_euler[AXIS_INDEX[reference.attribute]])
         if reference.kind == "object_scale":
             return float(obj.scale[AXIS_INDEX[reference.attribute]])
         return bool(getattr(obj, reference.attribute))
@@ -482,6 +492,17 @@ def restore_delta(delta: TransactionDelta) -> dict[str, Any]:
         for axis, value in delta.before.items():
             obj.scale[AXIS_INDEX[axis]] = value
         return {"kind": "object_scale", "object_name": delta.object_name, "scale": delta.before}
+    if isinstance(delta, ObjectTransformDelta):
+        obj = require_object(delta.object_name, delta.object_identity)
+        for channel, values in delta.before.items():
+            target = getattr(obj, channel)
+            for axis, value in values.items():
+                target[AXIS_INDEX[axis]] = value
+        return {
+            "kind": "object_transform",
+            "object_name": delta.object_name,
+            "values": delta.before,
+        }
     if isinstance(delta, VisibilityDelta):
         obj = require_object(delta.object_name, delta.object_identity)
         for attribute, value in delta.before.items():

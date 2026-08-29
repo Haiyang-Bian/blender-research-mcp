@@ -19,9 +19,17 @@ from pydantic import (
     StrictBool,
     StrictInt,
     WithJsonSchema,
-    model_validator,
 )
 
+from blender_research_mcp.authoring import (
+    InitialTransform,
+    LocationAxisPatch,
+    ObjectDefinition,
+    RotationAxisPatch,
+    ScaleAxisPatch,
+    SceneKinds,
+    require_capability,
+)
 from blender_research_mcp.client import BridgeClient
 from blender_research_mcp.comparison import (
     ComparisonCandidates,
@@ -134,20 +142,6 @@ MaterialInputValue = Annotated[
         }
     ),
 ]
-
-
-class ScalePatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    x: float | None = Field(default=None, ge=0.000001, le=1000)
-    y: float | None = Field(default=None, ge=0.000001, le=1000)
-    z: float | None = Field(default=None, ge=0.000001, le=1000)
-
-    @model_validator(mode="after")
-    def require_one_axis(self) -> ScalePatch:
-        if self.x is None and self.y is None and self.z is None:
-            raise ValueError("at least one scale axis is required")
-        return self
 
 
 class OrbitRequest(BaseModel):
@@ -339,6 +333,29 @@ def create_server(
             "context.restore",
             {"snapshot_id": snapshot_id},
             read_only=False,
+        )
+
+    @server.tool(
+        name="scene.inspect",
+        description=(
+            "Return bounded scene objects, collections, materials, images, world, active "
+            "camera, and render summaries with session-local identities."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def scene_inspect(
+        kinds: SceneKinds,
+        name_filter: Annotated[str, Field(min_length=1, max_length=255)] | None = None,
+        limit: Annotated[StrictInt, Field(ge=1, le=256)] = 100,
+    ) -> dict[str, Any]:
+        if len(set(kinds)) != len(kinds):
+            raise ValueError("kinds must be unique")
+        await require_capability(client, "scene_inspection")
+        return await client.call(
+            "scene.inspect",
+            {"kinds": list(kinds), "name_filter": name_filter, "limit": limit},
+            read_only=True,
         )
 
     @server.tool(
@@ -562,6 +579,105 @@ def create_server(
         )
 
     @server.tool(
+        name="object.create",
+        description=(
+            "Create one uniquely named bounded primitive, empty, camera, or light in an "
+            "exact collection inside the active structural transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def object_create(
+        transaction_id: TransactionId,
+        definition: ObjectDefinition,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "object_authoring")
+        client.require_capability("transactions", 3)
+        return await client.call(
+            "object.create",
+            {"transaction_id": transaction_id, "definition": definition.model_dump()},
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="object.duplicate",
+        description=(
+            "Duplicate one exact object with linked or independent object data and a unique "
+            "new name inside the active structural transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def object_duplicate(
+        transaction_id: TransactionId,
+        source_name: ObjectName,
+        expected_source_identity: SessionIdentity,
+        name: ObjectName,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        linked_data: StrictBool = False,
+        collection_name: ObjectName | None = None,
+        expected_collection_identity: SessionIdentity | None = None,
+        transform: InitialTransform | None = None,
+    ) -> dict[str, Any]:
+        if (collection_name is None) != (expected_collection_identity is None):
+            raise ValueError(
+                "collection_name and expected_collection_identity must be supplied together"
+            )
+        await require_capability(client, "object_authoring")
+        client.require_capability("transactions", 3)
+        return await client.call(
+            "object.duplicate",
+            {
+                "transaction_id": transaction_id,
+                "source_name": source_name,
+                "expected_source_identity": expected_source_identity,
+                "name": name,
+                "linked_data": linked_data,
+                "collection_name": collection_name,
+                "expected_collection_identity": expected_collection_identity,
+                "transform": transform.model_dump() if transform is not None else None,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="object.delete",
+        description=(
+            "Unlink one exact unselected object now, restore it on rollback, or remove the "
+            "object data-block when the structural transaction commits."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def object_delete(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "object_authoring")
+        client.require_capability("transactions", 3)
+        return await client.call(
+            "object.delete",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
         name="object.transform",
         description=(
             "Set one or more local object scale axes to absolute values inside "
@@ -573,16 +689,35 @@ def create_server(
     async def object_transform(
         transaction_id: TransactionId,
         object_name: ObjectName,
-        scale: ScalePatch,
         expected_scene_generation: SceneGeneration,
         idempotency_key: IdempotencyKey,
+        expected_object_identity: SessionIdentity | None = None,
+        location: LocationAxisPatch | None = None,
+        rotation_euler_degrees: RotationAxisPatch | None = None,
+        scale: ScaleAxisPatch | None = None,
     ) -> dict[str, Any]:
+        if location is None and rotation_euler_degrees is None and scale is None:
+            raise ValueError("location, rotation_euler_degrees, and/or scale is required")
+        if (location is not None or rotation_euler_degrees is not None) and (
+            expected_object_identity is None
+        ):
+            raise ValueError("location and rotation require expected_object_identity")
+        if location is not None or rotation_euler_degrees is not None:
+            await require_capability(client, "object_transform")
+            client.require_capability("transactions", 3)
         return await client.call(
             "object.transform",
             {
                 "transaction_id": transaction_id,
                 "object_name": object_name,
-                "scale": scale.model_dump(exclude_none=True),
+                "expected_object_identity": expected_object_identity,
+                "location": location.model_dump(exclude_none=True) if location else None,
+                "rotation_euler_degrees": (
+                    rotation_euler_degrees.model_dump(exclude_none=True)
+                    if rotation_euler_degrees
+                    else None
+                ),
+                "scale": scale.model_dump(exclude_none=True) if scale else None,
             },
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,

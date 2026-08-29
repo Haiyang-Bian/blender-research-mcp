@@ -229,3 +229,39 @@ def test_transaction_rejects_more_than_256_deltas() -> None:
         )
 
     assert error.value.code == "TRANSACTION_DELTA_LIMIT"
+
+
+def test_object_transform_delta_tracks_location_rotation_and_scale_separately() -> None:
+    model = load_transaction_model()
+    transaction = model.Transaction(
+        transaction_id="tx-transform",
+        label=None,
+        context_snapshot={},
+        context_fingerprint="context",
+        started_generation=0,
+    )
+    transaction.record(
+        model.ObjectTransformDelta(
+            object_name="Moon",
+            object_identity="object:moon",
+            before={
+                "location": {"z": 0.0},
+                "rotation_euler": {"x": 0.0},
+                "scale": {"x": 1.0},
+            },
+            after={
+                "location": {"z": 4.0},
+                "rotation_euler": {"x": 1.5707963267948966},
+                "scale": {"x": 2.0},
+            },
+        )
+    )
+
+    assert transaction.delta_kinds() == [
+        "object_location",
+        "object_rotation_euler",
+        "object_scale",
+    ]
+    assert transaction.expected_properties()[
+        model.PropertyRef("object_location", ("Moon", "object:moon"), "z")
+    ] == 4.0

@@ -12,6 +12,14 @@ from typing import Any
 
 import bpy
 
+from .authoring_ops import (
+    AuthoringOperationError,
+    create_object,
+    duplicate_object,
+    inspect_scene,
+    object_summary,
+    unlink_object,
+)
 from .capture_model import CaptureBook, CaptureEvidence
 from .context_ops import (
     ContextOperationError,
@@ -58,6 +66,7 @@ from .project_ops import (
 from .runtime import ADDON_VERSION, ListenerRuntime
 from .structural_ops import (
     finalize_structural_delta,
+    refresh_structure_guard_if_present,
     restore_structural_delta,
     validate_structural_transaction,
 )
@@ -65,7 +74,7 @@ from .transaction_model import (
     IdempotencyCache,
     MaterialInputDelta,
     ModifierStateDelta,
-    ScaleDelta,
+    ObjectTransformDelta,
     ShapeKeyDelta,
     StructuralDelta,
     Transaction,
@@ -84,6 +93,7 @@ CAPABILITIES = [
     "context.snapshot",
     "context.restore",
     "object.inspect",
+    "scene.inspect",
     "object.geometry.inspect",
     "object.lookdev.inspect",
     "material.inspect",
@@ -93,6 +103,9 @@ CAPABILITIES = [
     "transaction.commit",
     "transaction.rollback",
     "object.transform",
+    "object.create",
+    "object.duplicate",
+    "object.delete",
     "object.visibility.set",
     "modifier.set_state",
     "shape_key.set_value",
@@ -112,6 +125,9 @@ CAPABILITY_VERSIONS = {
     "lookdev_inspection": 1,
     "transactions": 3,
     "object_transform_scale": 1,
+    "object_transform": 1,
+    "scene_inspection": 1,
+    "object_authoring": 1,
     "object_visibility": 1,
     "modifier_state": 1,
     "shape_key_value": 1,
@@ -124,6 +140,9 @@ MUTATION_COMMANDS = {
     "transaction.commit",
     "transaction.rollback",
     "object.transform",
+    "object.create",
+    "object.duplicate",
+    "object.delete",
     "object.visibility.set",
     "modifier.set_state",
     "shape_key.set_value",
@@ -292,6 +311,15 @@ class AddonState:
                 retryable=exc.retryable,
                 details=exc.details,
             )
+        except AuthoringOperationError as exc:
+            self.last_error = f"{exc.code}: {exc}"
+            return self._error(
+                request_id,
+                exc.kind,
+                exc.code,
+                str(exc),
+                details=exc.details,
+            )
         except Exception as exc:  # noqa: BLE001 - dispatch boundary
             self.last_error = f"{type(exc).__name__}: {exc}"
             return self._error(
@@ -390,6 +418,46 @@ class AddonState:
                     kind="validation",
                 )
             return inspect_object(object_name)
+        if command == "scene.inspect":
+            kinds = params.get("kinds")
+            allowed_kinds = {
+                "objects",
+                "collections",
+                "materials",
+                "images",
+                "world",
+                "camera",
+                "render",
+            }
+            if (
+                not isinstance(kinds, list)
+                or not kinds
+                or len(kinds) > len(allowed_kinds)
+                or any(not isinstance(kind, str) or kind not in allowed_kinds for kind in kinds)
+                or len(set(kinds)) != len(kinds)
+            ):
+                raise AuthoringOperationError(
+                    "SCENE_KINDS_INVALID",
+                    "kinds must contain unique supported scene summary kinds",
+                    kind="validation",
+                )
+            name_filter = params.get("name_filter")
+            if name_filter is not None and (
+                not isinstance(name_filter, str) or not name_filter or len(name_filter) > 255
+            ):
+                raise AuthoringOperationError(
+                    "NAME_FILTER_INVALID",
+                    "name_filter must be a non-empty string or null",
+                    kind="validation",
+                )
+            limit = params.get("limit", 100)
+            if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 256:
+                raise AuthoringOperationError(
+                    "SCENE_LIMIT_INVALID",
+                    "limit must be an integer between 1 and 256",
+                    kind="validation",
+                )
+            return inspect_scene(kinds, name_filter, limit)
         if command == "object.geometry.inspect":
             object_name = params.get("object_name")
             if not isinstance(object_name, str) or not object_name:
@@ -531,7 +599,75 @@ class AddonState:
             return self._transaction_result(transaction)
         if command == "object.transform":
             transaction = self._require_transaction(params, request)
-            return self._transform_scale(transaction, params)
+            return self._transform_object(transaction, params)
+        if command == "object.create":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            definition = params.get("definition")
+            if not isinstance(definition, dict):
+                raise AuthoringOperationError(
+                    "OBJECT_DEFINITION_INVALID",
+                    "definition must be an object",
+                    kind="validation",
+                )
+            with self.suppress_generation():
+                obj, delta = create_object(transaction, definition)
+                bpy.context.view_layer.update()
+            self._record_delta(transaction, delta)
+            return {
+                "transaction_id": transaction.transaction_id,
+                "object": object_summary(obj),
+                "status": transaction.status,
+                "delta_count": len(transaction.deltas),
+                "delta_kinds": transaction.delta_kinds(),
+            }
+        if command == "object.duplicate":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            with self.suppress_generation():
+                obj, delta = duplicate_object(
+                    transaction,
+                    source_name=str(params.get("source_name", "")),
+                    expected_source_identity=self._required_identity(
+                        params, "expected_source_identity"
+                    ),
+                    name=str(params.get("name", "")),
+                    linked_data=params.get("linked_data") is True,
+                    collection_name=params.get("collection_name"),
+                    expected_collection_identity=params.get("expected_collection_identity"),
+                    transform=params.get("transform"),
+                )
+                bpy.context.view_layer.update()
+            self._record_delta(transaction, delta)
+            return {
+                "transaction_id": transaction.transaction_id,
+                "object": object_summary(obj),
+                "linked_data": params.get("linked_data") is True,
+                "status": transaction.status,
+                "delta_count": len(transaction.deltas),
+                "delta_kinds": transaction.delta_kinds(),
+            }
+        if command == "object.delete":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            with self.suppress_generation():
+                obj, delta = unlink_object(
+                    transaction,
+                    object_name=str(params.get("object_name", "")),
+                    expected_object_identity=self._required_identity(
+                        params, "expected_object_identity"
+                    ),
+                )
+                before_commit = object_summary(obj)
+                bpy.context.view_layer.update()
+            self._record_delta(transaction, delta)
+            return {
+                "transaction_id": transaction.transaction_id,
+                "object": before_commit,
+                "status": "unlinked_pending_commit",
+                "delta_count": len(transaction.deltas),
+                "delta_kinds": transaction.delta_kinds(),
+            }
         if command == "object.visibility.set":
             transaction = self._require_transaction(params, request)
             return self._set_object_visibility(transaction, params)
@@ -890,64 +1026,114 @@ class AddonState:
                 )
         validate_structural_transaction(transaction)
 
-    def _transform_scale(
+    def _transform_object(
         self,
         transaction: Transaction,
         params: dict[str, Any],
     ) -> dict[str, Any]:
         self._validate_transaction_guards(transaction)
+        transaction.ensure_capacity()
         object_name = params.get("object_name")
-        scale = params.get("scale")
         if not isinstance(object_name, str) or not object_name:
             raise ContextOperationError(
                 "OBJECT_NAME_INVALID",
                 "object_name must be a non-empty string",
                 kind="validation",
             )
-        if not isinstance(scale, dict) or not scale or set(scale) - set(AXIS_INDEX):
+        raw_patches = {
+            "location": params.get("location"),
+            "rotation_euler": params.get("rotation_euler_degrees"),
+            "scale": params.get("scale"),
+        }
+        patches = {name: value for name, value in raw_patches.items() if value is not None}
+        if not patches:
             raise ContextOperationError(
-                "SCALE_PATCH_INVALID",
-                "scale must contain one or more of x, y, and z",
+                "TRANSFORM_PATCH_INVALID",
+                "location, rotation_euler_degrees, and/or scale is required",
                 kind="validation",
             )
-        obj = bpy.data.objects.get(object_name)
-        if obj is None:
+        if any(
+            not isinstance(patch, dict)
+            or not patch
+            or set(patch) - set(AXIS_INDEX)
+            for patch in patches.values()
+        ):
             raise ContextOperationError(
-                "OBJECT_NOT_FOUND",
-                f"Object does not exist: {object_name}",
-                kind="not_found",
+                "TRANSFORM_PATCH_INVALID",
+                "Each transform patch must contain one or more of x, y, and z",
+                kind="validation",
             )
-        if obj.library is not None and obj.override_library is None:
-            raise ContextOperationError(
-                "OBJECT_LINKED",
-                f"Linked object cannot be transformed: {object_name}",
-            )
-        before: dict[str, float] = {}
-        after: dict[str, float] = {}
-        for axis, raw_value in scale.items():
-            if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+        object_identity = params.get("expected_object_identity")
+        if "location" in patches or "rotation_euler" in patches:
+            object_identity = self._required_identity(params, "expected_object_identity")
+        if object_identity is not None:
+            if not isinstance(object_identity, str) or not object_identity:
                 raise ContextOperationError(
-                    "SCALE_VALUE_INVALID",
-                    f"Scale {axis} must be a number",
+                    "TARGET_IDENTITY_REQUIRED",
+                    "expected_object_identity must be a non-empty session identity",
                     kind="validation",
                 )
-            value = float(raw_value)
-            if not math.isfinite(value) or not 0.000001 <= value <= 1000.0:
+            obj = require_object(object_name, object_identity)
+        else:
+            obj = bpy.data.objects.get(object_name)
+            if obj is None:
                 raise ContextOperationError(
-                    "SCALE_VALUE_INVALID",
-                    f"Scale {axis} must be finite and between 0.000001 and 1000",
-                    kind="validation",
+                    "OBJECT_NOT_FOUND",
+                    f"Object does not exist: {object_name}",
+                    kind="not_found",
                 )
-            index = AXIS_INDEX[axis]
-            before[axis] = float(obj.scale[index])
-            after[axis] = value
+        self._require_mutable_object(obj)
+        before: dict[str, dict[str, float]] = {}
+        after: dict[str, dict[str, float]] = {}
+        for channel, patch in patches.items():
+            before[channel] = {}
+            after[channel] = {}
+            target = getattr(obj, channel)
+            for axis, raw_value in patch.items():
+                if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+                    raise ContextOperationError(
+                        "TRANSFORM_VALUE_INVALID",
+                        f"Transform {channel}.{axis} must be a number",
+                        kind="validation",
+                    )
+                value = float(raw_value)
+                if not math.isfinite(value):
+                    raise ContextOperationError(
+                        "TRANSFORM_VALUE_INVALID",
+                        f"Transform {channel}.{axis} must be finite",
+                        kind="validation",
+                    )
+                if channel == "scale" and not 0.000001 <= value <= 1000.0:
+                    raise ContextOperationError(
+                        "SCALE_VALUE_INVALID",
+                        f"Scale {axis} must be between 0.000001 and 1000",
+                        kind="validation",
+                    )
+                if channel == "location" and abs(value) > 1_000_000:
+                    raise ContextOperationError(
+                        "LOCATION_VALUE_INVALID",
+                        f"Location {axis} must be between -1000000 and 1000000",
+                        kind="validation",
+                    )
+                if channel == "rotation_euler" and abs(value) > 360_000:
+                    raise ContextOperationError(
+                        "ROTATION_VALUE_INVALID",
+                        f"Rotation {axis} must be between -360000 and 360000 degrees",
+                        kind="validation",
+                    )
+                index = AXIS_INDEX[axis]
+                before[channel][axis] = float(target[index])
+                after[channel][axis] = math.radians(value) if channel == "rotation_euler" else value
         with self.suppress_generation():
-            for axis, value in after.items():
-                obj.scale[AXIS_INDEX[axis]] = value
+            for channel, patch in after.items():
+                target = getattr(obj, channel)
+                for axis, value in patch.items():
+                    target[AXIS_INDEX[axis]] = value
             bpy.context.view_layer.update()
+            refresh_structure_guard_if_present(transaction, "object", obj)
         self._record_delta(
             transaction,
-            ScaleDelta(
+            ObjectTransformDelta(
                 object_name=object_name,
                 object_identity=session_identity("object", obj),
                 before=before,
@@ -957,9 +1143,14 @@ class AddonState:
         return {
             "transaction_id": transaction.transaction_id,
             "object_name": object_name,
-            "changed_axes": sorted(after),
+            "object_identity": session_identity("object", obj),
+            "changed": {channel: sorted(values) for channel, values in after.items()},
             "before": before,
             "after": after,
+            "location": list(obj.location),
+            "rotation_euler_degrees": [
+                math.degrees(float(value)) for value in obj.rotation_euler
+            ],
             "scale": list(obj.scale),
             "status": transaction.status,
             "delta_count": len(transaction.deltas),

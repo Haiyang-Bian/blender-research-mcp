@@ -22,6 +22,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "context.get",
         "context.snapshot",
         "context.restore",
+        "scene.inspect",
         "object.inspect",
         "object.geometry.inspect",
         "object.lookdev.inspect",
@@ -31,6 +32,9 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "observation.bundle",
         "lookdev.compare",
         "transaction.begin",
+        "object.create",
+        "object.duplicate",
+        "object.delete",
         "object.transform",
         "object.visibility.set",
         "modifier.set_state",
@@ -120,11 +124,32 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     target_schema = comparison.inputSchema["properties"]["target"]
     assert target_schema["discriminator"]["propertyName"] == "type"
     assert len(target_schema["oneOf"]) == 5
+    scene_inspect = tools_by_name["scene.inspect"]
+    assert scene_inspect.annotations is not None
+    assert scene_inspect.annotations.readOnlyHint is True
+    assert scene_inspect.inputSchema["properties"]["kinds"]["minItems"] == 1
+    assert scene_inspect.inputSchema["properties"]["kinds"]["maxItems"] == 7
+    assert scene_inspect.inputSchema["properties"]["limit"]["maximum"] == 256
+    object_create = tools_by_name["object.create"]
+    assert object_create.annotations is not None
+    assert object_create.annotations.destructiveHint is True
+    definition_schema = object_create.inputSchema["properties"]["definition"]
+    assert definition_schema["discriminator"]["propertyName"] == "type"
+    assert len(definition_schema["oneOf"]) == 10
+    object_duplicate = tools_by_name["object.duplicate"]
+    assert object_duplicate.inputSchema["properties"]["linked_data"]["default"] is False
+    object_delete = tools_by_name["object.delete"]
+    assert object_delete.inputSchema["properties"]["expected_object_identity"][
+        "maxLength"
+    ] == 128
     transform = tools_by_name["object.transform"]
     assert transform.annotations is not None
     assert transform.annotations.readOnlyHint is False
     assert transform.annotations.destructiveHint is True
     assert transform.annotations.idempotentHint is True
+    assert "location" in transform.inputSchema["properties"]
+    assert "rotation_euler_degrees" in transform.inputSchema["properties"]
+    assert "expected_object_identity" in transform.inputSchema["properties"]
     visibility = tools_by_name["object.visibility.set"]
     assert visibility.annotations is not None
     assert visibility.annotations.destructiveHint is True

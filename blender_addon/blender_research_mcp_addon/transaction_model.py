@@ -27,6 +27,14 @@ class ScaleDelta:
 
 
 @dataclass
+class ObjectTransformDelta:
+    object_name: str
+    object_identity: str
+    before: dict[str, dict[str, float]]
+    after: dict[str, dict[str, float]]
+
+
+@dataclass
 class VisibilityDelta:
     object_name: str
     object_identity: str
@@ -102,6 +110,7 @@ class StructuralDelta:
 
 TransactionDelta = (
     ScaleDelta
+    | ObjectTransformDelta
     | VisibilityDelta
     | ModifierStateDelta
     | ShapeKeyDelta
@@ -133,6 +142,27 @@ def delta_properties(
             )
             for axis, value in delta.after.items()
         ]
+    if isinstance(delta, ObjectTransformDelta):
+        properties = []
+        for channel, values in delta.after.items():
+            kind = {
+                "location": "object_location",
+                "rotation_euler": "object_rotation_euler",
+                "scale": "object_scale",
+            }[channel]
+            properties.extend(
+                (
+                    PropertyRef(
+                        kind=kind,
+                        target=(delta.object_name, delta.object_identity),
+                        attribute=axis,
+                    ),
+                    delta.before[channel][axis],
+                    value,
+                )
+                for axis, value in values.items()
+            )
+        return properties
     if isinstance(delta, VisibilityDelta):
         return [
             (

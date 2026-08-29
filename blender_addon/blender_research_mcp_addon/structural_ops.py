@@ -202,6 +202,16 @@ def refresh_structure_guard(transaction: Transaction, kind: str, resource: Any) 
     transaction.refresh_structure_guard(make_structure_guard(kind, resource))
 
 
+def refresh_structure_guard_if_present(
+    transaction: Transaction,
+    kind: str,
+    resource: Any,
+) -> None:
+    identity = session_identity(kind, resource)
+    if (kind, str(resource.name), identity) in transaction.expected_structures():
+        refresh_structure_guard(transaction, kind, resource)
+
+
 def _remove_data_block(kind: str, resource: Any) -> None:
     collection_name = _DATA_COLLECTIONS[kind]
     getattr(bpy.data, collection_name).remove(resource)
@@ -263,4 +273,16 @@ def finalize_structural_delta(delta: StructuralDelta) -> dict[str, Any] | None:
     obj = delta.payload["object"]
     name = str(obj.name)
     bpy.data.objects.remove(obj)
-    return {"kind": delta.kind, "action": "delete_object", "object_name": name}
+    removed_owned = []
+    if delta.payload.get("created_in_transaction"):
+        for owned_kind, owned_resource in reversed(delta.payload.get("owned_resources", ())):
+            if int(owned_resource.users) == 0:
+                owned_name = str(owned_resource.name)
+                _remove_data_block(str(owned_kind), owned_resource)
+                removed_owned.append(f"{owned_kind}:{owned_name}")
+    return {
+        "kind": delta.kind,
+        "action": "delete_object",
+        "object_name": name,
+        "removed_owned": removed_owned,
+    }
