@@ -1,6 +1,6 @@
 ---
 name: blender-research-workflow
-description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, or static scene delivery; do not use for arbitrary Python, arbitrary node graphs, animation, or mesh-component editing.
+description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects, typed Modifier stacks, and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, non-destructive Modifier modeling, or static scene delivery; do not use for arbitrary Python, arbitrary node graphs, animation, Modifier apply, or mesh-component editing.
 ---
 
 # Blender Research Workflow
@@ -74,6 +74,19 @@ Modifiers, images, lifecycle, and renders retain their own tools. If the connect
 add-on lacks `object_settings: 1`, use compatible legacy transform/visibility tools
 where they cover the request; do not invent `light.set`, `camera.set`, or generic RNA.
 
+## Choose Modifier authoring deliberately
+
+Use `modifier.inspect` and the typed `modifier.create/set/move/delete` tools when a
+supported Bevel, Subdivision, Solidify, or Boolean can express a non-destructive
+whole-object effect. Keep Modifier structure separate from `object.set`, and carry the
+exact object/Modifier identities, index, type, and complete stack fingerprint from the
+latest inspection. Use `modifier.set_state` only for legacy viewport/render flags.
+
+Do not use a Modifier as a substitute for requested vertex/edge/face editing or UV
+work, and do not apply it: those require later topology/UV authority. If
+`modifier_authoring: 1` is unavailable, retain compatible older tools and report the
+new-domain boundary rather than falling back to arbitrary RNA or Python.
+
 ## Ground image evidence
 
 Use a successful capture's own `capture_id` when mapping normalized top-left image
@@ -118,6 +131,11 @@ For transform, visibility, Light, or Camera alternatives, prefer the typed
 same inspected scope and `object.set` writer for every independently rolled-back
 candidate.
 
+For one supported Modifier parameter, use `modifier_setting` when
+`modifier_authoring: 1` is available. Never encode Boolean operand changes, stack
+creation/deletion, or reordering as a comparison candidate.
+
 Read [references/tool-recipes.md](references/tool-recipes.md) when executing an
-application/project lifecycle, multi-step scene authoring, material/texture binding,
-rendering, observation, comparison, preview, reconnect, or recovery workflow.
+application/project lifecycle, multi-step scene authoring, Modifier-stack authoring,
+material/texture binding, rendering, observation, comparison, preview, reconnect, or
+recovery workflow.

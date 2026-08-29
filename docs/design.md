@@ -1,9 +1,9 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.9.0 unified typed object settings implemented and live-validated
-- Next milestone: select the next bounded scene-authoring authority domain
+- Status: 0.10.0 bounded typed Modifier authoring implemented; live acceptance pending
+- Next milestone: design semantic Mesh topology snapshots and editing for 0.11
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.9.0
+- Package and add-on version: 0.10.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,10 +12,10 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.9.0 now covers
-the validated observation/lifecycle/static-authoring path plus a unified typed object,
-Light, and Camera setting surface; the older bridge is no longer the primary interface
-for this repository.
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.10.0 now covers
+the validated observation/lifecycle/static-authoring path, unified typed object,
+Light, and Camera settings, and four bounded non-destructive Modifier families; the
+older bridge is no longer the primary interface for this repository.
 
 That shape creates a poor long-running LookDev loop:
 
@@ -222,6 +222,10 @@ normalized image coordinates for evaluated-scene raycasts.
 - object.transform
 - object.visibility.set
 - modifier.set_state
+- modifier.create
+- modifier.set
+- modifier.move
+- modifier.delete
 - shape_key.set_value
 - material.set_input
 
@@ -231,6 +235,12 @@ local TRS, visibility, typed Light data, and typed Camera data. It is one public
 object-level operation with internal typed dispatch, not a generic RNA writer.
 Structural object changes, active-Camera selection, materials, World, images, Modifier
 parameters, rendering, and project saving remain separate tools.
+
+Version 0.10 adds a separate typed Modifier-stack domain for Mesh objects. Bevel,
+Subdivision, Solidify, and Boolean can be created, configured, reordered, and marked
+for commit-time deletion. Every mutation carries exact object/Modifier identities,
+index, type, and full stack fingerprint. Apply, arbitrary Modifier types/RNA, and direct
+mesh topology remain outside this surface.
 
 Every new writer requires an active transaction, a current scene generation, a unique
 idempotency key, and exact session identities returned by inspection. Shared materials
@@ -255,7 +265,8 @@ Comparison is transient mutation, not a read-only operation. It will never commi
 save a blend file, rank candidates, or widen the Blender command surface. A selected
 candidate must be applied later through the existing explicit transaction workflow.
 In 0.9 the closed target union also accepts one typed `object_setting` locator and uses
-`object.set`; older comparison targets remain compatible.
+`object.set`. Version 0.10 adds `modifier_setting`, routed through `modifier.set`, for a
+single comparable field. Older comparison targets remain compatible.
 The complete contract and acceptance gate are recorded in
 `docs/roadmap/0.6.0-comparative-previews.md`.
 
@@ -310,6 +321,21 @@ The transaction model guards numeric, Boolean, controlled enum, and linear RGB v
 Apply failures restore and verify this call's partial writes before returning. Legacy
 `object.transform` and `object.visibility.set` retain their schemas while using the same
 kernel. See `docs/roadmap/0.9.0-unified-object-settings.md` and decision 0008.
+
+### Implemented bounded Modifier authoring
+
+Version 0.10.0 adds `modifier.inspect` and typed create/set/move/delete operations for
+Bevel, Subdivision, Solidify, and Boolean on Mesh objects. Inspection returns the full
+ordered stack and a SHA-256 fingerprint. Transaction-level stack guards advance after
+each Agent mutation and protect identity, order, public state, typed settings, Boolean
+operand, and pending-delete state during commit, rollback, and disconnect recovery.
+
+Delete is deferred: the Modifier is disabled and marked in the transaction, rollback
+restores the same identity, and commit removes it only after all guards pass. Boolean
+operands are exact Mesh identities with direct/transitive cycle rejection; Subdivision
+and Boolean enforce bounded geometry budgets. Legacy `modifier.set_state` retains its
+schema and works for unsupported Modifier types. See
+`docs/roadmap/0.10.0-modifier-authoring.md` and decision 0009.
 
 Tool count is not a success metric. A small composable surface with precise
 preconditions is preferable to dozens of overlapping convenience tools.
@@ -427,8 +453,7 @@ Status: implemented and validated on Blender 4.2.23 in 0.8.0. See
 
 ### Phase 7 — unified typed object settings
 
-Status: implemented with automated gates in 0.9.0; Blender 4.2.23 live acceptance is
-pending.
+Status: implemented and Blender 4.2.23 live-validated in 0.9.0.
 
 - Add a closed typed `object.set` surface for object, Light, and Camera settings.
 - Keep one public object-level entry while dispatching to typed internal handlers.
@@ -437,17 +462,22 @@ pending.
 - Preserve all 0.8 tools when connected to an older add-on; reject only new capability
   use.
 
-### Phase 8 — adoption and reviewed authority expansion
+### Phase 8 — bounded typed Modifier authoring
 
-Status: initial adoption complete. Codex is configured against the new MCP, versions
-0.2 through 0.5.1 have live Blender validation records, and the repository is public
-with its validated history merged into `main`.
+Status: implemented with automated gates in 0.10.0; Blender 4.2.23 live acceptance is
+pending.
 
-- Reuse the validated 0.8 authoring and 0.6 comparison smokes as regression suites.
-- Keep any older bridge only as an external fallback; do not copy its unrestricted
-  execution surface into this repository.
-- Complete the 0.9 object-settings acceptance before selecting another typed domain;
-  keep selected Modifier families as a separate proposal.
+- Inspect exact full ordered Modifier stacks and guard them with one fingerprint.
+- Create, configure, reorder, and defer deletion for four bounded Modifier families.
+- Preserve `modifier.set_state` compatibility and reject only the new surface when
+  `modifier_authoring: 1` is absent.
+- Compare one typed Modifier field through independent rollback-safe candidates.
+
+### Phase 9 — semantic Mesh topology, then UV
+
+Status: planned. Version 0.11 will design bounded topology inspection/snapshots and
+semantic component editing. Version 0.12 will add UV unwrap/transform only after the
+topology rollback model is proven. Neither responsibility is hidden in Modifier tools.
 
 ## 10. Acceptance criteria for the first milestone
 
@@ -491,8 +521,8 @@ research scenarios.
   current traditional ZIP.
 - Whether a bounded repository script tool is necessary beyond project-owned Blender
   drivers/startup scripts; arbitrary inline Python remains out of scope.
-- Which bounded modeling domain should follow static authoring: selected Modifier
-  families or a narrow mesh-component operation. Do not combine both in one release.
+- Which semantic Mesh operations can share one bounded topology snapshot without
+  turning the bridge into arbitrary BMesh/RNA access; keep UV authority for 0.12.
 - Blender 5.x capability policy and the project license; decide both before publishing.
 
 ## 13. Guidance for a new Codex task

@@ -103,9 +103,10 @@ scale request into an incremental expression.
 5. Roll back by default, then re-inspect the property and user context. Commit only
    after explicit intent to retain the in-memory preview.
 
-Do not hide an active or selected object, because that would leave context debt. Do not
-add, remove, reorder, or parameterize modifiers, and do not write Basis or driven shape
-keys.
+Do not hide an active or selected object, because that would leave context debt. This
+legacy recipe changes only Modifier viewport/render state; use the typed stack recipe
+below for supported creation, ordering, deletion, or parameters. Do not write Basis or
+driven shape keys.
 
 ## Reversible material-input preview
 
@@ -154,6 +155,12 @@ locator accepts only the value opposite the baseline. Area shape values are exac
 strings. Light colors are `#RRGGBB`; hexadecimal case variants are equivalent, and the
 rollback guard compares Blender's linear RGB while the report preserves the submitted
 string.
+
+For `modifier_setting`, retain the exact object identity, Modifier identity/type/index,
+and `stack_fingerprint` from `modifier.inspect`, then select one writable typed field.
+Numeric and integer candidates must stay inside the reported range; Boolean candidates
+contain only the opposite baseline; enum values are exact. Do not compare Boolean
+operands, create/delete, or ordering.
 
 Any candidate failure stops the sequence. Do not combine partial images with an older
 baseline, retry over a property conflict, or manually force the original value.
@@ -230,6 +237,43 @@ baseline.
 `object.set` does not create/delete objects, choose the active Camera, change World or
 materials, edit Modifier parameters, or expose arbitrary RNA. Use the corresponding
 semantic tool for each of those responsibilities.
+
+## Typed Modifier stack authoring
+
+Use this flow for Bevel, Subdivision, Solidify, or Boolean on an exact Mesh object:
+
+1. Call `modifier.inspect(object_name)`. Retain object identity, full ordered stack,
+   every relevant Modifier identity/type/index, and `stack_fingerprint`. Treat a
+   truncation warning as insufficient authority to mutate the stack.
+2. Begin or continue a structural transaction. Pass the latest fingerprint to exactly
+   one `modifier.create`, `modifier.set`, `modifier.move`, or `modifier.delete` call,
+   then carry its returned generation and after-fingerprint to the next stack write.
+3. Use `modifier.create` with a unique name. A null stack index appends; an integer
+   inserts at that exact position. Use only the four supported definitions.
+4. Use `modifier.set` for a non-empty partial patch. Final-state constraints still
+   apply: Subdivision stays within the reported face budget, Solidify rim-only retains
+   rim, and Boolean solver-specific flags/threshold remain valid.
+5. Use `modifier.move` for an exact identity and target index. It may cross unsupported
+   items, but never configure them.
+6. Use `modifier.delete` only when the user wants the item removed. It is disabled and
+   marked pending until commit; rollback must restore the same identity, index, and
+   viewport/render state.
+7. Re-inspect and preview the smallest useful evidence. Commit a requested coherent
+   modeling change after verification; otherwise rollback and verify the original full
+   fingerprint. Commit remains memory-only until `project.save` is requested.
+
+For Boolean, inspect the operand object separately and send its exact Mesh identity.
+Never use the owner as its operand. Direct or transitive Boolean cycles are invalid.
+FAST supports `double_threshold`; EXACT supports self and hole-tolerant options. A
+budget rejection is a deliberate bound, not permission to bypass the tool.
+
+The stack guard protects order, identity, type, public visibility, typed settings,
+operand, and pending-delete state. On `MODIFIER_STACK_CONFLICT`, preserve the user's
+current value/order and start from a fresh inspection. On a create/set/move restoration
+failure, stop the transaction; do not reconstruct or force the old stack through Python.
+
+These tools do not apply Modifiers. Use them for non-destructive whole-object effects,
+not as a substitute for direct mesh-component or UV operations.
 
 ## Principled materials and local textures
 
@@ -308,6 +352,13 @@ requested scope before `allow_shared=true`.
   inspected writable input or report the boundary; do not rewire nodes or use Python.
 - `STRUCTURE_CONFLICT`: preserve user edits, stop the batch, and inspect the affected
   identity, fingerprint, links, users, and transaction status before another attempt.
+- `MODIFIER_STACK_CONFLICT`: preserve the user's current Modifier values and order;
+  re-run `modifier.inspect` and rebuild the remaining stack plan from its fingerprint.
+- Modifier target/type/index, name, driver/read-only, Boolean operand/cycle, or geometry
+  budget failure: correct the typed request from current evidence; do not use RNA.
+- `MODIFIER_SETTINGS_RESTORE_FAILED`, `MODIFIER_CREATE_RESTORE_FAILED`, or
+  `MODIFIER_MOVE_RESTORE_FAILED`: stop further writes and inspect the entire stack and
+  transaction; do not force an assumed baseline.
 - Object/material/image/collection identity or user-count conflict: re-run the relevant
   inspect tool and rebuild the remainder of the plan from current state.
 - `MATERIAL_LINK_CONFLICT` or `MATERIAL_LINK_IDENTITY_MISMATCH`: re-inspect the complete

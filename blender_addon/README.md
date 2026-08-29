@@ -16,7 +16,7 @@ uv run --no-sync python scripts/build_addon.py
 ~~~
 
 The ignored output is written to
-`artifacts/blender-research-mcp-addon-0.9.0.zip`. Install that ZIP in Blender
+`artifacts/blender-research-mcp-addon-0.10.0.zip`. Install that ZIP in Blender
 4.2, then enable **Blender Research MCP**. The listener binds only to
 `127.0.0.1:9877`, creates a random per-session token, and publishes its
 ephemeral manifest under the current user's local application data directory.
@@ -29,6 +29,9 @@ plus structural transaction v3 object/material/image/World/Camera authoring and 
 Eevee preview/export. Version 0.9 adds one closed `object.set` command for atomic
 transform, visibility, typed Light, and typed Camera data patches; it does not expose
 generic RNA or separate `light.set`/`camera.set` commands.
+Version 0.10 adds exact Modifier-stack inspection and transaction-scoped create, typed
+set, reorder, and deferred delete operations for Bevel, Subdivision, Solidify, and
+Boolean. It does not expose apply, arbitrary Modifier RNA, or mesh-component editing.
 Captures can temporarily use solid, material, wireframe, or rendered shading and an
 absolute orbit while restoring the user's original context. Blender may be obscured by
 another window, but it must remain running with a `VIEW_3D`; minimized capture is not

@@ -16,10 +16,11 @@
    `transactions: 2`, and all advertised legacy bounded-write capabilities at version 1
    are required. Static authoring additionally requires `transactions: 3` and the
    relevant 0.8 authoring/render capability. Unified object configuration additionally
-   requires `object_settings: 1`.
+   requires `object_settings: 1`; typed Modifier authoring requires
+   `modifier_authoring: 1`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.9.0.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.10.0.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -117,7 +118,8 @@ the returned object identity and select a target from its bounded results rather
 guessing names:
 
 - visibility exposes only `hide_viewport` and `hide_render`;
-- modifiers expose identities plus `show_viewport` and `show_render`;
+- modifiers expose identities plus `show_viewport` and `show_render`; use
+  `modifier.inspect` for the authoritative complete ordered stack and typed settings;
 - shape keys exclude Basis and report slider ranges and driver state;
 - material slots report indices, identities, library state, and current user counts.
 
@@ -156,13 +158,34 @@ in-memory authoring batch:
 
 Transactions contain at most 256 property plus structural deltas. `object.delete`
 unlinks first, restores links on rollback, and removes the object only after commit
-guards pass. 0.8 does not expose arbitrary mesh editing, arbitrary shader nodes,
-Geometry Nodes, modifier parameters, animation, rigs, compositor operations, Cycles,
-network downloads, or image pack/unpack/reload.
+guards pass. The current surface does not expose arbitrary mesh editing, arbitrary
+shader nodes, Geometry Nodes, unsupported Modifier parameters, apply, animation, rigs,
+compositor operations, Cycles, network downloads, or image pack/unpack/reload.
 
 `object.set` changes properties only. Continue to use `object.create/duplicate/delete`
 for structure and `scene.camera.set` for the scene's active Camera. It does not replace
 material, World, Modifier, image, project, or render tools.
+
+## Author a bounded Modifier stack
+
+Use `modifier.inspect(object_name)` immediately before editing a Mesh object's stack.
+Retain the object identity, ordered item identities/types/indices, and exact
+`stack_fingerprint` from that response.
+
+- `modifier.create` adds Bevel, Subdivision, Solidify, or Boolean with a unique name and
+  optional insertion index. Boolean operands require an exact other Mesh identity.
+- `modifier.set` applies a non-empty typed partial patch after validating the final
+  state, including solver/rim dependencies and geometry budgets.
+- `modifier.move` reorders one exact identity to any legal stack index, including
+  across an unsupported Modifier without editing that item's properties.
+- `modifier.delete` disables and marks an item pending during the transaction; commit
+  removes it, while rollback restores the same identity and public state.
+
+Every response returns before/after fingerprints, an ordered stack summary, and
+path-sorted changes. Re-inspect after a committed transaction. Do not reuse a stale
+fingerprint after the user renames, adds, removes, reorders, or edits a guarded field.
+The tools do not apply Modifiers or expose arbitrary RNA; direct vertex/edge/face work
+belongs to the later semantic Mesh surface.
 
 `render.preview` and `render.save` use Eevee Next, exact Camera identity, dimensions
 from 256 to 1000, and 1–64 samples. Both restore the previous Camera, engine,
@@ -182,17 +205,17 @@ or `.exr` whose parent directory exists and reports the actual file hash.
 5. Roll back unless the result should explicitly remain in Blender memory. Commit does
    not save the blend file.
 
-The preferred 0.9 object-property writer is `object.set`. It accepts one to four
+The preferred object-property writer is `object.set`. It accepts one to four
 non-repeated typed patches, validates all of them before writing, applies transform then
 visibility then object data, and advances generation once. Light/Camera data patches
 must include the exact identity, type, and user count from `object.inspect`; set
 `allow_shared_data=true` only when the requested scope includes every user.
 
 Legacy single-property preview writers are `object.transform`, `object.visibility.set`,
-`modifier.set_state`, `shape_key.set_value`, and `material.set_input`. The 0.8
+`modifier.set_state`, `shape_key.set_value`, and `material.set_input`. The structural
 authoring tools separately permit bounded location/rotation, fixed semantic node links,
-lights, and local images inside structural transactions; neither surface permits
-arbitrary modifiers/nodes/Python or implicit `.blend` saving.
+lights, local images, and four typed Modifier families inside structural transactions;
+no surface permits arbitrary modifiers/nodes/Python or implicit `.blend` saving.
 
 Shape-key values must be finite and inside the inspected slider range; no clamp occurs.
 Material input values preserve their inspected Boolean, Int, Float, three-component
@@ -218,7 +241,9 @@ absolute candidate values:
 1. Build the matching discriminated `target` with every inspected session identity.
 2. Provide unique `{label, value}` candidates of the target's exact type and range.
    The `object_setting` target uses a closed transform-axis, visibility, Light, or
-   Camera locator. Light colors are `#RRGGBB` sRGB and Area shapes are exact enums.
+   Camera locator. `modifier_setting` uses one exact object/Modifier identity, type,
+   stack index/fingerprint, and comparable setting. Light colors are `#RRGGBB` sRGB
+   and enum candidates use exact strings.
 3. Choose one evidence object and capture view, display mode, overlays, and size.
 4. Review the returned images in order: baseline, then each candidate in request order.
 5. Check every candidate's writer, capture, rollback, difference statistics, and the
@@ -234,6 +259,10 @@ Shared Light/Camera data similarly requires the exact users and
 `allow_shared_data=true`. Color candidates retain their submitted hexadecimal form in
 the report, but equality and restoration are checked against Blender's linear RGB
 value.
+
+Modifier comparisons support typed numeric, integer, Boolean, and enum settings. They
+do not compare Boolean operands, creation, ordering, or deletion. Each candidate uses
+`modifier.set` in its own transaction and must restore the complete stack fingerprint.
 
 Comparison never ranks, commits, or saves a candidate. After the operator chooses a
 direction, apply that value through a new ordinary transaction. Any context, identity,
@@ -301,6 +330,13 @@ Codex after the first installation so automatic skill discovery can see it.
   `object.inspect` evidence and rebuild the typed patch.
 - `OBJECT_SETTINGS_RESTORE_FAILED`: stop subsequent writes and inspect the object,
   data, transaction, and user context; do not force an assumed baseline.
+- `MODIFIER_STACK_CONFLICT`: preserve the user's current stack and re-run
+  `modifier.inspect`; never force a stale identity, index, or fingerprint.
+- Modifier name/target/type/index, driver/read-only, operand/cycle, or budget failure:
+  correct the typed request from fresh inspection instead of using arbitrary RNA.
+- `MODIFIER_SETTINGS_RESTORE_FAILED`, `MODIFIER_CREATE_RESTORE_FAILED`, or
+  `MODIFIER_MOVE_RESTORE_FAILED`: stop the transaction and inspect the complete stack
+  before any further mutation.
 - Object, collection, data, material, or image identity/user conflict: discard stale
   evidence and rebuild the remaining authoring steps from current inspection.
 - `MATERIAL_LINK_CONFLICT` or `MATERIAL_LINK_IDENTITY_MISMATCH`: inspect the complete
