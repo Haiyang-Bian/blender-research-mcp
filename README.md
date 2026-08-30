@@ -29,6 +29,8 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 并保证复制选中源对象后保存/reload 不会让副本意外进入选择集。
 0.10.2 进一步按 Blender RNA 的 float32 实际存储精度比较事务属性，避免
 `6.2` 回读为 `6.199999809...` 时误报事务外冲突，同时仍能识别相邻 ULP 修改。
+0.11.0 新增基础 Mesh 的分页检查、双指纹和事务 v4 快照，以及统一且封闭的
+`mesh.edit` 组件编辑入口；自动化门禁已通过，Blender 4.2.23 发布验收正在进行。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -124,6 +126,23 @@ Bevel、Subdivision、Solidify 和 Boolean，并在事务中守护完整栈；�
 `modifier_setting` target，但不比较 operand、创建、排序或删除。详细契约见
 [0.10.0 路线图](docs/roadmap/0.10.0-modifier-authoring.md)。
 
+## 0.11.0 语义 Mesh 编辑
+
+`mesh.inspect` 分页返回基础 Mesh 的顶点、边或面，外加对象/Mesh identity、完整
+对象用户集、预算、`topology_fingerprint` 与包含坐标、材质、平滑、UV/颜色/受支持
+属性的 `mesh_fingerprint`。组件索引只在该完整指纹下有效；拓扑修改后必须重新检查。
+
+`mesh.edit` 每次接受一个封闭语义操作：局部组件变换、面挤出/内插、边倒角、
+删除/溶解、顶点合并、面材质/平滑或法线处理。`OBJECT` scope 会在共享数据时事务性
+单用户化；`SHARED_DATA` 则修改检查所得全部共享对象。事务首次编辑保存完整 Mesh
+快照，commit 清理快照，rollback/断线回退在完整 guard 通过后恢复；用户改动返回
+冲突并保持原状。
+
+水波等视觉表面细节应优先由材质表达，Modifier 用于非破坏性整体效果，只有真实
+轮廓、结构或组件变化才使用 Mesh 编辑。0.11 不开放 UV 修改、任意数组/BMesh、
+Modifier Apply、Shape Key 拓扑或任意 Python。详细契约见
+[0.11.0 路线图](docs/roadmap/0.11.0-semantic-mesh-editing.md)。
+
 ## 目录
 
 ~~~text
@@ -154,7 +173,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.10.2
+uv run --no-sync python scripts/build_addon.py --version 0.11.0
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认
@@ -193,7 +212,8 @@ Store Blender 仍可作为普通现有会话被发现和复用。
 `x/y` 传给 `viewport.raycast`，即可获得 evaluated 场景中的几何命中对象、
 世界坐标、法线和面索引。场景变化后旧 ID 返回 `CAPTURE_STALE`，调用方必须
 重新捕获。`object.geometry.inspect` 提供网格计数、bounds、材质使用、modifier
-和有界拓扑摘要，不返回原始网格数组。
+和有界求值后拓扑摘要。`mesh.inspect` 则分页返回受完整指纹约束的基础 Mesh
+组件；两者不能互换。
 
 ## 受限 LookDev 写入
 
@@ -208,6 +228,7 @@ socket，并标明类型、范围、链接、驱动和可写原因。
 - `object.visibility.set` 只设置 `hide_viewport` / `hide_render`；
 - `modifier.set_state` 只设置 `show_viewport` / `show_render`；
 - `modifier.create/set/move/delete` 管理四类受支持 Modifier 的类型化有序栈；
+- `mesh.edit` 在事务 v4 中修改精确基础 Mesh 组件，并显式选择对象或共享数据范围；
 - `shape_key.set_value` 只设置非 Basis、无驱动且位于现有 slider 范围内的值；
 - `material.set_input` 只设置未链接、无驱动的 Float、Int、Boolean、Vector 或
   Color `default_value`。

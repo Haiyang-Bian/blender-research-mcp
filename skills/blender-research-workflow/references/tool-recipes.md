@@ -203,8 +203,8 @@ scene build may use many writes, up to the transaction's 256-delta bound.
   It rejects the active or selected object because that would invalidate the captured
   user context; change selection explicitly outside the authoring transaction if the
   user's request requires that deletion.
-- Do not approximate unsupported topology with arbitrary mesh-component edits. Compose
-  supported primitives or report the current boundary.
+- Do not approximate a true component-level request with more primitives. Use the exact
+  base-Mesh recipe when `mesh_topology: 1` is available; otherwise report the boundary.
 
 ## Unified object settings
 
@@ -274,6 +274,41 @@ failure, stop the transaction; do not reconstruct or force the old stack through
 
 These tools do not apply Modifiers. Use them for non-destructive whole-object effects,
 not as a substitute for direct mesh-component or UV operations.
+
+## Exact base-Mesh inspection and editing
+
+Use this recipe only for real component or silhouette changes. Surface-only appearance
+belongs in a material, and reversible whole-object effects belong in a typed Modifier.
+
+1. Call `mesh.inspect(..., component="summary")` and retain the exact object/Mesh
+   identities, Mesh users and user-object identities, topology fingerprint, full Mesh
+   fingerprint, counts, budget, data-layer summary, and writability reason. Inspect
+   `vertices`, `edges`, or `faces` pages only for the components the operation needs.
+2. Treat every component index as valid only under that exact full Mesh fingerprint.
+   Use the returned pagination metadata rather than assuming a page is complete.
+3. Begin or continue a transaction with `transactions >= 4`. Send one closed
+   `mesh.edit` operation and a new idempotency UUID, with the latest scene generation
+   and every inspected identity/user/fingerprint guard.
+4. Set `data_scope="OBJECT"` when only the target object should change. Shared data is
+   then copied transactionally and rollback restores the original link. Set
+   `data_scope="SHARED_DATA"` only when the requested edit intentionally applies to the
+   complete inspected Mesh user set.
+5. Use transform, extrude, inset, bevel, delete, dissolve, merge, face settings, or
+   normals only through their typed parameters. Never pass arbitrary BMesh operators,
+   raw coordinate arrays, RNA paths, UV edits, or Python.
+6. After any changed topology operation, discard all prior component pages and inspect
+   again before choosing indices. Carry the response's after-generation, Mesh identity,
+   user set, and full fingerprint to the next edit. A no-op does not advance generation.
+7. Verify the smallest exact component pages plus `object.geometry.inspect` when a
+   Modifier makes evaluated geometry relevant. Commit a coherent requested model only
+   after structured and visual evidence succeeds; otherwise rollback and verify the
+   original fingerprint, attributes, and shared links.
+
+Linked Mesh data, Edit Mode, Shape Keys, pending-delete objects, stale users, stale
+fingerprints, and budget overflow are explicit boundaries. UV, color, material-index,
+smooth, and supported generic layers are snapshot-protected, but only face material
+and smooth are writable in 0.11. On a write or disconnect recovery, verify both the
+Mesh fingerprint and object-to-data relationships before continuing.
 
 ## Principled materials and local textures
 
@@ -359,6 +394,17 @@ requested scope before `allow_shared=true`.
 - `MODIFIER_SETTINGS_RESTORE_FAILED`, `MODIFIER_CREATE_RESTORE_FAILED`, or
   `MODIFIER_MOVE_RESTORE_FAILED`: stop further writes and inspect the entire stack and
   transaction; do not force an assumed baseline.
+- `MESH_FINGERPRINT_MISMATCH`, `MESH_IDENTITY_MISMATCH`, or
+  `MESH_USER_SET_MISMATCH`: discard component indices and re-run the summary plus
+  necessary component pages. Do not reinterpret stale indices against new topology.
+- `MESH_DATA_CONFLICT`: preserve the user's current coordinates, topology, attributes,
+  or sharing state. Stop the transaction workflow and inspect the exact current Mesh.
+- `MESH_EDIT_RESTORE_FAILED`: stop all further writes; inspect transaction state, Mesh
+  identity/fingerprint, user links, protected layers, and context. Never force a copied
+  snapshot over state that cannot be proven to be Agent-owned.
+- `MESH_EDIT_MODE_CONFLICT`, linked data, Shape Key, operation, component-index, or
+  budget failure: correct the typed request or report the boundary; do not switch mode
+  implicitly and do not fall back to arbitrary BMesh/RNA/Python.
 - Object/material/image/collection identity or user-count conflict: re-run the relevant
   inspect tool and rebuild the remainder of the plan from current state.
 - `MATERIAL_LINK_CONFLICT` or `MATERIAL_LINK_IDENTITY_MISMATCH`: re-inspect the complete

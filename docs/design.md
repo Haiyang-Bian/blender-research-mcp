@@ -1,9 +1,9 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.10.2 Blender float32 transaction guard hotfix implemented and live-validated
-- Next milestone: design semantic Mesh topology snapshots and editing for 0.11
+- Status: 0.11.0 semantic base-Mesh editing implemented; automated gate passed, live gate pending
+- Next milestone: complete the 0.11 Blender gate before designing 0.12 UV authority
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.10.2
+- Package and add-on version: 0.11.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,10 +12,11 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.10.2 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.11.0 now covers
 the validated observation/lifecycle/static-authoring path, unified typed object,
-Light, and Camera settings, and four bounded non-destructive Modifier families; the
-older bridge is no longer the primary interface for this repository.
+Light, and Camera settings, four bounded non-destructive Modifier families, and exact
+base-Mesh component editing with transaction snapshots; the older bridge is no longer
+the primary interface for this repository.
 
 That shape creates a poor long-running LookDev loop:
 
@@ -204,6 +205,7 @@ single socket recv call must never be treated as one complete JSON message.
 - context.restore
 - object.inspect
 - object.geometry.inspect
+- mesh.inspect
 - object.lookdev.inspect
 - material.inspect
 - viewport.capture
@@ -226,6 +228,7 @@ normalized image coordinates for evaluated-scene raycasts.
 - modifier.set
 - modifier.move
 - modifier.delete
+- mesh.edit
 - shape_key.set_value
 - material.set_input
 
@@ -240,7 +243,13 @@ Version 0.10 adds a separate typed Modifier-stack domain for Mesh objects. Bevel
 Subdivision, Solidify, and Boolean can be created, configured, reordered, and marked
 for commit-time deletion. Every mutation carries exact object/Modifier identities,
 index, type, and full stack fingerprint. Apply, arbitrary Modifier types/RNA, and direct
-mesh topology remain outside this surface.
+mesh topology remain outside the Modifier surface.
+
+Version 0.11 adds a separate exact base-Mesh domain. `mesh.inspect` pages vertices,
+edges, or faces and binds their ephemeral indices to topology/full SHA-256
+fingerprints. `mesh.edit` routes one closed transform/extrude/inset/bevel/delete/
+dissolve/merge/face-setting/normals request to typed internal BMesh handlers. It is not
+an arbitrary BMesh or RNA writer.
 
 Version 0.10.1 repairs transaction-owned data-user evidence for linked object
 duplicates. A successful linked duplicate refreshes any already guarded Mesh,
@@ -343,6 +352,23 @@ and Boolean enforce bounded geometry budgets. Legacy `modifier.set_state` retain
 schema and works for unsupported Modifier types. See
 `docs/roadmap/0.10.0-modifier-authoring.md` and decision 0009.
 
+### Implemented semantic base-Mesh editing
+
+Version 0.11.0 upgrades transactions to capability version 4 and adds one complete
+Mesh snapshot guard per edited working data-block. The guard preserves Mesh identity,
+object users, topology, coordinates, material/smooth state, UV/color data, and
+supported attributes. Agent writes refresh the expected fingerprint; commit discards
+the baseline, while rollback and disconnect restore it only when the full guard still
+matches.
+
+`OBJECT` scope transactionally single-users shared data for only the target object;
+`SHARED_DATA` edits the exact data-block for its complete inspected user set. Each call
+also keeps a temporary immediate snapshot so a partial Blender write can be locally
+restored and verified. Library links, Edit Mode, Shape Keys, pending deletion,
+unsupported attributes, and fixed geometry budgets are rejected before mutation. See
+`docs/roadmap/0.11.0-semantic-mesh-editing.md` and decision 0010. UV values remain
+read-only until a separate 0.12 contract.
+
 Tool count is not a success metric. A small composable surface with precise
 preconditions is preferable to dozens of overlapping convenience tools.
 
@@ -368,6 +394,11 @@ images, World, and active Camera. Reverse rollback restores original state; obje
 deletion is finalized only after all commit guards pass. Rollback only overwrites state
 that still matches the last Agent write. Blender Undo is not the transaction contract
 because user and Agent actions can interleave.
+
+Transaction capability v4 adds `MeshEditDelta` and `MeshSnapshotGuard`. The first edit
+of one working Mesh owns one baseline `Mesh.copy()`; subsequent edits reuse it and
+advance the expected fingerprint. Component indices are never treated as persistent
+identities and must be reacquired after topology changes.
 
 ## 9. Development phases
 
@@ -481,9 +512,15 @@ duplicate-selection regressions live-validated in 0.10.1.
 
 ### Phase 9 — semantic Mesh topology, then UV
 
-Status: planned. Version 0.11 will design bounded topology inspection/snapshots and
-semantic component editing. Version 0.12 will add UV unwrap/transform only after the
-topology rollback model is proven. Neither responsibility is hidden in Modifier tools.
+Status: 0.11 implementation and automated gate complete; Blender 4.2.23 release gate
+pending. Version 0.12 will add UV unwrap/transform only after the topology rollback
+model is proven. Neither responsibility is hidden in Modifier tools.
+
+- Page exact base-Mesh components and bind indices to full fingerprints.
+- Edit one closed semantic operation through transaction-v4 snapshots.
+- Preserve explicit object-only or complete shared-data scope.
+- Keep material surface detail, Modifier effects, Mesh structure, and future UV
+  authority as separate decisions.
 
 ## 10. Acceptance criteria for the first milestone
 
@@ -527,8 +564,8 @@ research scenarios.
   current traditional ZIP.
 - Whether a bounded repository script tool is necessary beyond project-owned Blender
   drivers/startup scripts; arbitrary inline Python remains out of scope.
-- Which semantic Mesh operations can share one bounded topology snapshot without
-  turning the bridge into arbitrary BMesh/RNA access; keep UV authority for 0.12.
+- Which bounded UV unwrap/island/transform operations can reuse transaction-v4 Mesh
+  snapshots without exposing arbitrary loop arrays; keep that authority for 0.12.
 - Blender 5.x capability policy and the project license; decide both before publishing.
 
 ## 13. Guidance for a new Codex task

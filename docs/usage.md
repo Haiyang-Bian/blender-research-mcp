@@ -17,10 +17,11 @@
    are required. Static authoring additionally requires `transactions: 3` and the
    relevant 0.8 authoring/render capability. Unified object configuration additionally
    requires `object_settings: 1`; typed Modifier authoring requires
-   `modifier_authoring: 1`.
+   `modifier_authoring: 1`. Exact base-Mesh inspection/editing requires
+   `mesh_topology: 1`, and editing additionally requires `transactions: 4`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.10.2.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.11.0.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -70,6 +71,8 @@ Use exact object names from `context.get` or other verified scene metadata.
   Light and Camera objects also return typed data identity, users/shared/library state,
   current settings, writable fields, and ranges.
 - `object.geometry.inspect` returns a bounded evaluated-mesh summary.
+- `mesh.inspect` returns an exact page of base-Mesh components plus fingerprints; use
+  it only when component-level evidence or editing authority is needed.
 - `viewport.capture` returns one focus-independent image and a settled scene generation.
 - `observation.bundle` returns one to three ordered images, defaulting to FRONT, RIGHT,
   and TOP, plus before/after context and object evidence.
@@ -158,7 +161,8 @@ in-memory authoring batch:
 
 Transactions contain at most 256 property plus structural deltas. `object.delete`
 unlinks first, restores links on rollback, and removes the object only after commit
-guards pass. The current surface does not expose arbitrary mesh editing, arbitrary
+guards pass. The current surface exposes only the closed `mesh.edit` operation union;
+it does not expose arbitrary Mesh/BMesh arrays or operators, UV editing, arbitrary
 shader nodes, Geometry Nodes, unsupported Modifier parameters, apply, animation, rigs,
 compositor operations, Cycles, network downloads, or image pack/unpack/reload.
 
@@ -184,8 +188,42 @@ Retain the object identity, ordered item identities/types/indices, and exact
 Every response returns before/after fingerprints, an ordered stack summary, and
 path-sorted changes. Re-inspect after a committed transaction. Do not reuse a stale
 fingerprint after the user renames, adds, removes, reorders, or edits a guarded field.
-The tools do not apply Modifiers or expose arbitrary RNA; direct vertex/edge/face work
-belongs to the later semantic Mesh surface.
+The tools do not apply Modifiers or expose arbitrary RNA. Use them for non-destructive
+whole-object effects; use the exact Mesh workflow below only for real component-level
+structure.
+
+## Edit exact base-Mesh components
+
+Choose the domain before writing: use Principled materials for purely visual surface
+detail such as water ripples, supported Modifiers for reversible whole-object effects,
+and `mesh.edit` only for real silhouette, structure, or component changes.
+
+1. Call `mesh.inspect(object_name, component)` and retain the object/Mesh identities,
+   complete `user_objects`, user count, current generation, and full
+   `mesh_fingerprint`. Page vertices, edges, or faces as needed. Component indices are
+   valid only with that fingerprint.
+2. Begin or continue a transaction with `transactions: 4`. Choose `OBJECT` to affect
+   only the target object (creating a reversible single-user copy if necessary), or
+   `SHARED_DATA` only when the requested scope includes every exact inspected user.
+3. Call one `mesh.edit` operation: transform, face extrusion/inset, edge bevel,
+   delete/dissolve, vertex merge, face settings, or normals. Pass the complete user
+   evidence and a new idempotency UUID.
+4. Read the before/after Mesh identities, counts, topology/full fingerprints, and
+   bounded requested/created/deleted component evidence. A no-op records no delta and
+   does not advance generation.
+5. After any topology change, call `mesh.inspect` again before referring to another
+   component index. Reusing the old fingerprint is invalid even if an index number
+   still exists.
+6. Re-inspect and preview the smallest useful evidence. Commit a requested coherent
+   modeling result, or rollback and verify the original fingerprint, UV/color layers,
+   material slots, Modifier behavior, and sharing relationship.
+
+The transaction stores one full baseline snapshot per edited working Mesh and reuses it
+across later edits. Commit discards it after guard validation; rollback and disconnect
+recovery restore it only while identity, users, protected data, and the Agent's latest
+fingerprint still match. 0.11 preserves UV/color/supported generic data but cannot edit
+their values. It also rejects linked data, Edit Mode, Shape Keys, pending-delete objects,
+unsupported attributes, arbitrary arrays/operators, and Modifier Apply.
 
 `render.preview` and `render.save` use Eevee Next, exact Camera identity, dimensions
 from 256 to 1000, and 1–64 samples. Both restore the previous Camera, engine,
@@ -337,6 +375,15 @@ Codex after the first installation so automatic skill discovery can see it.
 - `MODIFIER_SETTINGS_RESTORE_FAILED`, `MODIFIER_CREATE_RESTORE_FAILED`, or
   `MODIFIER_MOVE_RESTORE_FAILED`: stop the transaction and inspect the complete stack
   before any further mutation.
+- `MESH_FINGERPRINT_MISMATCH`, `MESH_IDENTITY_MISMATCH`, or
+  `MESH_USER_SET_MISMATCH`: discard all component indices and re-run `mesh.inspect`;
+  do not translate an old index onto the new Mesh.
+- `MESH_DATA_CONFLICT`: preserve the user's coordinates, topology, attributes, or
+  sharing change and stop the transaction. Do not force the saved snapshot over it.
+- `MESH_EDIT_RESTORE_FAILED`: stop all writes and inspect the Mesh, object users,
+  context, and active transaction before any recovery decision.
+- Mesh linked/Shape-Key/Edit-Mode/budget/operation rejection: revise the semantic plan
+  within the advertised Mesh surface; do not use arbitrary BMesh, RNA, or Python.
 - Object, collection, data, material, or image identity/user conflict: discard stale
   evidence and rebuild the remaining authoring steps from current inspection.
 - `MATERIAL_LINK_CONFLICT` or `MATERIAL_LINK_IDENTITY_MISMATCH`: inspect the complete

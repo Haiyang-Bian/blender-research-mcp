@@ -1,6 +1,6 @@
 ---
 name: blender-research-workflow
-description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects, typed Modifier stacks, and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, non-destructive Modifier modeling, or static scene delivery; do not use for arbitrary Python, arbitrary node graphs, animation, Modifier apply, or mesh-component editing.
+description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects, exact base-Mesh components, typed Modifier stacks, and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, semantic Mesh modeling, non-destructive Modifier modeling, or static scene delivery; do not use for arbitrary Python, arbitrary BMesh/RNA, arbitrary node graphs, animation, Modifier apply, or UV editing.
 ---
 
 # Blender Research Workflow
@@ -49,7 +49,8 @@ succeed. Do not stop for per-object or per-material confirmation. On any write,
 preview, context, property, or structure conflict, roll the whole transaction back and
 report the preserved state.
 
-Authoring requires `transactions >= 3` plus the capability for each requested domain.
+Authoring requires `transactions >= 3` plus the capability for each requested domain;
+exact component editing requires `transactions >= 4` and `mesh_topology: 1`.
 Use `scene.inspect`, `image.inspect`, and the extended `material.inspect` rather than
 guessing names, slots, nodes, links, users, or session identities. Use only the exposed
 primitive, Principled PBR channel, local-image, World, Camera, and Eevee tools; do not
@@ -83,9 +84,25 @@ exact object/Modifier identities, index, type, and complete stack fingerprint fr
 latest inspection. Use `modifier.set_state` only for legacy viewport/render flags.
 
 Do not use a Modifier as a substitute for requested vertex/edge/face editing or UV
-work, and do not apply it: those require later topology/UV authority. If
+work, and do not apply it: use exact Mesh authority for real component changes and
+report UV editing as outside the current surface. If
 `modifier_authoring: 1` is unavailable, retain compatible older tools and report the
 new-domain boundary rather than falling back to arbitrary RNA or Python.
+
+## Choose material, Modifier, or Mesh authority
+
+Use material tools for visual surface detail such as water ripples, roughness, color,
+and emission when the silhouette and real topology should remain unchanged. Use typed
+Modifiers for reversible whole-object Bevel, Subdivision, Solidify, or Boolean effects.
+Use `mesh.inspect` plus `mesh.edit` only when the user's intent requires a real local
+silhouette, structural, or vertex/edge/face change.
+
+Mesh component indices are evidence scoped to the exact full `mesh_fingerprint` that
+reported them. Re-inspect after every topology-changing edit before choosing later
+components. Explicitly choose `OBJECT` when only the target object should leave shared
+Mesh data, or `SHARED_DATA` when all inspected users should change together. Do not use
+topology to imitate a material effect, edit UVs through Mesh operations, or fall back to
+arbitrary BMesh, RNA, or Python.
 
 ## Ground image evidence
 
@@ -136,6 +153,6 @@ For one supported Modifier parameter, use `modifier_setting` when
 creation/deletion, or reordering as a comparison candidate.
 
 Read [references/tool-recipes.md](references/tool-recipes.md) when executing an
-application/project lifecycle, multi-step scene authoring, Modifier-stack authoring,
-material/texture binding, rendering, observation, comparison, preview, reconnect, or
-recovery workflow.
+application/project lifecycle, multi-step scene authoring, exact Mesh editing,
+Modifier-stack authoring, material/texture binding, rendering, observation,
+comparison, preview, reconnect, or recovery workflow.

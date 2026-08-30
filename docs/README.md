@@ -5,33 +5,38 @@ in this order when starting a new implementation task:
 
 1. [Design and handoff](design.md) — architecture, safety boundaries, implemented
    phases, and open decisions.
-2. [Using Blender Research MCP](usage.md) — current 0.10.2 operator workflow and error
+2. [Using Blender Research MCP](usage.md) — current 0.11.0 operator workflow and error
    recovery.
-3. [0.10.0 Modifier authoring roadmap](roadmap/0.10.0-modifier-authoring.md) — typed
+3. [0.11.0 semantic Mesh editing roadmap](roadmap/0.11.0-semantic-mesh-editing.md) —
+   exact base-Mesh pages, snapshot guards, shared scopes, and bounded topology edits.
+4. [0.10.0 Modifier authoring roadmap](roadmap/0.10.0-modifier-authoring.md) — typed
    inspection, stack guards, four Modifier families, and comparison.
-4. [0.9.0 unified object settings roadmap](roadmap/0.9.0-unified-object-settings.md) —
+5. [0.9.0 unified object settings roadmap](roadmap/0.9.0-unified-object-settings.md) —
    typed object, Light, Camera, and comparison settings.
-5. [0.8.0 semantic scene authoring roadmap](roadmap/0.8.0-semantic-scene-authoring.md) —
+6. [0.8.0 semantic scene authoring roadmap](roadmap/0.8.0-semantic-scene-authoring.md) —
    structural transactions, objects, materials, local images, World/Camera, and renders.
-6. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
+7. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
    launch, project switching, implementation, and completed live evidence.
-7. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
+8. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
    implemented and live-validated comparison contract.
-8. [Architecture decisions](decisions/README.md) — accepted protocol and authority
+9. [Architecture decisions](decisions/README.md) — accepted protocol and authority
    decisions.
-9. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
+10. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
 
 ## Current release
 
+Version 0.11.0 adds paged exact base-Mesh inspection and one transaction-v4 semantic
+component writer with explicit object-only/shared-data scope and reversible Mesh
+snapshots. Its Blender 4.2.23 release gate is pending; automated gates have passed.
 Version 0.10.2 retains the 0.10.0 exact ordered Modifier-stack surface, the 0.10.1
 linked-data guard repair, and compares numeric transaction evidence at Blender's
 actual float32 RNA storage precision.
 Version 0.10.0 added exact ordered Modifier-stack inspection plus create, typed set,
 reorder, deferred delete, and candidate comparison for Bevel, Subdivision, Solidify,
 and Boolean. It builds on the live-validated 0.9 unified object-setting surface.
-Structural transaction v3
-supports exact create, unlink/delete, material-slot, node-link, World, and Camera
-rollback. The automated suite and real Blender moonlit-water gate have both passed; see
+Structural transaction v4 retains v3 exact create, unlink/delete, material-slot,
+node-link, World, and Camera rollback and adds bounded base-Mesh snapshots. The 0.8
+automated suite and real Blender moonlit-water gate have both passed; see
 [the 0.8 validation record](validation/2026-08-29-semantic-scene-authoring.md). The 0.9
 automated and real Blender gates have both passed; see
 [the 0.9 validation record](validation/2026-08-30-unified-object-settings.md). The
@@ -53,8 +58,10 @@ removed after their commits were verified reachable from `main`.
 
 Documentation does not grant additional runtime authority. Unless a later accepted
 decision explicitly changes the contract, the project still forbids arbitrary Python,
-external network services, arbitrary node graphs, mesh-component editing, animation,
-Cycles, and force-overwriting transaction conflicts. Local absolute-path image loading,
+external network services, arbitrary node graphs, arbitrary Mesh/BMesh operations or
+arrays, UV editing, animation, Cycles, and force-overwriting transaction conflicts.
+Bounded semantic base-Mesh component edits are available only through `mesh.edit`.
+Local absolute-path image loading,
 bounded object location/rotation, fixed semantic nodes, and explicit render export are
 available only through their 0.8 tools. Blend-file saving remains an explicit lifecycle
 operation following user save/open/reload/quit or delivery intent.
