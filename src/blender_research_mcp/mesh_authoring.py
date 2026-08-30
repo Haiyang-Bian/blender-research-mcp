@@ -16,6 +16,15 @@ from blender_research_mcp.mesh_resources import (
     ShrinkwrapOperation,
     SmoothOperation,
 )
+from blender_research_mcp.mesh_topology import (
+    BisectOperation,
+    BridgeOperation,
+    FillOperation,
+    GridFillOperation,
+    LoopCutOperation,
+    SplitOperation,
+    SubdivideOperation,
+)
 
 MeshComponent = Literal["summary", "vertices", "edges", "faces"]
 MeshDataScope = Literal["OBJECT", "SHARED_DATA"]
@@ -247,6 +256,13 @@ MeshOperation = Annotated[
     | ProjectOperation
     | ShrinkwrapOperation
     | InflateOperation
-    | FlattenOperation,
+    | FlattenOperation
+    | SubdivideOperation
+    | LoopCutOperation
+    | BisectOperation
+    | SplitOperation
+    | BridgeOperation
+    | FillOperation
+    | GridFillOperation,
     Field(discriminator="type"),
 ]

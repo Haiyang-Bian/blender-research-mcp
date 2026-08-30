@@ -4,6 +4,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -135,6 +136,56 @@ def test_semantic_deformations_are_closed_and_typed(payload: dict[str, object]) 
         OPERATIONS.validate_python({**payload, "unsupported": True})
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"type": "subdivide", "selection_id": "selection", "cuts": 2},
+        {
+            "type": "loop_cut",
+            "selection_id": "selection",
+            "cuts": 2,
+            "interpolation": "SURFACE",
+        },
+        {
+            "type": "bisect",
+            "selection_id": "selection",
+            "plane_origin": {"x": 0, "y": 0, "z": 0},
+            "plane_normal": {"x": 0, "y": 0, "z": 1},
+            "clear_side": "POSITIVE",
+        },
+        {"type": "split", "selection_id": "selection"},
+        {"type": "bridge", "selection_id": "selection", "twist_offset": -2},
+        {"type": "fill", "selection_id": "selection", "method": "TRIANGLES"},
+        {"type": "grid_fill", "selection_id": "selection", "use_interp_simple": True},
+    ],
+)
+def test_revision_aware_topology_operations_are_closed_and_typed(
+    payload: dict[str, object],
+) -> None:
+    assert OPERATIONS.validate_python(payload).type == payload["type"]
+    with pytest.raises(ValidationError):
+        OPERATIONS.validate_python({**payload, "unsupported": True})
+
+
+def test_revision_aware_topology_ranges_and_dependencies() -> None:
+    invalid = [
+        {"type": "subdivide", "selection_id": "a", "cuts": 0},
+        {"type": "loop_cut", "selection_id": "a", "cuts": 33},
+        {
+            "type": "bisect",
+            "selection_id": "a",
+            "plane_origin": {"x": 0, "y": 0, "z": 0},
+            "plane_normal": {"x": 0, "y": 0, "z": 0},
+        },
+        {"type": "bridge", "selection_id": "a", "twist_offset": 4097},
+        {"type": "fill", "selection_id": "a", "max_sides": True},
+        {"type": "grid_fill", "selection_id": "a", "use_interp_simple": 1},
+    ]
+    for payload in invalid:
+        with pytest.raises(ValidationError):
+            OPERATIONS.validate_python(payload)
+
+
 def test_deformation_dependencies_and_strict_ranges() -> None:
     invalid = [
         {"type": "set_positions", "selection_id": "a", "positions": []},
@@ -234,3 +285,36 @@ def test_selection_resource_hash_covers_revision_domain_indices_and_weights() ->
     assert baseline != module.selection_content_hash("a" * 64, "EDGE", (1, 2), (1.0, 0.5))
     assert baseline != module.selection_content_hash("a" * 64, "VERTEX", (1, 3), (1.0, 0.5))
     assert baseline != module.selection_content_hash("a" * 64, "VERTEX", (1, 2), None)
+
+
+def test_component_map_resource_book_is_lru_bounded_and_distinguishes_expiry() -> None:
+    module = load_resource_model()
+    module.MAX_COMPONENT_MAPS = 2
+    book = module.MeshResourceBook()
+
+    def add(identifier: str):
+        record = SimpleNamespace(component_map_id=identifier, relation_count=1)
+        return book.add_component_map(record)
+
+    first = add("map-1")
+    add("map-2")
+    assert book.component_map("map-1") is first
+    third = add("map-3")
+    assert book.component_map("map-1") is first
+    assert book.component_map("map-3") is third
+    with pytest.raises(module.MeshResourceError) as expired:
+        book.component_map("map-2")
+    assert expired.value.code == "MESH_COMPONENT_MAP_EXPIRED"
+    with pytest.raises(module.MeshResourceError) as missing:
+        book.component_map("never-created")
+    assert missing.value.code == "MESH_COMPONENT_MAP_NOT_FOUND"
+
+
+def test_component_map_resource_book_enforces_per_resource_budget() -> None:
+    module = load_resource_model()
+    module.MAX_SINGLE_COMPONENT_MAP_RELATIONS = 2
+    book = module.MeshResourceBook()
+    record = SimpleNamespace(component_map_id="too-large", relation_count=3)
+    with pytest.raises(module.MeshResourceError) as budget:
+        book.add_component_map(record)
+    assert budget.value.code == "MESH_COMPONENT_MAP_BUDGET_EXCEEDED"

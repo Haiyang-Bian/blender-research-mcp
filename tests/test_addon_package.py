@@ -108,6 +108,9 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
         "mesh.selection.derive",
         "mesh.selection.inspect",
         "mesh.selection.release",
+        "mesh.component_map.inspect",
+        "mesh.component_map.release",
+        "mesh.selection.remap",
         "mesh.surface.prepare",
         "mesh.surface.query",
         "mesh.validate",
@@ -124,12 +127,13 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
     ):
         assert command in state
     for capability in (
-        '"transactions": 6',
+        '"transactions": 7',
         '"scene_inspection": 1',
         '"object_authoring": 1',
         '"object_settings": 1',
         '"modifier_authoring": 1',
-        '"mesh_topology": 1',
+        '"mesh_topology": 2',
+        '"mesh_component_map": 1',
         '"mesh_selection": 1',
         '"mesh_surface_query": 1',
         '"mesh_deformation": 1',
