@@ -10,6 +10,7 @@ from .mesh_component_map_model import (
     DOMAINS,
     ComponentMapRecord,
     remap_relation_values,
+    reverse_relation_values,
 )
 from .mesh_ops import mesh_fingerprint, mesh_revision_id, mesh_user_refs
 from .mesh_resource_model import MeshResourceBook, MeshResourceError, SelectionRecord
@@ -43,18 +44,7 @@ def inspect_component_map(book: MeshResourceBook, params: dict[str, Any]) -> dic
             for item in record.relations.get(domain, ())
         )
     elif direction == "REVERSE":
-        reverse: dict[int, list[int]] = {}
-        for item in record.relations.get(domain, ()):
-            for target in item.target_indices:
-                reverse.setdefault(target, []).append(item.source_index)
-        values = tuple(
-            {
-                "target_index": target,
-                "source_indices": sorted(sources),
-                "relation": "MERGED" if len(sources) > 1 else "DERIVED",
-            }
-            for target, sources in sorted(reverse.items())
-        )
+        values = reverse_relation_values(record.relations.get(domain, ()))
     elif direction == "CREATED":
         values = tuple(record.created.get(domain, ()))
     else:

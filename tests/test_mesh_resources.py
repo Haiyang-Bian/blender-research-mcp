@@ -381,6 +381,21 @@ def test_component_map_exact_survivors_excludes_descendants() -> None:
     assert missing == (2,)
 
 
+def test_component_map_reverse_relations_preserve_survival_and_detect_merges() -> None:
+    module = load_component_map_model()
+    reverse = module.reverse_relation_values(
+        (
+            module.ComponentRelation(0, (4,), "SURVIVED"),
+            module.ComponentRelation(1, (5,), "DERIVED"),
+            module.ComponentRelation(2, (5,), "DERIVED"),
+        )
+    )
+    assert reverse == (
+        {"target_index": 4, "source_indices": [0], "relation": "SURVIVED"},
+        {"target_index": 5, "source_indices": [1, 2], "relation": "MERGED"},
+    )
+
+
 def test_component_map_hash_covers_lineage_and_revisions() -> None:
     module = load_component_map_model()
     before = {

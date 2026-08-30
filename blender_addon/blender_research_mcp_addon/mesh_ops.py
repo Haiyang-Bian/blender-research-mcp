@@ -1511,15 +1511,24 @@ def _operation_merge(bm: Any, operation: dict[str, Any]) -> dict[str, Any]:
             raise MeshOperationError(
                 "MESH_OPERATION_INVALID", "target_index must be in vertex_indices"
             )
-        merge_co = bm.verts[target_index].co.copy()
+        target = bm.verts[target_index]
+        target_source_index = int(target_index)
+        merge_co = target.co.copy()
     else:
         merge_co = sum((vert.co for vert in verts), Vector()) / len(verts)
+        target = verts[0]
+        target_source_index = int(indices[0])
     before = (len(bm.verts), len(bm.edges), len(bm.faces))
-    bmesh.ops.pointmerge(bm, verts=verts, merge_co=merge_co)
+    target.co = merge_co
+    bmesh.ops.weld_verts(
+        bm,
+        targetmap={vertex: target for vertex in verts if vertex is not target},
+    )
     return {
         "deleted_vertices": before[0] - len(bm.verts),
         "deleted_edges": before[1] - len(bm.edges),
         "deleted_faces": before[2] - len(bm.faces),
+        "_merged_target_source": target_source_index,
     }
 
 
@@ -1720,6 +1729,7 @@ def edit_mesh(
     component_map = None
     created_selections: dict[str, dict[str, Any]] = {}
     created_selection_ids: list[str] = []
+    merged_target_source = None
     try:
         bm.from_mesh(mesh)
         component_baseline = _bmesh_baseline(bm)
@@ -1737,6 +1747,8 @@ def edit_mesh(
             evidence = _operation_face_settings(bm, operation, len(mesh.materials))
         else:
             evidence = _OPERATION_HANDLERS[operation_type](bm, operation)
+        if operation_type == "merge_vertices":
+            merged_target_source = evidence.pop("_merged_target_source")
         bm.normal_update()
         components = _component_changes(bm, component_baseline)
         components["affected"] = requested
@@ -1752,7 +1764,48 @@ def edit_mesh(
             )
         relations = created = deleted = None
         if lineage is not None:
-            relations, created, deleted = _finish_lineage(bm, lineage)
+            relations, created, deleted = _finish_lineage(
+                bm, lineage, str(operation_type)
+            )
+            if operation_type == "merge_vertices":
+                from .mesh_component_map_model import ComponentRelation
+
+                merged_sources = _indices(operation.get("vertex_indices"), "vertex_indices")
+                bm.verts.index_update()
+                target_relation = next(
+                    (
+                        item
+                        for item in relations["VERTEX"]
+                        if item.source_index == merged_target_source
+                    ),
+                    None,
+                )
+                if target_relation is None or len(target_relation.target_indices) != 1:
+                    raise MeshOperationError(
+                        "MESH_LINEAGE_GENERATION_FAILED",
+                        "Could not identify the exact merged vertex",
+                    )
+                target_index = target_relation.target_indices[0]
+                unrelated = tuple(
+                    item
+                    for item in relations["VERTEX"]
+                    if item.source_index not in merged_sources
+                )
+                relations["VERTEX"] = tuple(
+                    sorted(
+                        (
+                            *unrelated,
+                            *(
+                                ComponentRelation(source, (target_index,), "MERGED")
+                                for source in merged_sources
+                            ),
+                        ),
+                        key=lambda item: item.source_index,
+                    )
+                )
+                deleted["VERTEX"] = tuple(
+                    index for index in deleted["VERTEX"] if index not in merged_sources
+                )
             lineage = None
         bm.to_mesh(mesh)
         mesh.update(calc_edges=True, calc_edges_loose=True)

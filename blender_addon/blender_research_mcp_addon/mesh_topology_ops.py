@@ -505,7 +505,9 @@ def _start_lineage(bm: Any) -> dict[str, _LineageLayer]:
 
 
 def _finish_lineage(
-    bm: Any, layers: dict[str, _LineageLayer]
+    bm: Any,
+    layers: dict[str, _LineageLayer],
+    operation_type: str,
 ) -> tuple[
     dict[str, tuple[ComponentRelation, ...]],
     dict[str, tuple[int, ...]],
@@ -530,7 +532,10 @@ def _finish_lineage(
         rows = []
         deleted_indices = []
         for source, before_item in enumerate(state.before):
-            mapped = tuple(sorted(set(targets.get(source, ()))))
+            exact_targets = set(targets.get(source, ()))
+            if before_item.is_valid:
+                exact_targets.add(int(before_item.index))
+            mapped = tuple(sorted(exact_targets))
             if not mapped:
                 deleted_indices.append(source)
                 continue
@@ -674,7 +679,7 @@ def edit_mesh_topology(
             raise MeshOperationError(
                 "MESH_BUDGET_EXCEEDED", "Topology operation exceeds the Mesh budget"
             )
-        relations, created, deleted = _finish_lineage(bm, lineage)
+        relations, created, deleted = _finish_lineage(bm, lineage, operation_type)
         lineage = None
         bm.to_mesh(mesh)
         mesh.update(calc_edges=True, calc_edges_loose=True)

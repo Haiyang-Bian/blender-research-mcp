@@ -187,3 +187,20 @@ def remap_relation_values(
             for index in indices
         )
     return indices, remapped_weights, tuple(missing)
+
+
+def reverse_relation_values(
+    relations: tuple[ComponentRelation, ...],
+) -> tuple[dict[str, Any], ...]:
+    reverse: dict[int, list[tuple[int, str]]] = {}
+    for item in relations:
+        for target in item.target_indices:
+            reverse.setdefault(target, []).append((item.source_index, item.relation))
+    return tuple(
+        {
+            "target_index": target,
+            "source_indices": sorted(source for source, _relation in sources),
+            "relation": "MERGED" if len(sources) > 1 else sources[0][1],
+        }
+        for target, sources in sorted(reverse.items())
+    )
