@@ -439,4 +439,3 @@ BatchStep = Annotated[
 BatchTargets = Annotated[tuple[BatchTarget, ...], Field(min_length=1, max_length=8)]
 BatchInputs = Annotated[tuple[BatchInput, ...], Field(max_length=64)]
 BatchSteps = Annotated[tuple[BatchStep, ...], Field(min_length=1, max_length=32)]
-

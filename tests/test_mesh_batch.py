@@ -132,7 +132,6 @@ def test_batch_edit_operations_reject_invalid_closed_settings(
             ]
         )
 
-
 def test_batch_validation_surface_contract_is_closed() -> None:
     with pytest.raises(ValidationError):
         TypeAdapter(BatchSteps).validate_python(
@@ -145,4 +144,3 @@ def test_batch_validation_surface_contract_is_closed() -> None:
                 }
             ]
         )
-

@@ -68,6 +68,8 @@ SelectionSet 与求值曲面拟合见
 [0.12.0 验收记录](docs/validation/2026-08-31-selection-surface-fitting.md)，拓扑 revision
 与 ComponentMap 见
 [0.13.0 验收记录](docs/validation/2026-08-31-topology-component-maps.md)。
+0.13.1 对象分离与声明式 batch 见
+[0.13.1 验收记录](docs/validation/2026-08-31-mesh-separation-batches.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见

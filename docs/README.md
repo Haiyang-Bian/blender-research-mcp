@@ -51,7 +51,8 @@ Version 0.13.1 is the current implementation milestone. It composes exact map ch
 separates one connected face region into a guarded object branch, and executes bounded
 Mesh-only declarative batches with named resources, automatic remapping, validation
 assertions, one-generation success semantics, and whole-transaction runtime recovery.
-Its final validation record is added only after the complete Blender gate passes.
+Its automated, focused Blender, and full `test-model.blend` regression gates passed;
+see [the 0.13.1 validation record](validation/2026-08-31-mesh-separation-batches.md).
 
 Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
 SurfaceRefs, topology-preserving surface deformation, and quantitative Mesh validation;
