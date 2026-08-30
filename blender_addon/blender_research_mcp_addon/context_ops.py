@@ -122,6 +122,20 @@ def capture_context(viewport_id: str | None = None) -> dict[str, Any]:
     }
 
 
+def capture_transaction_context() -> dict[str, Any]:
+    """Capture write-relevant state without requiring a VIEW_3D area."""
+
+    scene = bpy.context.scene
+    view_layer = bpy.context.view_layer
+    return {
+        "scene": scene.name,
+        "view_layer": view_layer.name,
+        "mode": bpy.context.mode,
+        "frame_current": scene.frame_current,
+        "active_camera": scene.camera.name if scene.camera else None,
+    }
+
+
 def _find_viewport(snapshot: dict[str, Any]) -> ViewportContext:
     for viewport in list_viewports():
         if (
@@ -499,6 +513,7 @@ def capture_viewport(
     display_mode: str = "CURRENT",
     overlays: str = "CURRENT",
     orbit: dict[str, Any] | None = None,
+    view_reference: CaptureEvidence | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if view not in {"FRONT", "RIGHT", "TOP", "BACK", "LEFT", "BOTTOM", "CURRENT"}:
         raise ContextOperationError("VIEW_INVALID", f"Unsupported view: {view}", kind="validation")
@@ -518,8 +533,33 @@ def capture_viewport(
         )
     if obj.hide_viewport or not obj.visible_get():
         raise ContextOperationError("OBJECT_HIDDEN", f"Object is not visible: {object_name}")
+    if view_reference is not None:
+        if view_reference.scene != bpy.context.scene.name:
+            raise ContextOperationError(
+                "CAPTURE_REFERENCE_STALE",
+                "The comparison view reference belongs to a different Scene",
+                kind="conflict",
+            )
+        if view_reference.target_name != object_name or view_reference.target_identity != (
+            f"object:{obj.as_pointer():x}"
+        ):
+            raise ContextOperationError(
+                "CAPTURE_REFERENCE_TARGET_MISMATCH",
+                "The comparison view reference belongs to a different target object",
+                kind="conflict",
+            )
+        viewport_id = view_reference.viewport_id
     snapshot = capture_context(viewport_id)
     viewport = _find_viewport(snapshot)
+    if (
+        view_reference is not None
+        and view_reference.view_layer != viewport.window.view_layer.name
+    ):
+        raise ContextOperationError(
+            "CAPTURE_REFERENCE_STALE",
+            "The comparison view reference belongs to a different View Layer",
+            kind="conflict",
+        )
     preferences_view = bpy.context.preferences.view
     smooth_view = preferences_view.smooth_view
     result: dict[str, Any] | None = None
@@ -533,39 +573,61 @@ def capture_viewport(
             area=viewport.area,
             region=viewport.region,
         ):
-            for candidate in bpy.context.view_layer.objects:
-                candidate.select_set(False)
-            obj.select_set(True)
-            bpy.context.view_layer.objects.active = obj
-            if view != "CURRENT" and "FINISHED" not in bpy.ops.view3d.view_axis(
-                type=view,
-                align_active=False,
-            ):
-                raise ContextOperationError("VIEW_AXIS_FAILED", f"Could not set view {view}")
-            if "FINISHED" not in bpy.ops.view3d.view_selected(use_all_regions=False):
-                raise ContextOperationError("VIEW_FRAME_FAILED", f"Could not frame {object_name}")
-            if orbit_values is not None:
-                _apply_orbit(*orbit_values)
-            if display_mode != "CURRENT":
-                viewport.space.shading.type = display_mode
-            if overlays != "CURRENT":
-                viewport.space.overlay.show_overlays = overlays == "ON"
-            viewport.space.region_3d.update()
-            width, height = bounded_dimensions(
-                viewport.region.width,
-                viewport.region.height,
-                max_size,
-            )
-            region_3d = viewport.space.region_3d
-            view_matrix = region_3d.view_matrix.copy()
-            projection_matrix = region_3d.window_matrix.copy()
-            perspective_matrix = region_3d.perspective_matrix.copy()
-            view_rows = _matrix_rows(view_matrix)
-            projection_rows = _matrix_rows(projection_matrix)
-            perspective_rows = _matrix_rows(perspective_matrix)
-            projection_kind = "PERSP" if region_3d.is_perspective else "ORTHO"
-            actual_display_mode = str(viewport.space.shading.type)
-            actual_overlays = "ON" if viewport.space.overlay.show_overlays else "OFF"
+            if view_reference is None:
+                for candidate in bpy.context.view_layer.objects:
+                    candidate.select_set(False)
+                obj.select_set(True)
+                bpy.context.view_layer.objects.active = obj
+                if view != "CURRENT" and "FINISHED" not in bpy.ops.view3d.view_axis(
+                    type=view,
+                    align_active=False,
+                ):
+                    raise ContextOperationError("VIEW_AXIS_FAILED", f"Could not set view {view}")
+                if "FINISHED" not in bpy.ops.view3d.view_selected(use_all_regions=False):
+                    raise ContextOperationError(
+                        "VIEW_FRAME_FAILED", f"Could not frame {object_name}"
+                    )
+                if orbit_values is not None:
+                    _apply_orbit(*orbit_values)
+                if display_mode != "CURRENT":
+                    viewport.space.shading.type = display_mode
+                if overlays != "CURRENT":
+                    viewport.space.overlay.show_overlays = overlays == "ON"
+                viewport.space.region_3d.update()
+                width, height = bounded_dimensions(
+                    viewport.region.width,
+                    viewport.region.height,
+                    max_size,
+                )
+                region_3d = viewport.space.region_3d
+                view_matrix = region_3d.view_matrix.copy()
+                projection_matrix = region_3d.window_matrix.copy()
+                perspective_matrix = region_3d.perspective_matrix.copy()
+                view_rows = _matrix_rows(view_matrix)
+                projection_rows = _matrix_rows(projection_matrix)
+                perspective_rows = _matrix_rows(perspective_matrix)
+                projection_kind = "PERSP" if region_3d.is_perspective else "ORTHO"
+                actual_display_mode = str(viewport.space.shading.type)
+                actual_overlays = "ON" if viewport.space.overlay.show_overlays else "OFF"
+                actual_view = view
+                clip_start = float(viewport.space.clip_start)
+                clip_end = float(viewport.space.clip_end)
+            else:
+                width, height = view_reference.width, view_reference.height
+                view_matrix = Matrix(view_reference.view_matrix)
+                projection_matrix = Matrix(view_reference.projection_matrix)
+                perspective_matrix = Matrix(view_reference.perspective_matrix)
+                view_rows = view_reference.view_matrix
+                projection_rows = view_reference.projection_matrix
+                perspective_rows = view_reference.perspective_matrix
+                projection_kind = view_reference.projection_kind
+                actual_display_mode = view_reference.display_mode
+                actual_overlays = view_reference.overlays
+                actual_view = view_reference.view
+                clip_start = view_reference.clip_start
+                clip_end = view_reference.clip_end
+                viewport.space.shading.type = actual_display_mode
+                viewport.space.overlay.show_overlays = actual_overlays == "ON"
             try:
                 offscreen = gpu.types.GPUOffScreen(width, height, format="RGBA8")
                 offscreen.draw_view3d(
@@ -608,7 +670,7 @@ def capture_viewport(
         png_width, png_height = _png_size(data)
         result = {
             "object_name": object_name,
-            "view": view,
+            "view": actual_view,
             "display_mode": actual_display_mode,
             "overlays": actual_overlays,
             "orbit": (
@@ -617,6 +679,9 @@ def capture_viewport(
                 else None
             ),
             "viewport_id": viewport.viewport_id,
+            "view_reference_capture_id": (
+                view_reference.capture_id if view_reference is not None else None
+            ),
             "native_width": png_width,
             "native_height": png_height,
             "max_size": max_size,
@@ -638,15 +703,15 @@ def capture_viewport(
             "target_name": object_name,
             "target_identity": f"object:{obj.as_pointer():x}",
             "viewport_id": viewport.viewport_id,
-            "view": view,
+            "view": actual_view,
             "display_mode": actual_display_mode,
             "overlays": actual_overlays,
             "width": png_width,
             "height": png_height,
             "native_sha256": result["native_sha256"],
             "projection_kind": projection_kind,
-            "clip_start": float(viewport.space.clip_start),
-            "clip_end": float(viewport.space.clip_end),
+            "clip_start": clip_start,
+            "clip_end": clip_end,
             "view_matrix": view_rows,
             "projection_matrix": projection_rows,
             "perspective_matrix": perspective_rows,

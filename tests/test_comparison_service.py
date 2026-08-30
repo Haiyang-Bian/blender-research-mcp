@@ -15,6 +15,7 @@ class FakeComparisonClient:
         self.generation = 0
         self.heartbeat = 100
         self.context_marker = "stable"
+        self.mode = "OBJECT"
         self.object_identity = "object-id"
         self.scale = [1.0, 1.0, 1.0]
         self.hide_render = False
@@ -68,7 +69,7 @@ class FakeComparisonClient:
         if command == "context.get":
             return {
                 "scene": "Scene",
-                "mode": "OBJECT",
+                "mode": self.mode,
                 "active_object": "mesh",
                 "selected_objects": ["mesh"],
                 "marker": self.context_marker,
@@ -201,6 +202,8 @@ class FakeComparisonClient:
                 "scene_generation": self.generation,
             }
         if command == "viewport.capture":
+            if self.active is not None:
+                assert params["_view_reference_capture_id"] is not None
             image = self._image()
             return {
                 "png_base64": base64.b64encode(image).decode("ascii"),
@@ -827,7 +830,7 @@ def test_context_or_identity_drift_after_rollback_is_a_restore_failure(drift: st
         del label, details
         if phase == "after_rollback":
             if drift == "context":
-                client.context_marker = "user-edit"
+                client.mode = "EDIT_MESH"
             else:
                 client.object_identity = "replacement"
 
@@ -841,6 +844,30 @@ def test_context_or_identity_drift_after_rollback_is_a_restore_failure(drift: st
         )
 
     assert exc_info.value.error.code == "COMPARISON_RESTORE_FAILED"
+
+
+def test_selection_or_view_drift_does_not_invalidate_comparison() -> None:
+    client = FakeComparisonClient()
+
+    async def drift_after_rollback(
+        phase: str,
+        label: str | None,
+        details: dict[str, Any],
+    ) -> None:
+        del label, details
+        if phase == "after_rollback":
+            client.context_marker = "user-navigation"
+
+    images, result = asyncio.run(
+        run_lookdev_comparison(
+            client,
+            request("shape_key_value", (0.1,)),
+            _phase_hook=drift_after_rollback,
+        )
+    )
+
+    assert len(images) == 2
+    assert result["target_restored"] is True
 
 
 def test_live_range_and_material_scope_are_rechecked_before_mutation() -> None:

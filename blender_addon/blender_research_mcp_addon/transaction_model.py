@@ -11,6 +11,23 @@ from dataclasses import dataclass, field
 from typing import Any
 
 MAX_TRANSACTION_DELTAS = 256
+TRANSACTION_CONTEXT_KEYS = (
+    "scene",
+    "view_layer",
+    "mode",
+    "frame_current",
+    "active_camera",
+)
+USER_UI_CONTEXT_KEYS = (
+    "workspace",
+    "window_id",
+    "area_id",
+    "region_id",
+    "viewport_id",
+    "active_object",
+    "selected_objects",
+    "view",
+)
 
 
 class TransactionModelError(RuntimeError):
@@ -611,6 +628,42 @@ def context_fingerprint(snapshot: dict[str, Any]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def context_projection(
+    snapshot: dict[str, Any],
+    keys: tuple[str, ...],
+) -> dict[str, Any]:
+    """Return a stable named projection without treating absent fields as evidence."""
+
+    return {key: snapshot[key] for key in keys if key in snapshot}
+
+
+def transaction_context_state(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Keep only state that can change the meaning or safety of a scene write."""
+
+    return context_projection(snapshot, TRANSACTION_CONTEXT_KEYS)
+
+
+def user_ui_context_state(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Keep navigation and selection evidence that belongs to the human UI."""
+
+    return context_projection(snapshot, USER_UI_CONTEXT_KEYS)
+
+
+def changed_context_paths(before: Any, after: Any, prefix: str = "") -> list[str]:
+    """Describe exact nested context drift for diagnostics and preservation evidence."""
+
+    if isinstance(before, dict) and isinstance(after, dict):
+        changed: list[str] = []
+        for key in sorted(before.keys() | after.keys()):
+            path = f"{prefix}.{key}" if prefix else str(key)
+            if key not in before or key not in after:
+                changed.append(path)
+            else:
+                changed.extend(changed_context_paths(before[key], after[key], path))
+        return changed
+    return [] if before == after else [prefix or "context"]
 
 
 class IdempotencyCache:

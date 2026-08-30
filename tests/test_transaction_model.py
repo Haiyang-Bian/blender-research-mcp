@@ -21,6 +21,69 @@ def load_transaction_model():
     return module
 
 
+def test_transaction_context_excludes_collaborative_ui_state() -> None:
+    model = load_transaction_model()
+    baseline = {
+        "scene": "Scene",
+        "view_layer": "ViewLayer",
+        "mode": "OBJECT",
+        "frame_current": 1,
+        "active_camera": "Camera",
+        "workspace": "Layout",
+        "viewport_id": "1:2",
+        "active_object": "Cube",
+        "selected_objects": ["Cube"],
+        "view": {"distance": 2.0, "shading": "SOLID"},
+    }
+    changed_ui = {
+        **baseline,
+        "workspace": "Modeling",
+        "viewport_id": "5:6",
+        "active_object": "Sphere",
+        "selected_objects": ["Sphere"],
+        "view": {"distance": 5.0, "shading": "MATERIAL"},
+    }
+
+    assert model.transaction_context_state(baseline) == model.transaction_context_state(
+        changed_ui
+    )
+    assert model.changed_context_paths(
+        model.user_ui_context_state(baseline),
+        model.user_ui_context_state(changed_ui),
+    ) == [
+        "active_object",
+        "selected_objects",
+        "view.distance",
+        "view.shading",
+        "viewport_id",
+        "workspace",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("scene", "Other"),
+        ("view_layer", "Other"),
+        ("mode", "EDIT_MESH"),
+        ("frame_current", 2),
+        ("active_camera", "Camera.B"),
+    ],
+)
+def test_transaction_context_keeps_write_relevant_state(field: str, value: object) -> None:
+    model = load_transaction_model()
+    baseline = {
+        "scene": "Scene",
+        "view_layer": "ViewLayer",
+        "mode": "OBJECT",
+        "frame_current": 1,
+        "active_camera": "Camera",
+    }
+    changed = {**baseline, field: value}
+
+    assert model.transaction_context_state(baseline) != model.transaction_context_state(changed)
+
+
 def test_transaction_book_is_single_owner_and_tracks_expected_properties() -> None:
     model = load_transaction_model()
     book = model.TransactionBook()

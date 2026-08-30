@@ -25,6 +25,7 @@ from pydantic import (
     model_validator,
 )
 
+from blender_research_mcp.context_policy import changed_paths, guarded_context_identity
 from blender_research_mcp.errors import BridgeError, ErrorInfo, ErrorKind
 from blender_research_mcp.observation import (
     capture_image,
@@ -1305,13 +1306,15 @@ def _assert_target_matches(baseline: ResolvedTarget, current: ResolvedTarget) ->
 
 
 def _assert_context_matches(baseline: dict[str, Any], current: dict[str, Any]) -> None:
-    if _identity(baseline) != _identity(current):
+    baseline_identity = guarded_context_identity(baseline)
+    current_identity = guarded_context_identity(current)
+    if baseline_identity != current_identity:
         raise comparison_error(
             ErrorKind.CONFLICT,
             "COMPARISON_CONTEXT_DRIFT",
             "Blender user context changed during comparison",
             retryable=True,
-            details={"changed_fields": _changed_fields(_identity(baseline), _identity(current))},
+            details={"changed_fields": changed_paths(baseline_identity, current_identity)},
         )
 
 
@@ -1622,6 +1625,7 @@ async def run_lookdev_comparison(
                 display_mode=capture.display_mode,
                 overlays=capture.overlays,
                 orbit=capture.orbit.model_dump() if capture.orbit is not None else None,
+                view_reference_capture_id=str(baseline_capture["capture_id"]),
             )
             await settle_capture_generation(client, capture_metadata)  # type: ignore[arg-type]
             try:

@@ -25,13 +25,13 @@ from .capture_model import CaptureBook, CaptureEvidence
 from .context_ops import (
     ContextOperationError,
     capture_context,
+    capture_transaction_context,
     capture_viewport,
     context_summary,
     inspect_geometry,
     inspect_object,
     raycast_capture,
     restore_context,
-    validate_context_snapshot,
 )
 from .generation import has_persistent_scene_update
 from .lookdev_model import LookdevModelError, normalize_material_value
@@ -120,8 +120,11 @@ from .transaction_model import (
     Transaction,
     TransactionBook,
     TransactionModelError,
+    changed_context_paths,
     context_fingerprint,
     request_fingerprint,
+    transaction_context_state,
+    user_ui_context_state,
     values_equal,
 )
 from .wire import PROTOCOL_VERSION
@@ -796,6 +799,22 @@ class AddonState:
                     "object_name must be a non-empty string",
                     kind="validation",
                 )
+            view_reference: CaptureEvidence | None = None
+            view_reference_capture_id = params.get("_view_reference_capture_id")
+            if view_reference_capture_id is not None:
+                if not isinstance(view_reference_capture_id, str) or not view_reference_capture_id:
+                    raise ContextOperationError(
+                        "CAPTURE_REFERENCE_INVALID",
+                        "_view_reference_capture_id must be a non-empty string",
+                        kind="validation",
+                    )
+                view_reference = self.captures.get(view_reference_capture_id)
+                if view_reference is None:
+                    raise ContextOperationError(
+                        "CAPTURE_REFERENCE_NOT_FOUND",
+                        f"Capture view reference does not exist: {view_reference_capture_id}",
+                        kind="not_found",
+                    )
             with self.suppress_generation():
                 result, evidence_data = capture_viewport(
                     object_name,
@@ -805,6 +824,7 @@ class AddonState:
                     str(params.get("display_mode", "CURRENT")),
                     str(params.get("overlays", "CURRENT")),
                     params.get("orbit"),
+                    view_reference,
                 )
             capture_id = str(uuid.uuid4())
             evidence = CaptureEvidence(
@@ -882,7 +902,7 @@ class AddonState:
             transaction = self.transactions.begin(
                 label=label,
                 context_snapshot=snapshot,
-                context_fingerprint=context_fingerprint(snapshot),
+                context_fingerprint=context_fingerprint(transaction_context_state(snapshot)),
                 scene_generation=self.scene_generation,
             )
             return self._transaction_result(transaction)
@@ -1431,18 +1451,45 @@ class AddonState:
         return self.transactions.require(transaction_id)
 
     def _current_context_fingerprint(self, transaction: Transaction) -> str:
+        del transaction
         with self.suppress_generation():
-            current = capture_context(transaction.context_snapshot["viewport_id"])
-        return context_fingerprint(current)
+            current = capture_transaction_context()
+        return context_fingerprint(transaction_context_state(current))
+
+    def _current_transaction_context(self) -> dict[str, Any]:
+        with self.suppress_generation():
+            return transaction_context_state(capture_transaction_context())
+
+    def _preserved_user_ui_changes(self, transaction: Transaction) -> list[str]:
+        try:
+            with self.suppress_generation():
+                current = capture_context(transaction.context_snapshot.get("viewport_id"))
+        except ContextOperationError:
+            try:
+                with self.suppress_generation():
+                    current = capture_context()
+            except ContextOperationError:
+                return ["viewport.unavailable"]
+        return changed_context_paths(
+            user_ui_context_state(transaction.context_snapshot),
+            user_ui_context_state(current),
+        )
 
     def _validate_transaction_guards(self, transaction: Transaction) -> None:
-        if self._current_context_fingerprint(transaction) != transaction.context_fingerprint:
+        current_context = self._current_transaction_context()
+        expected_context = transaction_context_state(transaction.context_snapshot)
+        if context_fingerprint(current_context) != transaction.context_fingerprint:
             transaction.status = "conflicted"
             self.transactions.last_status = "conflicted"
             raise ContextOperationError(
                 "CONTEXT_CONFLICT",
-                "User context changed while the transaction was active",
+                "A write-relevant Blender context changed while the transaction was active",
                 kind="conflict",
+                details={
+                    "changed_fields": changed_context_paths(expected_context, current_context),
+                    "expected": expected_context,
+                    "actual": current_context,
+                },
             )
         for reference, expected in transaction.expected_properties().items():
             current = read_property(reference)
@@ -2041,7 +2088,7 @@ class AddonState:
 
     def _rollback_transaction(self, transaction: Transaction) -> dict[str, Any]:
         self._validate_transaction_guards(transaction)
-        validate_context_snapshot(transaction.context_snapshot)
+        preserved_ui_changes = self._preserved_user_ui_changes(transaction)
         restored: list[dict[str, Any]] = []
         modifier_delta_types = (
             ModifierStateDelta,
@@ -2067,7 +2114,6 @@ class AddonState:
                 else:
                     restored.append(restore_delta(delta))
             bpy.context.view_layer.update()
-            restore_context(transaction.context_snapshot)
         if transaction.deltas:
             self.scene_generation += 1
         result = {
@@ -2075,6 +2121,8 @@ class AddonState:
             "status": "rolled_back",
             "restored": restored,
             "context_restored": True,
+            "user_ui_preserved": True,
+            "preserved_ui_changes": preserved_ui_changes,
         }
         self.transactions.finish(transaction, "rolled_back")
         return result

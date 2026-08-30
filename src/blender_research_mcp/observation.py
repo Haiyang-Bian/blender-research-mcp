@@ -14,6 +14,11 @@ from PIL import UnidentifiedImageError
 
 from blender_research_mcp.client import BridgeClient
 from blender_research_mcp.constants import CAPTURE_DEADLINE_MS
+from blender_research_mcp.context_policy import (
+    changed_paths,
+    guarded_context_identity,
+    user_ui_context,
+)
 from blender_research_mcp.errors import BridgeError, ErrorInfo, ErrorKind
 from blender_research_mcp.media import resize_png
 
@@ -97,6 +102,7 @@ async def capture_image(
     display_mode: str = "CURRENT",
     overlays: str = "CURRENT",
     orbit: dict[str, float] | None = None,
+    view_reference_capture_id: str | None = None,
 ) -> tuple[bytes, dict[str, Any]]:
     result = await client.call(
         "viewport.capture",
@@ -108,6 +114,7 @@ async def capture_image(
             "display_mode": display_mode,
             "overlays": overlays,
             "orbit": orbit,
+            "_view_reference_capture_id": view_reference_capture_id,
         },
         deadline_ms=CAPTURE_DEADLINE_MS,
         read_only=True,
@@ -206,8 +213,8 @@ async def collect_observation_bundle(
             details={"before": generation_start, "after": generation_end},
         )
 
-    context_before_identity = _identity(context_before)
-    context_after_identity = _identity(context_after)
+    context_before_identity = guarded_context_identity(context_before)
+    context_after_identity = guarded_context_identity(context_after)
     if context_before_identity != context_after_identity:
         raise observation_error(
             ErrorKind.CONFLICT,
@@ -215,12 +222,14 @@ async def collect_observation_bundle(
             "Blender user context changed while the observation bundle was captured",
             retryable=True,
             details={
-                "changed_fields": _changed_fields(
-                    context_before_identity,
-                    context_after_identity,
-                )
+                "changed_fields": changed_paths(context_before_identity, context_after_identity)
             },
         )
+
+    preserved_ui_changes = changed_paths(
+        user_ui_context(context_before),
+        user_ui_context(context_after),
+    )
 
     object_before_identity = _identity(object_before)
     object_after_identity = _identity(object_after)
@@ -259,6 +268,8 @@ async def collect_observation_bundle(
         "object_after": object_after,
         "captures": captures,
         "context_unchanged": True,
+        "user_ui_preserved": True,
+        "preserved_ui_changes": preserved_ui_changes,
         "object_unchanged": True,
         "scene_generation_start": generation_start,
         "scene_generation_end": generation_end,

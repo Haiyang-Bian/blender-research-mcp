@@ -148,7 +148,7 @@ def test_bundle_rejects_duplicate_views_before_capture() -> None:
     assert duplicate.value.error.code == "VIEWS_DUPLICATE"
 
 
-def test_bundle_rejects_context_drift() -> None:
+def test_bundle_preserves_selection_drift() -> None:
     class DriftingClient(FakeClient):
         async def call(self, command, params=None, **kwargs):
             result = await super().call(command, params, **kwargs)
@@ -165,10 +165,34 @@ def test_bundle_rejects_context_drift() -> None:
             viewport_id=None,
         )
 
+    _images, result = asyncio.run(scenario())
+
+    assert result["context_unchanged"] is True
+    assert result["user_ui_preserved"] is True
+    assert result["preserved_ui_changes"] == ["active_object"]
+
+
+def test_bundle_rejects_write_relevant_context_drift() -> None:
+    class DriftingClient(FakeClient):
+        async def call(self, command, params=None, **kwargs):
+            result = await super().call(command, params, **kwargs)
+            if command == "context.get" and self.context_calls == 2:
+                result["mode"] = "EDIT_MESH"
+            return result
+
+    async def scenario():
+        return await collect_observation_bundle(
+            DriftingClient(),
+            object_name="目.L",
+            views=("FRONT",),
+            max_size=800,
+            viewport_id=None,
+        )
+
     with pytest.raises(BridgeError) as drift:
         asyncio.run(scenario())
     assert drift.value.error.code == "OBSERVATION_CONTEXT_DRIFT"
-    assert drift.value.error.details == {"changed_fields": ["active_object"]}
+    assert drift.value.error.details == {"changed_fields": ["mode"]}
 
 
 def test_bundle_rejects_scene_generation_change() -> None:
