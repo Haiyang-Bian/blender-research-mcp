@@ -58,6 +58,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "modifier.move",
         "modifier.delete",
         "mesh.edit",
+        "mesh.separate",
         "shape_key.set_value",
         "material.set_input",
         "material.create",
@@ -129,6 +130,14 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "faces",
     ]
     assert mesh_inspect.inputSchema["properties"]["limit"]["maximum"] == 512
+    mesh_separate = tools_by_name["mesh.separate"]
+    assert mesh_separate.annotations is not None
+    assert mesh_separate.annotations.readOnlyHint is False
+    assert mesh_separate.annotations.destructiveHint is True
+    assert mesh_separate.annotations.idempotentHint is True
+    assert mesh_separate.annotations.openWorldHint is False
+    assert "data_scope" not in mesh_separate.inputSchema["properties"]
+    assert mesh_separate.inputSchema["properties"]["new_object_name"]["maxLength"] == 255
     selection_query = tools_by_name["mesh.selection.query"]
     assert selection_query.annotations is not None
     assert selection_query.annotations.readOnlyHint is True

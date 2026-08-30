@@ -48,6 +48,21 @@ def load_component_map_model():
     return module
 
 
+def load_separation_model():
+    path = (
+        Path(__file__).parents[1]
+        / "blender_addon"
+        / "blender_research_mcp_addon"
+        / "mesh_separation_model.py"
+    )
+    spec = importlib.util.spec_from_file_location("mesh_separation_model_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -596,3 +611,17 @@ def test_component_map_composition_rejects_noncontinuous_evidence() -> None:
     )
     with pytest.raises(ValueError, match="chain breaks"):
         module.compose_component_maps((first, second))
+
+
+def test_mesh_separation_requires_one_edge_connected_face_region() -> None:
+    module = load_separation_model()
+    face_edges = (
+        (0, 1, 2, 3),
+        (2, 4, 5, 6),
+        (7, 8, 9),
+    )
+    assert module.face_region_component_count(face_edges, ()) == 0
+    assert module.face_region_component_count(face_edges, (0, 1)) == 1
+    assert module.face_region_component_count(face_edges, (0, 2)) == 2
+    with pytest.raises(ValueError, match="outside"):
+        module.face_region_component_count(face_edges, (3,))

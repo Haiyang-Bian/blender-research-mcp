@@ -89,6 +89,7 @@ from .mesh_query_ops import (
     release_selection,
 )
 from .mesh_resource_model import MeshResourceBook, MeshResourceError
+from .mesh_separation_ops import separate_mesh
 from .mesh_surface_ops import prepare_surface, query_surface, validate_mesh
 from .mesh_topology_ops import TOPOLOGY_OPERATIONS, edit_mesh_topology
 from .modifier_ops import (
@@ -191,6 +192,7 @@ CAPABILITIES = [
     "modifier.move",
     "modifier.delete",
     "mesh.edit",
+    "mesh.separate",
     "shape_key.set_value",
     "material.set_input",
     "material.create",
@@ -215,7 +217,7 @@ CAPABILITY_VERSIONS = {
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 7,
+    "transactions": 8,
     "object_transform_scale": 1,
     "object_transform": 1,
     "object_settings": 1,
@@ -229,12 +231,13 @@ CAPABILITY_VERSIONS = {
     "object_visibility": 1,
     "modifier_state": 1,
     "modifier_authoring": 1,
-    "mesh_topology": 2,
+    "mesh_topology": 3,
     "mesh_selection": 1,
     "mesh_surface_query": 1,
     "mesh_deformation": 1,
     "mesh_validation": 1,
     "mesh_component_map": 2,
+    "mesh_separation": 1,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -256,6 +259,7 @@ MUTATION_COMMANDS = {
     "modifier.move",
     "modifier.delete",
     "mesh.edit",
+    "mesh.separate",
     "shape_key.set_value",
     "material.set_input",
     "material.create",
@@ -1225,6 +1229,25 @@ class AddonState:
                     result = edit_mesh_topology(transaction, self.mesh_resources, params)
                 else:
                     result = edit_mesh(transaction, params, self.mesh_resources)
+                bpy.context.view_layer.update()
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
+        if command == "mesh.separate":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            with self.suppress_generation():
+                result = separate_mesh(transaction, self.mesh_resources, params)
                 bpy.context.view_layer.update()
             if len(transaction.deltas) > previous_count:
                 self.scene_generation += 1

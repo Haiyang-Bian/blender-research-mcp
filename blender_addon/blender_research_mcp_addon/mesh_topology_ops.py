@@ -29,6 +29,7 @@ from .mesh_ops import (
     _component_warnings,
     _create_guard,
     _index_page,
+    _is_protected_attribute,
     _mesh_reference,
     _remove_new_guard,
     _remove_temporary_mesh,
@@ -489,6 +490,7 @@ class _LineageLayer:
     sequence: Any
     layer: Any
     before: tuple[Any, ...]
+    before_ids: frozenset[int]
 
 
 def _start_lineage(bm: Any) -> dict[str, _LineageLayer]:
@@ -500,7 +502,12 @@ def _start_lineage(bm: Any) -> dict[str, _LineageLayer]:
         before = tuple(sequence)
         for index, item in enumerate(before):
             item[layer] = index + 1
-        result[domain] = _LineageLayer(sequence, layer, before)
+        result[domain] = _LineageLayer(
+            sequence,
+            layer,
+            before,
+            frozenset(id(item) for item in before),
+        )
     return result
 
 
@@ -520,28 +527,24 @@ def _finish_lineage(
         state = layers[domain]
         state.sequence.index_update()
         state.sequence.ensure_lookup_table()
-        before_set = set(state.before)
         targets: dict[int, list[int]] = {}
         created_indices = []
         for item in state.sequence:
             source = int(item[state.layer]) - 1
             if source >= 0 and source < len(state.before):
                 targets.setdefault(source, []).append(int(item.index))
-            if item not in before_set:
+            if id(item) not in state.before_ids:
                 created_indices.append(int(item.index))
         rows = []
         deleted_indices = []
         for source, before_item in enumerate(state.before):
-            exact_targets = set(targets.get(source, ()))
-            if before_item.is_valid:
-                exact_targets.add(int(before_item.index))
-            mapped = tuple(sorted(exact_targets))
+            mapped = tuple(sorted(set(targets.get(source, ()))))
             if not mapped:
                 deleted_indices.append(source)
                 continue
             if len(mapped) > 1:
                 relation = "SPLIT"
-            elif before_item.is_valid and state.sequence[mapped[0]] is before_item:
+            elif id(state.sequence[mapped[0]]) == id(before_item):
                 relation = "SURVIVED"
             else:
                 relation = "DERIVED"
@@ -571,7 +574,7 @@ def _attribute_signature(mesh: Any) -> dict[str, tuple[tuple[str, str, str], ...
             sorted(
                 (str(item.name), str(item.domain), str(item.data_type))
                 for item in mesh.attributes
-                if not item.name.startswith(".")
+                if _is_protected_attribute(item)
             )
         ),
         "uv_layers": tuple((str(item.name), "CORNER", "FLOAT2") for item in mesh.uv_layers),
