@@ -20,7 +20,7 @@
    `modifier_authoring: 1`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.10.0.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.10.1.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 

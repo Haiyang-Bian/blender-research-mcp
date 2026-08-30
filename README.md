@@ -25,6 +25,8 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 对象的 TRS、可见性与 Light/Camera 数据；自动化门禁和真实 Blender 4.2.23 验收
 均已通过。0.10.0 新增四类有界 Modifier 的完整栈创作：精确检查、创建、类型化
 设置、排序、延迟删除和候选比较；自动化门禁和真实 Blender 4.2.23 验收均已通过。
+0.10.1 修复同一事务内 linked-data 副本导致 Mesh users guard 自我失效的问题，
+并保证复制选中源对象后保存/reload 不会让副本意外进入选择集。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -37,6 +39,8 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 [0.9.0 对象设置](docs/validation/2026-08-30-unified-object-settings.md)。
 0.10 Modifier 创作见
 [0.10.0 验收记录](docs/validation/2026-08-30-modifier-authoring.md)。
+linked-data 事务修复见
+[0.10.1 验收记录](docs/validation/2026-08-30-linked-data-guard-hotfix.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -146,7 +150,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.10.0
+uv run --no-sync python scripts/build_addon.py --version 0.10.1
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认

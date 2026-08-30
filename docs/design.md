@@ -1,9 +1,9 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.10.0 bounded typed Modifier authoring implemented and live-validated
+- Status: 0.10.1 linked-data transaction guard hotfix implemented and live-validated
 - Next milestone: design semantic Mesh topology snapshots and editing for 0.11
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.10.0
+- Package and add-on version: 0.10.1
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,7 +12,7 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.10.0 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.10.1 now covers
 the validated observation/lifecycle/static-authoring path, unified typed object,
 Light, and Camera settings, and four bounded non-destructive Modifier families; the
 older bridge is no longer the primary interface for this repository.
@@ -242,6 +242,12 @@ for commit-time deletion. Every mutation carries exact object/Modifier identitie
 index, type, and full stack fingerprint. Apply, arbitrary Modifier types/RNA, and direct
 mesh topology remain outside this surface.
 
+Version 0.10.1 repairs transaction-owned data-user evidence for linked object
+duplicates. A successful linked duplicate refreshes any already guarded Mesh,
+Camera, or Light data-block plus an existing typed Light/Camera data delta. The
+operation still rejects a later external users change. Newly linked duplicates are
+explicitly unselected so selection remains stable after save/reload.
+
 Every new writer requires an active transaction, a current scene generation, a unique
 idempotency key, and exact session identities returned by inspection. Shared materials
 are rejected unless the caller confirms the exact current material user count and sets
@@ -464,7 +470,8 @@ Status: implemented and Blender 4.2.23 live-validated in 0.9.0.
 
 ### Phase 8 — bounded typed Modifier authoring
 
-Status: implemented and Blender 4.2.23 live-validated in 0.10.0.
+Status: implemented and Blender 4.2.23 live-validated in 0.10.0; linked-data guard and
+duplicate-selection regressions live-validated in 0.10.1.
 
 - Inspect exact full ordered Modifier stacks and guard them with one fingerprint.
 - Create, configure, reorder, and defer deletion for four bounded Modifier families.

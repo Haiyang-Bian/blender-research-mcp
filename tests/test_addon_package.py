@@ -143,6 +143,9 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
     assert 'os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1"' in state
     assert 'self.active_command in MUTATION_COMMANDS' in state
     assert "view_layer.update()" in state
+    authoring = (SOURCE / "authoring_ops.py").read_text(encoding="utf-8")
+    assert "duplicate.select_set(False)" in authoring
+    assert "transaction.refresh_object_data_users" in authoring
     world_render = (SOURCE / "world_render_ops.py").read_text(encoding="utf-8")
     assert 'session_identity("node", link.from_node) != background_identity' in world_render
     assert 'bpy.data.images.load(str(output_path), check_existing=False)' in world_render

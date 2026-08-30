@@ -466,14 +466,53 @@ class AddonState:
                     f"Object does not exist: {object_name}",
                     kind="not_found",
                 )
+            action = params.get("action", "object_location")
             with self.suppress_generation():
-                obj.location.x = float(obj.location.x) + 0.25
+                if action == "object_location":
+                    obj.location.x = float(obj.location.x) + 0.25
+                    result = {
+                        "location": list(obj.location),
+                    }
+                elif action == "linked_duplicate":
+                    name = params.get("name")
+                    if not isinstance(name, str) or not name:
+                        raise ContextOperationError(
+                            "TEST_STRUCTURE_TOUCH_INVALID",
+                            "linked_duplicate requires a non-empty name",
+                            kind="validation",
+                        )
+                    if bpy.data.objects.get(name) is not None:
+                        raise ContextOperationError(
+                            "OBJECT_NAME_CONFLICT",
+                            f"An object already uses the exact name: {name}",
+                            kind="conflict",
+                        )
+                    duplicate = obj.copy()
+                    duplicate.name = name
+                    collection = (
+                        obj.users_collection[0]
+                        if obj.users_collection
+                        else bpy.context.scene.collection
+                    )
+                    collection.objects.link(duplicate)
+                    result = {
+                        "linked_duplicate": duplicate.name,
+                        "linked_duplicate_identity": session_identity("object", duplicate),
+                        "data_users": int(obj.data.users) if obj.data is not None else None,
+                    }
+                else:
+                    raise ContextOperationError(
+                        "TEST_STRUCTURE_TOUCH_INVALID",
+                        f"Unsupported structure touch action: {action}",
+                        kind="validation",
+                    )
                 bpy.context.view_layer.update()
             return {
                 "test_hook": "structure_touch",
+                "action": action,
                 "object_name": obj.name,
                 "object_identity": session_identity("object", obj),
-                "location": list(obj.location),
+                **result,
             }
         if command == "_test.property.touch":
             if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":

@@ -68,7 +68,7 @@ def main() -> int:
         "temporary_blend_file": str(destination),
         "temporary_sha256": copy_hash,
         "artifact_directory": str(artifact_directory),
-        "addon_zip": str(ROOT / "artifacts" / "blender-research-mcp-addon-0.10.0.zip"),
+        "addon_zip": str(ROOT / "artifacts" / "blender-research-mcp-addon-0.10.1.zip"),
     }
     (artifact_directory / "preparation.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=2),

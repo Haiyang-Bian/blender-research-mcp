@@ -1,4 +1,4 @@
-"""Run the Blender 4.2 bounded Modifier-authoring acceptance for release 0.10.0."""
+"""Run the Blender 4.2 bounded Modifier-authoring acceptance for release 0.10.x."""
 
 from __future__ import annotations
 
@@ -948,10 +948,12 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         application = launch["application"]
         if launch["status"] != "launched":
             raise RuntimeError("cold managed launch did not return launched")
-        if application["addon_version"] != "0.10.0" or not str(
+        if application["addon_version"] != PACKAGE_VERSION or not str(
             application["blender_version"]
         ).startswith("4.2.23"):
-            raise RuntimeError("managed launch did not load Blender 4.2.23 with add-on 0.10.0")
+            raise RuntimeError(
+                "managed launch did not load Blender 4.2.23 with the matching add-on"
+            )
         ping_before = await client.call("connection.ping", read_only=True)
         if int(ping_before["capability_versions"].get("modifier_authoring", 0)) < 1:
             raise RuntimeError("managed add-on did not advertise modifier_authoring: 1")
@@ -1012,7 +1014,7 @@ def main() -> int:
     except BridgeError as exc:
         print(json.dumps(exc.error.model_dump(mode="json"), ensure_ascii=False, indent=2))
         raise
-    report_path = Path(report["artifact_directory"]) / "report-0.10.0.json"
+    report_path = Path(report["artifact_directory"]) / f"report-{PACKAGE_VERSION}.json"
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(report_path)
     return 0

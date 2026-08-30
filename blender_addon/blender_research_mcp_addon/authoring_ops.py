@@ -9,7 +9,7 @@ import bmesh
 import bpy
 
 from .lookdev_ops import session_identity
-from .structural_ops import make_structure_guard
+from .structural_ops import make_structure_guard, refresh_structure_guard_if_present
 from .transaction_model import StructuralDelta, Transaction
 
 
@@ -307,6 +307,7 @@ def duplicate_object(
     if transform is not None:
         _apply_transform(duplicate, transform)
     collection.objects.link(duplicate)
+    duplicate.select_set(False)
     delta = StructuralDelta(
         kind="object_duplicate",
         action="create_resource",
@@ -319,6 +320,23 @@ def duplicate_object(
             "owned_resources": ((data_kind, data),) if data is not None else (),
         },
     )
+    if linked_data and source.data is not None:
+        shared_data = source.data
+        transaction.refresh_object_data_users(
+            session_identity(shared_data.__class__.__name__.lower(), shared_data),
+            int(shared_data.users),
+        )
+        structure_kind = {
+            "MESH": "mesh",
+            "CAMERA": "camera",
+            "LIGHT": "light",
+        }.get(str(source.type))
+        if structure_kind is not None:
+            refresh_structure_guard_if_present(
+                transaction,
+                structure_kind,
+                shared_data,
+            )
     return duplicate, delta
 
 
