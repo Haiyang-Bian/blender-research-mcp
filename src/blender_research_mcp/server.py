@@ -39,6 +39,7 @@ from blender_research_mcp.authoring import (
     SceneKinds,
     TextureCoordinate,
     TextureMapping,
+    Vector3,
     require_capability,
 )
 from blender_research_mcp.client import BridgeClient
@@ -61,6 +62,17 @@ from blender_research_mcp.mesh_authoring import (
     MeshDataScope,
     MeshOperation,
     MeshUserObject,
+)
+from blender_research_mcp.mesh_resources import (
+    MeshDomain,
+    MeshRevisionId,
+    SelectionDerivation,
+    SelectionId,
+    SelectionQuery,
+    SurfaceGeometry,
+    SurfaceId,
+    SurfaceQueryMode,
+    ValidationCheck,
 )
 from blender_research_mcp.modifier_authoring import (
     ModifierDefinition,
@@ -439,6 +451,179 @@ def create_server(
                 "component": component,
                 "offset": offset,
                 "limit": limit,
+            },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.selection.query",
+        description=(
+            "Create one immutable revision-bound SelectionSet from an exact semantic "
+            "Mesh component query without changing Blender UI selection."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_selection_query(
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_mesh_identity: SessionIdentity,
+        expected_mesh_revision_id: MeshRevisionId,
+        domain: MeshDomain,
+        query: SelectionQuery,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_selection")
+        return await client.call(
+            "mesh.selection.query",
+            {
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "expected_mesh_identity": expected_mesh_identity,
+                "expected_mesh_revision_id": expected_mesh_revision_id,
+                "domain": domain,
+                "query": query.model_dump(),
+            },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.selection.derive",
+        description=(
+            "Derive one immutable SelectionSet through bounded set, topology, domain, "
+            "or geodesic-falloff operations."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_selection_derive(operation: SelectionDerivation) -> dict[str, Any]:
+        await require_capability(client, "mesh_selection")
+        return await client.call(
+            "mesh.selection.derive",
+            {"operation": operation.model_dump()},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.selection.inspect",
+        description="Inspect a bounded page from one exact revision-bound SelectionSet.",
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_selection_inspect(
+        selection_id: SelectionId,
+        offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=4096)] = 256,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_selection")
+        return await client.call(
+            "mesh.selection.inspect",
+            {"selection_id": selection_id, "offset": offset, "limit": limit},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.selection.release",
+        description="Release one session-local SelectionSet resource; repeated release is safe.",
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_selection_release(selection_id: SelectionId) -> dict[str, Any]:
+        await require_capability(client, "mesh_selection")
+        return await client.call(
+            "mesh.selection.release",
+            {"selection_id": selection_id},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.surface.prepare",
+        description=(
+            "Prepare one bounded BASE or EVALUATED world-space SurfaceRef with fixed "
+            "scene, frame, transform, revision, triangle evidence, and BVH."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_surface_prepare(
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_mesh_revision_id: MeshRevisionId,
+        geometry: SurfaceGeometry = "EVALUATED",
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_surface_query")
+        return await client.call(
+            "mesh.surface.prepare",
+            {
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "expected_mesh_revision_id": expected_mesh_revision_id,
+                "geometry": geometry,
+            },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.surface.query",
+        description=(
+            "Measure a revision-bound vertex SelectionSet against a fixed SurfaceRef "
+            "using closest points or one world-space ray direction."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_surface_query(
+        selection_id: SelectionId,
+        surface_id: SurfaceId,
+        mode: SurfaceQueryMode = "CLOSEST_POINT",
+        direction: Vector3 | None = None,
+        maximum_distance: FiniteNumber = 1_000_000,
+        threshold: FiniteNumber | None = None,
+        sample_limit: Annotated[StrictInt, Field(ge=0, le=256)] = 64,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_surface_query")
+        return await client.call(
+            "mesh.surface.query",
+            {
+                "selection_id": selection_id,
+                "surface_id": surface_id,
+                "mode": mode,
+                "direction": direction.model_dump() if direction is not None else None,
+                "maximum_distance": maximum_distance,
+                "threshold": threshold,
+                "sample_limit": sample_limit,
+            },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.validate",
+        description=(
+            "Validate bounded topology, orientation, intersections, distance, or "
+            "penetration and return quantitative evidence plus SelectionSets."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_validate(
+        selection_id: SelectionId,
+        check: ValidationCheck,
+        surface_id: SurfaceId | None = None,
+        tolerance: FiniteNumber = 1e-6,
+        maximum_distance: FiniteNumber = 1_000_000,
+        threshold: FiniteNumber | None = None,
+        sample_limit: Annotated[StrictInt, Field(ge=0, le=256)] = 64,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_validation")
+        return await client.call(
+            "mesh.validate",
+            {
+                "selection_id": selection_id,
+                "check": check,
+                "surface_id": surface_id,
+                "tolerance": tolerance,
+                "maximum_distance": maximum_distance,
+                "threshold": threshold,
+                "sample_limit": sample_limit,
             },
             read_only=True,
         )
@@ -1120,7 +1305,19 @@ def create_server(
         idempotency_key: IdempotencyKey,
     ) -> dict[str, Any]:
         await require_capability(client, "mesh_topology")
-        client.require_capability("transactions", 4)
+        if operation.type in {
+            "set_positions",
+            "smooth",
+            "relax",
+            "project",
+            "shrinkwrap",
+            "inflate",
+            "flatten",
+        }:
+            await require_capability(client, "mesh_deformation")
+            client.require_capability("transactions", 6)
+        else:
+            client.require_capability("transactions", 4)
         if len(
             {
                 (item.object_name, item.expected_object_identity)

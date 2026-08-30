@@ -104,6 +104,13 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
         "object.delete",
         "object.set",
         "mesh.inspect",
+        "mesh.selection.query",
+        "mesh.selection.derive",
+        "mesh.selection.inspect",
+        "mesh.selection.release",
+        "mesh.surface.prepare",
+        "mesh.surface.query",
+        "mesh.validate",
         "mesh.edit",
         "material.create",
         "material.assign",
@@ -117,12 +124,16 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
     ):
         assert command in state
     for capability in (
-        '"transactions": 5',
+        '"transactions": 6',
         '"scene_inspection": 1',
         '"object_authoring": 1',
         '"object_settings": 1',
         '"modifier_authoring": 1',
         '"mesh_topology": 1',
+        '"mesh_selection": 1',
+        '"mesh_surface_query": 1',
+        '"mesh_deformation": 1',
+        '"mesh_validation": 1',
         '"material_authoring": 1',
         '"image_assets": 1',
         '"world_authoring": 1',
@@ -204,6 +215,38 @@ def test_mesh_authoring_uses_bounded_data_api_snapshots_without_operators() -> N
     assert "mesh.clear_geometry()" in source
     assert "bmesh.ops" in source
     assert "bpy.ops" not in source
+
+    resources = (SOURCE / "mesh_resource_model.py").read_text(encoding="utf-8")
+    assert "MAX_SELECTIONS = 64" in resources
+    assert "MAX_SELECTION_COMPONENTS = 2_000_000" in resources
+    assert "MAX_SURFACES = 8" in resources
+    assert "MAX_SURFACE_TRIANGLES = 2_000_000" in resources
+    query = (SOURCE / "mesh_query_ops.py").read_text(encoding="utf-8")
+    assert "raycast_capture" in query
+    assert "MESH_SELECTION_CAPTURE_TARGET_MISMATCH" in query
+    assert 'hit.get("hit_target") is True' in query
+    assert "_capture_ray_direction" in query
+    assert "normal.dot(-view_direction)" in query
+
+    deform = (SOURCE / "mesh_deform_ops.py").read_text(encoding="utf-8")
+    assert "_write_vertex_positions" in deform
+    assert "bm.to_mesh(mesh)" not in deform
+    assert "select_set" not in query
+    surface = (SOURCE / "mesh_surface_ops.py").read_text(encoding="utf-8")
+    assert "evaluated_get" in surface
+    assert "BVHTree.FromPolygons" in surface
+    deformation = (SOURCE / "mesh_deform_ops.py").read_text(encoding="utf-8")
+    for operation in (
+        "set_positions",
+        "smooth",
+        "relax",
+        "project",
+        "shrinkwrap",
+        "inflate",
+        "flatten",
+    ):
+        assert f'"{operation}"' in deformation
+    assert "bpy.ops" not in deformation
 
 
 def test_addon_zip_has_an_installable_package_root(tmp_path: Path) -> None:

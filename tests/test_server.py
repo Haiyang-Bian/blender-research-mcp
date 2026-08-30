@@ -8,7 +8,7 @@ from blender_research_mcp.server import MaterialInputValue, create_server
 
 def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     server = create_server()
-    assert server._mcp_server.version == "0.11.1"
+    assert server._mcp_server.version == "0.12.0"
     tools = asyncio.run(server.list_tools())
     assert [tool.name for tool in tools] == [
         "application.status",
@@ -24,9 +24,16 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "context.restore",
         "scene.inspect",
         "object.inspect",
-        "object.geometry.inspect",
-        "mesh.inspect",
-        "object.lookdev.inspect",
+            "object.geometry.inspect",
+            "mesh.inspect",
+            "mesh.selection.query",
+            "mesh.selection.derive",
+            "mesh.selection.inspect",
+            "mesh.selection.release",
+            "mesh.surface.prepare",
+            "mesh.surface.query",
+            "mesh.validate",
+            "object.lookdev.inspect",
         "modifier.inspect",
         "material.inspect",
         "image.inspect",
@@ -118,6 +125,39 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "faces",
     ]
     assert mesh_inspect.inputSchema["properties"]["limit"]["maximum"] == 512
+    selection_query = tools_by_name["mesh.selection.query"]
+    assert selection_query.annotations is not None
+    assert selection_query.annotations.readOnlyHint is True
+    query_schema = selection_query.inputSchema["properties"]["query"]
+    assert query_schema["discriminator"]["propertyName"] == "type"
+    assert len(query_schema["oneOf"]) == 10
+    selection_derive = tools_by_name["mesh.selection.derive"]
+    derivation_schema = selection_derive.inputSchema["properties"]["operation"]
+    assert derivation_schema["discriminator"]["propertyName"] == "type"
+    assert len(derivation_schema["oneOf"]) == 6
+    for name in (
+        "mesh.selection.inspect",
+        "mesh.selection.release",
+        "mesh.surface.prepare",
+        "mesh.surface.query",
+        "mesh.validate",
+    ):
+        tool = tools_by_name[name]
+        assert tool.annotations is not None
+        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.destructiveHint is False
+    surface_prepare = tools_by_name["mesh.surface.prepare"]
+    assert surface_prepare.inputSchema["properties"]["geometry"]["enum"] == [
+        "BASE",
+        "EVALUATED",
+    ]
+    surface_query = tools_by_name["mesh.surface.query"]
+    assert surface_query.inputSchema["properties"]["mode"]["enum"] == [
+        "CLOSEST_POINT",
+        "RAYCAST",
+    ]
+    validation = tools_by_name["mesh.validate"]
+    assert len(validation.inputSchema["properties"]["check"]["enum"]) == 7
     lookdev = tools_by_name["object.lookdev.inspect"]
     assert lookdev.annotations is not None
     assert lookdev.annotations.readOnlyHint is True
@@ -231,7 +271,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     ]
     operation_schema = mesh_edit.inputSchema["properties"]["operation"]
     assert operation_schema["discriminator"]["propertyName"] == "type"
-    assert len(operation_schema["oneOf"]) == 9
+    assert len(operation_schema["oneOf"]) == 16
     shape_key = tools_by_name["shape_key.set_value"]
     assert shape_key.annotations is not None
     assert shape_key.annotations.destructiveHint is True

@@ -65,6 +65,7 @@ from .material_authoring_ops import (
     load_image,
     material_result,
 )
+from .mesh_deform_ops import DEFORM_OPERATIONS, edit_mesh_deform
 from .mesh_ops import (
     MeshOperationError,
     adopt_mesh_snapshots_for_native_save,
@@ -75,6 +76,14 @@ from .mesh_ops import (
     touch_mesh_for_test,
     validate_mesh_snapshot_guards,
 )
+from .mesh_query_ops import (
+    derive_selection,
+    inspect_selection,
+    query_selection,
+    release_selection,
+)
+from .mesh_resource_model import MeshResourceBook, MeshResourceError
+from .mesh_surface_ops import prepare_surface, query_surface, validate_mesh
 from .modifier_ops import (
     adopt_modifier_delta_for_native_save,
     clear_modifier_pending_deletes,
@@ -143,6 +152,13 @@ CAPABILITIES = [
     "scene.inspect",
     "object.geometry.inspect",
     "mesh.inspect",
+    "mesh.selection.query",
+    "mesh.selection.derive",
+    "mesh.selection.inspect",
+    "mesh.selection.release",
+    "mesh.surface.prepare",
+    "mesh.surface.query",
+    "mesh.validate",
     "object.lookdev.inspect",
     "modifier.inspect",
     "material.inspect",
@@ -188,7 +204,7 @@ CAPABILITY_VERSIONS = {
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 5,
+    "transactions": 6,
     "object_transform_scale": 1,
     "object_transform": 1,
     "object_settings": 1,
@@ -203,6 +219,10 @@ CAPABILITY_VERSIONS = {
     "modifier_state": 1,
     "modifier_authoring": 1,
     "mesh_topology": 1,
+    "mesh_selection": 1,
+    "mesh_surface_query": 1,
+    "mesh_deformation": 1,
+    "mesh_validation": 1,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -254,6 +274,7 @@ class AddonState:
         self.last_capture_backend = "gpu_offscreen"
         self.snapshots: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.captures = CaptureBook(limit=32)
+        self.mesh_resources = MeshResourceBook()
         self.transactions = TransactionBook()
         self.idempotency = IdempotencyCache()
         self._suppress_generation = 0
@@ -278,6 +299,7 @@ class AddonState:
             self.runtime.stop()
             self.snapshots.clear()
             self.captures.clear()
+            self.mesh_resources.clear()
             clear_modifier_pending_deletes()
 
     def restart(self) -> None:
@@ -313,6 +335,7 @@ class AddonState:
     def on_file_loaded(self) -> None:
         self.snapshots.clear()
         self.captures.clear()
+        self.mesh_resources.clear()
         clear_modifier_pending_deletes()
         if self.transactions.active is not None:
             self.transactions.abandon("abandoned_file_load")
@@ -461,6 +484,15 @@ class AddonState:
                 details=exc.details,
             )
         except MeshOperationError as exc:
+            self.last_error = f"{exc.code}: {exc}"
+            return self._error(
+                request_id,
+                exc.kind,
+                exc.code,
+                str(exc),
+                details=exc.details,
+            )
+        except MeshResourceError as exc:
             self.last_error = f"{exc.code}: {exc}"
             return self._error(
                 request_id,
@@ -867,6 +899,40 @@ class AddonState:
                 result = inspect_mesh(object_name, component, offset, limit)
             result["scene_generation"] = self.scene_generation
             return result
+        if command == "mesh.selection.query":
+            with self.suppress_generation():
+                result = query_selection(self.mesh_resources, self.captures, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.selection.derive":
+            with self.suppress_generation():
+                result = derive_selection(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.selection.inspect":
+            with self.suppress_generation():
+                result = inspect_selection(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.selection.release":
+            result = release_selection(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.surface.prepare":
+            with self.suppress_generation():
+                result = prepare_surface(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.surface.query":
+            with self.suppress_generation():
+                result = query_surface(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.validate":
+            with self.suppress_generation():
+                result = validate_mesh(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
         if command == "object.lookdev.inspect":
             object_name = params.get("object_name")
             if not isinstance(object_name, str) or not object_name:
@@ -1119,7 +1185,14 @@ class AddonState:
             self._validate_transaction_guards(transaction)
             previous_count = len(transaction.deltas)
             with self.suppress_generation():
-                result = edit_mesh(transaction, params)
+                operation = params.get("operation")
+                operation_type = operation.get("type") if isinstance(operation, dict) else None
+                if operation_type in DEFORM_OPERATIONS:
+                    result = edit_mesh_deform(
+                        transaction, self.mesh_resources, self.captures, params
+                    )
+                else:
+                    result = edit_mesh(transaction, params)
                 bpy.context.view_layer.update()
             if len(transaction.deltas) > previous_count:
                 self.scene_generation += 1
