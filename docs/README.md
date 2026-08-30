@@ -9,7 +9,7 @@ in this order when starting a new implementation task:
    — current implementation target, public resource model, and acceptance gate.
 3. [General Mesh authoring requirements](requirements/general-mesh-authoring.md) —
    long-term selection, topology, attribute, Shape-Key, and validation direction.
-4. [Using Blender Research MCP](usage.md) — current 0.11.1 operator workflow and error
+4. [Using Blender Research MCP](usage.md) — current 0.12 operator workflow and error
    recovery.
 5. [Selection and evaluated-surface decision](decisions/0012-revision-bound-selection-and-surface-resources.md)
    — revision resource and transaction-v6 boundary.
@@ -33,10 +33,10 @@ in this order when starting a new implementation task:
 
 ## Current release
 
-Version 0.12.0 is the active implementation milestone. It adds session-local,
-revision-bound SelectionSets, read-only evaluated SurfaceRefs, topology-preserving
-surface deformation, and quantitative Mesh validation. The current released and
-live-validated baseline remains 0.11.1 until the 0.12 gate passes.
+Version 0.12.0 is the active validated milestone. It adds session-local revision-bound
+SelectionSets, read-only evaluated SurfaceRefs, topology-preserving surface deformation,
+and quantitative Mesh validation. Its automated and Blender 4.2.23 gates have passed;
+see [the 0.12 validation record](validation/2026-08-31-selection-surface-fitting.md).
 
 Version 0.11.1 upgrades transactions to capability 5: UI navigation, display, selection,
 and active-object changes are collaborative, while Blender native save accepts current

@@ -20,10 +20,11 @@
    `modifier_authoring: 1`. Exact base-Mesh inspection/editing requires
    `mesh_topology: 1`, and editing additionally requires `transactions: 4`.
    Collaborative UI and native-save adoption are guaranteed only by
-   `transactions: 5`.
+   `transactions: 5`. SelectionSet, SurfaceRef, semantic deformation, and validation
+   require their 0.12 capabilities; deformation additionally requires `transactions: 6`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.11.1.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.12.0.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -248,6 +249,38 @@ recovery restore it only while identity, users, protected data, and the Agent's 
 fingerprint still match. 0.11 preserves UV/color/supported generic data but cannot edit
 their values. It also rejects linked data, Edit Mode, Shape Keys, pending-delete objects,
 unsupported attributes, arbitrary arrays/operators, and Modifier Apply.
+
+## Select, fit, and validate a Mesh region
+
+Use this transaction-v6 workflow when a region is too large or too semantic to keep
+resending raw component indices, or when the destination is evaluated geometry:
+
+1. Call `mesh.inspect(..., component="summary")` and retain `mesh_revision_id` plus the
+   exact identities, fingerprint, and users. Create a SelectionSet with
+   `mesh.selection.query`; use `derive` for set/topology/domain/falloff operations.
+2. A SelectionSet is immutable and does not alter Blender UI selection. Inspect pages
+   only for evidence. A missing/evicted/stale resource must be rebuilt from the newest
+   revision rather than reinterpreted.
+3. Prepare a `BASE` or `EVALUATED` SurfaceRef from its own exact object and revision.
+   The latter may read Shape Keys, Armature, and Modifiers. Scene, View Layer, frame,
+   object transform, base revision, or evaluated triangle drift invalidates it.
+4. Use `mesh.surface.query` before a write to record distance evidence. Use
+   `mesh.validate` for non-manifold, degenerate, orientation, self/target intersection,
+   distance, or penetration evidence; signed distance is authoritative only when
+   `sign_reliable=true`.
+5. Begin/continue a transaction and pass the SelectionSet to one topology-preserving
+   `mesh.edit` operation: `set_positions`, `smooth`, `relax`, `project`, `shrinkwrap`,
+   `inflate`, or `flatten`. A changed response returns the next Mesh revision and an
+   automatically rebound SelectionSet for subsequent operations.
+6. Rebuild any SurfaceRef whose own target evidence changed. Quantitatively validate
+   the result before commit. Rollback restores the baseline fingerprint and makes
+   matching baseline resources valid again; native Blender save instead accepts the
+   current revision as final user intent.
+
+`set_positions` accepts at most 4096 coordinates; the semantic operations may process
+the full bounded SelectionSet inside Blender. These operations never change topology,
+UV, color, generic attributes, or Shape Keys. A Shape-Key Mesh may be a read-only
+SurfaceRef target but remains unwritable in 0.12.
 
 `render.preview` and `render.save` use Eevee Next, exact Camera identity, dimensions
 from 256 to 1000, and 1–64 samples. Both restore the previous Camera, engine,

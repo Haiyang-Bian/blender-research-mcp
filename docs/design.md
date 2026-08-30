@@ -1,9 +1,9 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.11.1 collaborative UI and native-save authority live-validated
-- Next milestone: implement 0.12 revision-bound SelectionSets and evaluated-surface fitting
+- Status: 0.12 SelectionSet and surface fitting validated in Blender 4.2.23
+- Next milestone: 0.13 topology revision and ComponentMap design
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.11.1
+- Package and add-on version: 0.12.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,7 +12,7 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.11.1 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.12.0 now covers
 the validated observation/lifecycle/static-authoring path, unified typed object,
 Light, and Camera settings, four bounded non-destructive Modifier families, and exact
 base-Mesh component editing with transaction snapshots; the older bridge is no longer
@@ -369,7 +369,7 @@ also keeps a temporary immediate snapshot so a partial Blender write can be loca
 restored and verified. Library links, Edit Mode, Shape Keys, pending deletion,
 unsupported attributes, and fixed geometry budgets are rejected before mutation. See
 `docs/roadmap/0.11.0-semantic-mesh-editing.md` and decision 0010. UV values remain
-read-only until a separate 0.12 contract.
+read-only until the later 0.14 contract.
 
 Version 0.11.1 upgrades transaction capability to 5. It separates hard transaction
 context, user-collaborative UI context, and capture evidence. User orbit/pan/zoom,
@@ -386,14 +386,18 @@ The terminal transaction record lets already queued requests return
 `COMPARISON_ACCEPTED_BY_USER_SAVE` and stops without cleanup rollback. Managed MCP
 project saves are marked internally and retain their existing commit-before-save flow.
 
-Version 0.12 is now specified as revision-bound selection and evaluated-surface fitting
-rather than UV-first authoring. Session-local SelectionSets will bind semantic regions
-to exact Mesh revisions without modifying Blender UI selection. Read-only SurfaceRefs
-will bind BASE or evaluated geometry, including Shape-Key/Armature/Modifier results, to
-exact scene/frame/object evidence. Topology-preserving project, shrinkwrap, smooth,
-relax, inflate, flatten, and per-vertex position operations will reuse transaction Mesh
-snapshots and return rebound selections. UV authority moves to 0.14 after topology maps.
-See `docs/roadmap/0.12.0-selection-surface-fitting.md` and decision 0012.
+Version 0.12 implements revision-bound selection and evaluated-surface fitting rather
+than UV-first authoring. Session-local SelectionSets bind semantic regions to exact Mesh
+revisions without modifying Blender UI selection. Read-only SurfaceRefs bind BASE or
+evaluated geometry, including Shape-Key/Armature/Modifier results, to exact
+scene/frame/object evidence. Topology-preserving project, shrinkwrap, smooth, relax,
+inflate, flatten, and per-vertex position operations reuse transaction Mesh snapshots
+and return rebound selections. Transaction capability 6 makes resource validity follow
+the actual before/after Mesh fingerprint across writes and rollback. UV authority moves
+to 0.14 after topology maps. The recorded 0.12 Blender gate is complete; the real open
+target correctly returned unreliable signed penetration rather than inventing a depth.
+See `docs/roadmap/0.12.0-selection-surface-fitting.md`, decision 0012, and
+`docs/validation/2026-08-31-selection-surface-fitting.md`.
 
 Tool count is not a success metric. A small composable surface with precise
 preconditions is preferable to dozens of overlapping convenience tools.

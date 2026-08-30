@@ -1,6 +1,6 @@
 ---
 name: blender-research-workflow
-description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects, exact base-Mesh components, typed Modifier stacks, and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, semantic Mesh modeling, non-destructive Modifier modeling, or static scene delivery; do not use for arbitrary Python, arbitrary BMesh/RNA, arbitrary node graphs, animation, Modifier apply, or UV editing.
+description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects, revision-bound Mesh selections and surface fits, typed Modifier stacks, and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, semantic Mesh modeling, evaluated-surface fitting, non-destructive Modifier modeling, or static scene delivery; do not use for arbitrary Python, arbitrary BMesh/RNA, arbitrary node graphs, animation, Modifier apply, or UV editing.
 ---
 
 # Blender Research Workflow
@@ -103,6 +103,15 @@ Modifiers for reversible whole-object Bevel, Subdivision, Solidify, or Boolean e
 Use `mesh.inspect` plus `mesh.edit` only when the user's intent requires a real local
 silhouette, structural, or vertex/edge/face change.
 
+When `mesh_selection: 1` is available, prefer a revision-bound SelectionSet for a
+semantic, screen-derived, weighted, repeated, or large region. Use a SurfaceRef when
+the task depends on BASE or evaluated Shape-Key/Armature/Modifier geometry. Require
+transaction capability 6 for topology-preserving selection deformation, carry the
+returned rebound SelectionSet after each changed write, and quantify fit with surface
+query/validation before commit. UI navigation and Blender object selection do not
+invalidate these resources; actual Mesh, user, transform, frame, or evaluated-geometry
+drift does.
+
 Mesh component indices are evidence scoped to the exact full `mesh_fingerprint` that
 reported them. Re-inspect after every topology-changing edit before choosing later
 components. Explicitly choose `OBJECT` when only the target object should leave shared
@@ -160,5 +169,6 @@ creation/deletion, or reordering as a comparison candidate.
 
 Read [references/tool-recipes.md](references/tool-recipes.md) when executing an
 application/project lifecycle, multi-step scene authoring, exact Mesh editing,
-Modifier-stack authoring, material/texture binding, rendering, observation,
+SelectionSet/surface fitting, Modifier-stack authoring, material/texture binding,
+rendering, observation,
 comparison, preview, reconnect, or recovery workflow.
