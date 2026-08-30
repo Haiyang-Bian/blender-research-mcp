@@ -45,6 +45,8 @@ class CapabilityVersions(BaseModel):
     mesh_deformation: int = Field(default=0, ge=0)
     mesh_validation: int = Field(default=0, ge=0)
     mesh_component_map: int = Field(default=0, ge=0)
+    mesh_separation: int = Field(default=0, ge=0)
+    mesh_batch: int = Field(default=0, ge=0)
     shape_key_value: int = Field(default=0, ge=0)
     material_input: int = Field(default=0, ge=0)
     project_lifecycle: int = Field(default=0, ge=0)

@@ -32,6 +32,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
             "mesh.selection.release",
             "mesh.component_map.inspect",
             "mesh.component_map.release",
+            "mesh.component_map.compose",
             "mesh.selection.remap",
             "mesh.surface.prepare",
             "mesh.surface.query",
@@ -141,6 +142,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     for name in (
         "mesh.selection.inspect",
         "mesh.selection.release",
+        "mesh.component_map.compose",
         "mesh.surface.prepare",
         "mesh.surface.query",
         "mesh.validate",
@@ -149,6 +151,10 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         assert tool.annotations is not None
         assert tool.annotations.readOnlyHint is True
         assert tool.annotations.destructiveHint is False
+    map_compose = tools_by_name["mesh.component_map.compose"]
+    map_ids = map_compose.inputSchema["properties"]["component_map_ids"]
+    assert map_ids["minItems"] == 2
+    assert map_ids["maxItems"] == 8
     surface_prepare = tools_by_name["mesh.surface.prepare"]
     assert surface_prepare.inputSchema["properties"]["geometry"]["enum"] == [
         "BASE",

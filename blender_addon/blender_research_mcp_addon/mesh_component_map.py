@@ -9,6 +9,7 @@ import bpy
 from .mesh_component_map_model import (
     DOMAINS,
     ComponentMapRecord,
+    compose_component_maps,
     remap_relation_values,
     reverse_relation_values,
 )
@@ -70,6 +71,47 @@ def release_component_map(book: MeshResourceBook, params: dict[str, Any]) -> dic
     return {
         "component_map_id": component_map_id,
         "released": book.release_component_map(component_map_id),
+    }
+
+
+def compose_component_map(book: MeshResourceBook, params: dict[str, Any]) -> dict[str, Any]:
+    component_map_ids = params.get("component_map_ids")
+    if (
+        not isinstance(component_map_ids, list)
+        or not 2 <= len(component_map_ids) <= 8
+        or any(not isinstance(item, str) or not item for item in component_map_ids)
+        or len(set(component_map_ids)) != len(component_map_ids)
+    ):
+        raise MeshResourceError(
+            "MESH_COMPONENT_MAP_CHAIN_INVALID",
+            "component_map_ids must contain 2 to 8 unique non-empty IDs",
+        )
+    records = tuple(book.component_map(item) for item in component_map_ids)
+    try:
+        composed = compose_component_maps(records)
+    except ValueError as exc:
+        raise MeshResourceError(
+            "MESH_COMPONENT_MAP_CHAIN_INVALID",
+            str(exc),
+            details={"component_map_ids": component_map_ids},
+        ) from exc
+    _validate_live_after(composed)
+    try:
+        book.add_component_map(composed)
+    except MeshResourceError as exc:
+        if exc.code == "MESH_COMPONENT_MAP_BUDGET_EXCEEDED":
+            raise MeshResourceError(
+                "MESH_COMPONENT_MAP_COMPOSITION_FAILED",
+                "Composed ComponentMap exceeds the retained relation budget",
+                details={
+                    "component_map_ids": component_map_ids,
+                    "relation_count": composed.relation_count,
+                },
+            ) from exc
+        raise
+    return {
+        "component_map": composed.summary(),
+        "source_component_maps": [record.summary() for record in records],
     }
 
 

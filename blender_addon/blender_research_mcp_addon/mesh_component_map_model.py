@@ -53,6 +53,12 @@ class ComponentMapRecord:
     created: dict[str, tuple[int, ...]]
     deleted: dict[str, tuple[int, ...]]
     content_sha256: str
+    map_kind: str = "SINGLE"
+    source_component_map_ids: tuple[str, ...] = ()
+    step_count: int = 1
+    transaction_ids: tuple[str, ...] = ()
+    separation_id: str | None = None
+    branch_role: str | None = None
 
     @property
     def relation_count(self) -> int:
@@ -77,7 +83,13 @@ class ComponentMapRecord:
         return {
             "component_map_id": self.component_map_id,
             "transaction_id": self.transaction_id,
+            "transaction_ids": list(self.transaction_ids or (self.transaction_id,)),
             "operation": self.operation,
+            "map_kind": self.map_kind,
+            "source_component_map_ids": list(self.source_component_map_ids),
+            "step_count": self.step_count,
+            "separation_id": self.separation_id,
+            "branch_role": self.branch_role,
             "before": {
                 "object_name": self.before_object_name,
                 "object_identity": self.before_object_identity,
@@ -111,10 +123,27 @@ def make_component_map(
     relations: dict[str, tuple[ComponentRelation, ...]],
     created: dict[str, tuple[int, ...]],
     deleted: dict[str, tuple[int, ...]],
+    map_kind: str = "SINGLE",
+    source_component_map_ids: tuple[str, ...] = (),
+    step_count: int = 1,
+    transaction_ids: tuple[str, ...] | None = None,
+    separation_id: str | None = None,
+    branch_role: str | None = None,
 ) -> ComponentMapRecord:
+    if map_kind not in {"SINGLE", "COMPOSED", "SEPARATION_BRANCH"}:
+        raise ValueError(f"Unsupported ComponentMap kind: {map_kind}")
+    if step_count < 1:
+        raise ValueError("ComponentMap step_count must be positive")
+    resolved_transaction_ids = transaction_ids or (transaction_id,)
     payload = {
         "transaction_id": transaction_id,
+        "transaction_ids": resolved_transaction_ids,
         "operation": operation,
+        "map_kind": map_kind,
+        "source_component_map_ids": source_component_map_ids,
+        "step_count": step_count,
+        "separation_id": separation_id,
+        "branch_role": branch_role,
         "before": before,
         "after": after,
         "relations": {
@@ -149,6 +178,177 @@ def make_component_map(
         created=created,
         deleted=deleted,
         content_sha256=_content_hash(payload),
+        map_kind=map_kind,
+        source_component_map_ids=source_component_map_ids,
+        step_count=step_count,
+        transaction_ids=resolved_transaction_ids,
+        separation_id=separation_id,
+        branch_role=branch_role,
+    )
+
+
+def _ordered_unique(values: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(values))
+
+
+def _endpoint(record: ComponentMapRecord, side: str) -> tuple[str, ...]:
+    return (
+        str(getattr(record, f"{side}_object_name")),
+        str(getattr(record, f"{side}_object_identity")),
+        str(getattr(record, f"{side}_mesh_name")),
+        str(getattr(record, f"{side}_mesh_identity")),
+        str(getattr(record, f"{side}_mesh_revision_id")),
+        str(getattr(record, f"{side}_mesh_fingerprint")),
+    )
+
+
+def component_map_chain_mismatch(
+    records: tuple[ComponentMapRecord, ...],
+) -> tuple[int, tuple[str, ...], tuple[str, ...]] | None:
+    for index, (left, right) in enumerate(zip(records, records[1:], strict=False)):
+        left_after = _endpoint(left, "after")
+        right_before = _endpoint(right, "before")
+        if left_after != right_before:
+            return index, left_after, right_before
+    return None
+
+
+def _compose_domain(
+    records: tuple[ComponentMapRecord, ...],
+    domain: str,
+) -> tuple[tuple[ComponentRelation, ...], tuple[int, ...], tuple[int, ...]]:
+    first = records[0]
+    first_rows = first.relations.get(domain, ())
+    mapping: dict[int, set[int]] = {
+        row.source_index: set(row.target_indices) for row in first_rows
+    }
+    for deleted_index in first.deleted.get(domain, ()):
+        mapping.setdefault(deleted_index, set())
+
+    histories: dict[int, set[str]] = {
+        row.source_index: {row.relation} for row in first_rows
+    }
+    ancestorless = set(first.created.get(domain, ()))
+
+    for record in records[1:]:
+        rows = {row.source_index: row for row in record.relations.get(domain, ())}
+        next_mapping: dict[int, set[int]] = {}
+        next_histories: dict[int, set[str]] = {}
+        for source, intermediate_indices in mapping.items():
+            targets: set[int] = set()
+            history = set(histories.get(source, ()))
+            for intermediate in intermediate_indices:
+                row = rows.get(intermediate)
+                if row is not None:
+                    targets.update(row.target_indices)
+                    history.add(row.relation)
+            next_mapping[source] = targets
+            next_histories[source] = history
+        mapping = next_mapping
+        histories = next_histories
+
+        propagated_created: set[int] = set()
+        for intermediate in ancestorless:
+            row = rows.get(intermediate)
+            if row is not None:
+                propagated_created.update(row.target_indices)
+        propagated_created.update(record.created.get(domain, ()))
+        ancestorless = propagated_created
+
+    reverse_sources: dict[int, set[int]] = {}
+    for source, targets in mapping.items():
+        for target in targets:
+            reverse_sources.setdefault(target, set()).add(source)
+
+    relations: list[ComponentRelation] = []
+    deleted: list[int] = []
+    for source in sorted(mapping):
+        targets = tuple(sorted(mapping[source]))
+        if not targets:
+            deleted.append(source)
+            continue
+        has_split = len(targets) > 1
+        has_merge = any(len(reverse_sources[target]) > 1 for target in targets)
+        history = histories.get(source, set())
+        complex_history = "DERIVED" in history or (
+            "SPLIT" in history and "MERGED" in history
+        )
+        if complex_history or (has_split and has_merge):
+            relation = "DERIVED"
+        elif has_split:
+            relation = "SPLIT"
+        elif has_merge:
+            relation = "MERGED"
+        elif history == {"SURVIVED"}:
+            relation = "SURVIVED"
+        else:
+            relation = "DERIVED"
+        relations.append(ComponentRelation(source, targets, relation))
+
+    original_targets = {target for targets in mapping.values() for target in targets}
+    created = tuple(sorted(ancestorless - original_targets))
+    return tuple(relations), created, tuple(deleted)
+
+
+def compose_component_maps(
+    records: tuple[ComponentMapRecord, ...],
+) -> ComponentMapRecord:
+    if not 2 <= len(records) <= 8:
+        raise ValueError("ComponentMap composition requires 2 to 8 maps")
+    mismatch = component_map_chain_mismatch(records)
+    if mismatch is not None:
+        index, left_after, right_before = mismatch
+        raise ValueError(
+            f"ComponentMap chain breaks between positions {index} and {index + 1}: "
+            f"{left_after!r} != {right_before!r}"
+        )
+
+    relations: dict[str, tuple[ComponentRelation, ...]] = {}
+    created: dict[str, tuple[int, ...]] = {}
+    deleted: dict[str, tuple[int, ...]] = {}
+    for domain in DOMAINS:
+        domain_relations, domain_created, domain_deleted = _compose_domain(records, domain)
+        relations[domain] = domain_relations
+        created[domain] = domain_created
+        deleted[domain] = domain_deleted
+
+    first = records[0]
+    last = records[-1]
+    transaction_ids = _ordered_unique(
+        tuple(
+            transaction_id
+            for record in records
+            for transaction_id in (record.transaction_ids or (record.transaction_id,))
+        )
+    )
+    return make_component_map(
+        transaction_id=transaction_ids[0],
+        transaction_ids=transaction_ids,
+        operation="compose",
+        before={
+            "object_name": first.before_object_name,
+            "object_identity": first.before_object_identity,
+            "mesh_name": first.before_mesh_name,
+            "mesh_identity": first.before_mesh_identity,
+            "mesh_revision_id": first.before_mesh_revision_id,
+            "mesh_fingerprint": first.before_mesh_fingerprint,
+        },
+        after={
+            "object_name": last.after_object_name,
+            "object_identity": last.after_object_identity,
+            "mesh_name": last.after_mesh_name,
+            "mesh_identity": last.after_mesh_identity,
+            "mesh_revision_id": last.after_mesh_revision_id,
+            "mesh_fingerprint": last.after_mesh_fingerprint,
+        },
+        after_users=last.after_users,
+        after_user_objects=last.after_user_objects,
+        relations=relations,
+        created=created,
+        deleted=deleted,
+        map_kind="COMPOSED",
+        source_component_map_ids=tuple(record.component_map_id for record in records),
+        step_count=sum(record.step_count for record in records),
     )
 
 

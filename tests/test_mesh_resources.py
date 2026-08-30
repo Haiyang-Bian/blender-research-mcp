@@ -438,3 +438,161 @@ def test_component_map_hash_covers_lineage_and_revisions() -> None:
         "created": 1,
         "deleted": 0,
     }
+
+
+def _map_evidence(
+    revision: str,
+    *,
+    object_name: str = "Cube",
+    object_identity: str = "object:1",
+    mesh_name: str = "Mesh",
+    mesh_identity: str = "mesh:1",
+) -> dict[str, str]:
+    return {
+        "object_name": object_name,
+        "object_identity": object_identity,
+        "mesh_name": mesh_name,
+        "mesh_identity": mesh_identity,
+        "mesh_revision_id": revision * 64,
+        "mesh_fingerprint": revision.upper() * 64,
+    }
+
+
+def test_component_map_composition_tracks_survival_split_merge_and_creation() -> None:
+    module = load_component_map_model()
+    first = module.make_component_map(
+        transaction_id="transaction-a",
+        operation="subdivide",
+        before=_map_evidence("a"),
+        after=_map_evidence("b"),
+        after_users=1,
+        after_user_objects=(("Cube", "object:1"),),
+        relations={
+            "VERTEX": (
+                module.ComponentRelation(0, (0,), "SURVIVED"),
+                module.ComponentRelation(1, (1, 2), "SPLIT"),
+                module.ComponentRelation(2, (3,), "SURVIVED"),
+            )
+        },
+        created={"VERTEX": (4,)},
+        deleted={"VERTEX": (3,)},
+    )
+    second = module.make_component_map(
+        transaction_id="transaction-b",
+        operation="merge_vertices",
+        before=_map_evidence("b"),
+        after=_map_evidence("c"),
+        after_users=1,
+        after_user_objects=(("Cube", "object:1"),),
+        relations={
+            "VERTEX": (
+                module.ComponentRelation(0, (0,), "SURVIVED"),
+                module.ComponentRelation(1, (1,), "MERGED"),
+                module.ComponentRelation(2, (1,), "MERGED"),
+                module.ComponentRelation(3, (2,), "SURVIVED"),
+                module.ComponentRelation(4, (3,), "SURVIVED"),
+            )
+        },
+        created={"VERTEX": (4,)},
+        deleted={},
+    )
+    composed = module.compose_component_maps((first, second))
+    assert composed.map_kind == "COMPOSED"
+    assert composed.source_component_map_ids == (
+        first.component_map_id,
+        second.component_map_id,
+    )
+    assert composed.transaction_ids == ("transaction-a", "transaction-b")
+    assert composed.step_count == 2
+    assert composed.relations["VERTEX"] == (
+        module.ComponentRelation(0, (0,), "SURVIVED"),
+        module.ComponentRelation(1, (1,), "DERIVED"),
+        module.ComponentRelation(2, (2,), "SURVIVED"),
+    )
+    assert composed.deleted["VERTEX"] == (3,)
+    assert composed.created["VERTEX"] == (3, 4)
+    summary = composed.summary()
+    assert summary["map_kind"] == "COMPOSED"
+    assert summary["transaction_ids"] == ["transaction-a", "transaction-b"]
+
+
+def test_component_map_composition_classifies_plain_split_and_merge() -> None:
+    module = load_component_map_model()
+    first = module.make_component_map(
+        transaction_id="transaction",
+        operation="split",
+        before=_map_evidence("a"),
+        after=_map_evidence("b"),
+        after_users=1,
+        after_user_objects=(("Cube", "object:1"),),
+        relations={
+            "EDGE": (
+                module.ComponentRelation(0, (0, 1), "SPLIT"),
+                module.ComponentRelation(1, (2,), "SURVIVED"),
+            ),
+            "FACE": (
+                module.ComponentRelation(0, (0,), "SURVIVED"),
+                module.ComponentRelation(1, (1,), "SURVIVED"),
+            ),
+        },
+        created={},
+        deleted={},
+    )
+    second = module.make_component_map(
+        transaction_id="transaction",
+        operation="merge",
+        before=_map_evidence("b"),
+        after=_map_evidence("c"),
+        after_users=1,
+        after_user_objects=(("Cube", "object:1"),),
+        relations={
+            "EDGE": (
+                module.ComponentRelation(0, (0,), "SURVIVED"),
+                module.ComponentRelation(1, (1,), "SURVIVED"),
+                module.ComponentRelation(2, (2,), "SURVIVED"),
+            ),
+            "FACE": (
+                module.ComponentRelation(0, (0,), "MERGED"),
+                module.ComponentRelation(1, (0,), "MERGED"),
+            ),
+        },
+        created={},
+        deleted={},
+    )
+    composed = module.compose_component_maps((first, second))
+    assert composed.relations["EDGE"] == (
+        module.ComponentRelation(0, (0, 1), "SPLIT"),
+        module.ComponentRelation(1, (2,), "SURVIVED"),
+    )
+    assert composed.relations["FACE"] == (
+        module.ComponentRelation(0, (0,), "MERGED"),
+        module.ComponentRelation(1, (0,), "MERGED"),
+    )
+
+
+def test_component_map_composition_rejects_noncontinuous_evidence() -> None:
+    module = load_component_map_model()
+    first = module.make_component_map(
+        transaction_id="transaction",
+        operation="first",
+        before=_map_evidence("a"),
+        after=_map_evidence("b"),
+        after_users=1,
+        after_user_objects=(("Cube", "object:1"),),
+        relations={},
+        created={},
+        deleted={},
+    )
+    second = module.make_component_map(
+        transaction_id="transaction",
+        operation="second",
+        before=_map_evidence("x"),
+        after=_map_evidence("c"),
+        after_users=1,
+        after_user_objects=(("Cube", "object:1"),),
+        relations={},
+        created={},
+        deleted={},
+    )
+    with pytest.raises(ValueError, match="chain breaks"):
+        module.compose_component_maps((first, second))

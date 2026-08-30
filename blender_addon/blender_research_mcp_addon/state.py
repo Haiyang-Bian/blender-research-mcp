@@ -66,6 +66,7 @@ from .material_authoring_ops import (
     material_result,
 )
 from .mesh_component_map import (
+    compose_component_map,
     inspect_component_map,
     release_component_map,
     remap_selection,
@@ -164,6 +165,7 @@ CAPABILITIES = [
     "mesh.selection.release",
     "mesh.component_map.inspect",
     "mesh.component_map.release",
+    "mesh.component_map.compose",
     "mesh.selection.remap",
     "mesh.surface.prepare",
     "mesh.surface.query",
@@ -232,7 +234,7 @@ CAPABILITY_VERSIONS = {
     "mesh_surface_query": 1,
     "mesh_deformation": 1,
     "mesh_validation": 1,
-    "mesh_component_map": 1,
+    "mesh_component_map": 2,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -934,6 +936,11 @@ class AddonState:
             return result
         if command == "mesh.component_map.release":
             result = release_component_map(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.component_map.compose":
+            with self.suppress_generation():
+                result = compose_component_map(self.mesh_resources, params)
             result["scene_generation"] = self.scene_generation
             return result
         if command == "mesh.selection.remap":

@@ -78,6 +78,7 @@ from blender_research_mcp.mesh_topology import (
     ComponentMapDirection,
     ComponentMapDomain,
     ComponentMapId,
+    ComponentMapIds,
     SelectionRemapMode,
     WeightMergeMode,
 )
@@ -582,6 +583,25 @@ def create_server(
         return await client.call(
             "mesh.component_map.release",
             {"component_map_id": component_map_id},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.component_map.compose",
+        description=(
+            "Compose two to eight exact continuous ComponentMaps into one ordinary "
+            "lineage resource without guessing spatial correspondence."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_component_map_compose(
+        component_map_ids: ComponentMapIds,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_component_map", 2)
+        return await client.call(
+            "mesh.component_map.compose",
+            {"component_map_ids": list(component_map_ids)},
             read_only=True,
         )
 
