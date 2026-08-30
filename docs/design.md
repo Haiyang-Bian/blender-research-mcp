@@ -1,9 +1,9 @@
 # Blender Research MCP — design and handoff
 
 - Status: 0.13 topology revision and ComponentMap validated in Blender 4.2.23
-- Next milestone: 0.13.1 object separation and declarative Mesh batches
+- Current milestone: 0.13.1 object separation and declarative Mesh batches
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.13.0
+- Package and add-on version: 0.13.1
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,7 +12,7 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.13.0 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.13.1 now covers
 the validated observation/lifecycle/static-authoring path, unified typed object,
 Light, and Camera settings, four bounded non-destructive Modifier families, and exact
 base-Mesh component editing with transaction snapshots; the older bridge is no longer

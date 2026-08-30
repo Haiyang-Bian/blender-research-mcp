@@ -339,6 +339,38 @@ dissolve, and merge. Private lineage layers are removed before Mesh writeback. U
 color, material, smooth, and supported generic attribute schemas remain protected;
 Shape-Key, linked, Edit-Mode, unsupported-attribute, and budget boundaries remain hard.
 
+## Separated branches and declarative Mesh batches
+
+Use this recipe with `mesh_component_map: 2`, `mesh_topology: 3`,
+`mesh_separation: 1`, `mesh_batch: 1`, and `transactions >= 8`:
+
+1. Compose ComponentMaps only when every adjacent after/before object, Mesh identity,
+   revision, fingerprint, and user set matches exactly. Use the composed ordinary Map
+   for inspection or remap; never infer a missing link from coordinate proximity.
+2. Use `mesh.separate` for one connected proper-subset FACE SelectionSet. Preserve both
+   branch maps: SOURCE continues on the original object, while SEPARATED targets the
+   independent new object. Shared Mesh peers remain linked to the original data.
+3. Use `mesh.batch.execute` when a bounded workflow has dependent selection, deformation,
+   topology, separation, and validation steps. Bind initial targets and resources to
+   unique aliases; every reference must point to an already-defined alias.
+4. Let the batch automatically remap all current SelectionSet aliases on each affected
+   target after a topology step. After separation, continue original aliases through
+   SOURCE and use the declared new-region alias on the SEPARATED target.
+5. Add count, p95, maximum, penetration, or sign-reliability assertions to validation
+   steps when success is quantitative. Review ordered reports, final aliases, branch
+   evidence, and direct/composed Maps before commit.
+6. A preflight error changes nothing. Once the first step starts, any runtime or
+   assertion failure rolls back the complete active transaction, including earlier
+   Agent writes outside the batch. Stop immediately on `MESH_BATCH_RESTORE_FAILED`.
+7. A successful batch with writes advances global generation once; a complete no-op
+   advances none. Native save still accepts the visible result according to main-thread
+   order, and disconnect uses the ordinary transaction rollback path.
+
+The batch language is Mesh-only. Do not place object settings, materials, World,
+rendering, arbitrary operators, UV edits, weights, Shape Keys, Modifier Apply, RNA, or
+Python into it. Use ordinary semantic tools around the batch when those domains are
+part of the user's larger authoring workflow.
+
 ## Revision-bound selection and evaluated-surface fitting
 
 Use this recipe with `mesh_selection: 1`, `mesh_surface_query: 1`,

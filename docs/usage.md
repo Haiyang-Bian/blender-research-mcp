@@ -23,10 +23,12 @@
    `transactions: 5`. SelectionSet, SurfaceRef, semantic deformation, and validation
    require their 0.12 capabilities; deformation additionally requires `transactions: 6`.
    Revision-aware topology requires `mesh_component_map: 1`, `mesh_topology: 2`, and
-   `transactions: 7`.
+   `transactions: 7`. Map composition, object separation, and declarative batches
+   require `mesh_component_map: 2`, `mesh_topology: 3`, `mesh_separation: 1`,
+   `mesh_batch: 1`, and `transactions: 8`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.13.0.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.13.1.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -279,6 +281,44 @@ no-op creates no empty Map. Commit retains the after-map; rollback/disconnect re
 the baseline and makes that after-map stale. Native Blender save accepts the current
 revision and stops further Agent writes.
 
+## Compose lineage, separate a region, or run a declarative batch
+
+With `mesh_component_map: 2`, call `mesh.component_map.compose` only for 2–8 exact,
+strictly continuous Map IDs. The previous `after` and next `before` object, Mesh,
+revision, fingerprint, and user evidence must match. Composition is lineage arithmetic,
+not a spatial search; the result is an ordinary inspectable/remappable ComponentMap.
+
+Use `mesh.separate` when one connected proper-subset FACE SelectionSet must become an
+independent object. Supply the exact current object/Mesh/users/fingerprint plus a unique
+new object name. The source object keeps the SOURCE branch and the new object receives
+the SEPARATED branch. Boundary components may have descendants on both branches; remap
+through the branch that matches the intended continuation. `OBJECT` scope is fixed:
+shared Mesh peers remain unchanged while the target becomes single-user transactionally.
+
+Use `mesh.batch.execute` when two or more dependent Mesh steps would otherwise require
+repeated network round trips and manual SelectionSet remapping:
+
+1. Bind one to eight exact initial targets and any existing SelectionSet/SurfaceRef
+   inputs to unique invocation-local aliases.
+2. List only closed `selection_query`, `selection_derive`, `mesh_edit`,
+   `mesh_separate`, and `mesh_validate` steps. References must point backward; a later
+   separation step may introduce a new target alias for subsequent steps.
+3. Give SelectionSet aliases an explicit remap mode/weight merge when the default
+   `ALL_MAPPED/MAX` is not correct. The runtime remaps every current selection on an
+   affected branch after each topology change and composes map chains of two or more
+   steps.
+4. Put quantitative gates in `mesh_validate.assertions`: count, p95, maximum,
+   penetration, or signed-distance reliability. A failed assertion is a runtime failure.
+5. Inspect ordered step reports, final alias resources, per-target branch evidence,
+   direct/composed Maps, and the single returned generation before commit.
+
+Static alias, evidence, capacity, or dependency failure occurs before any step and does
+not disturb prior transaction content. Once execution starts, any write, resource,
+budget, or assertion failure rolls back the entire active transaction—including Agent
+writes performed before this batch. A `MESH_BATCH_RESTORE_FAILED` result means recovery
+could not be proven; preserve current user state and stop. A successful all-no-op batch
+does not advance generation; any successful write advances it exactly once.
+
 ## Select, fit, and validate a Mesh region
 
 Use this transaction-v6 workflow when a region is too large or too semantic to keep
@@ -468,6 +508,18 @@ Codex after the first installation so automatic skill discovery can see it.
   sharing change and stop the transaction. Do not force the saved snapshot over it.
 - `MESH_EDIT_RESTORE_FAILED`: stop all writes and inspect the Mesh, object users,
   context, and active transaction before any recovery decision.
+- `MESH_COMPONENT_MAP_CHAIN_INVALID`: discard the proposed chain and rebuild it from
+  exact adjacent step evidence; never bridge a revision gap spatially.
+- `MESH_SEPARATION_DISCONNECTED`, `MESH_SEPARATION_EMPTY_SOURCE`, or
+  `MESH_SEPARATION_ATTRIBUTE_UNSUPPORTED`: choose one connected proper face subset on
+  a supported Mesh; do not coerce the operation with Blender selection or Python.
+- `MESH_BATCH_ALIAS_CONFLICT`, `MESH_BATCH_REFERENCE_NOT_FOUND`, or
+  `MESH_BATCH_BUDGET_EXCEEDED`: correct the declarative plan during preflight; prior
+  transaction content remains untouched.
+- `MESH_BATCH_ASSERTION_FAILED`: inspect the attached step and rollback evidence; the
+  complete active transaction has been restored to its begin baseline.
+- `MESH_BATCH_RESTORE_FAILED`: recovery could not be proven. Preserve user state, stop
+  all Agent writes, and re-inspect the transaction, Mesh branches, resources, and file.
 - `MESH_COMPONENT_MAP_NOT_FOUND` means the map never existed or was released;
   `MESH_COMPONENT_MAP_EXPIRED` means LRU eviction; rebuild lineage from a new topology
   operation rather than guessing it.

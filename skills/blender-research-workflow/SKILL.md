@@ -1,6 +1,6 @@
 ---
 name: blender-research-workflow
-description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects, revision-aware Mesh topology and surface fits, typed Modifier stacks, and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, semantic Mesh modeling, evaluated-surface fitting, non-destructive Modifier modeling, or static scene delivery; do not use for arbitrary Python, arbitrary BMesh/RNA, arbitrary node graphs, animation, Modifier apply, or UV editing.
+description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects, revision-aware Mesh topology, separated Mesh branches and surface fits, typed Modifier stacks, and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, semantic Mesh modeling, evaluated-surface fitting, non-destructive Modifier modeling, or static scene delivery; do not use for arbitrary Python, arbitrary BMesh/RNA, arbitrary node graphs, animation, Modifier apply, or UV editing.
 ---
 
 # Blender Research Workflow
@@ -115,7 +115,11 @@ drift does.
 Mesh component indices are evidence scoped to the exact full `mesh_fingerprint` that
 reported them. With `mesh_component_map: 1`, use each changed topology response's
 one-revision ComponentMap and rebound SelectionSet for the next operation; never infer
-new indices by location or compose maps implicitly. Explicitly choose `OBJECT` when only
+new indices by location. With `mesh_component_map: 2`, compose only an exact continuous
+Map chain. Use `mesh.separate` when a connected face region must become an independent
+object branch. Use `mesh.batch.execute` when dependent selection/edit/separation/
+validation steps benefit from named intermediate resources and automatic remapping;
+do not use it as a generic scene script. Explicitly choose `OBJECT` when only
 the target object should leave shared
 Mesh data, or `SHARED_DATA` when all inspected users should change together. Do not use
 topology to imitate a material effect, edit UVs through Mesh operations, or fall back to

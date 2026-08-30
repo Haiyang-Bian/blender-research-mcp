@@ -41,16 +41,17 @@ in this order when starting a new implementation task:
 
 ## Current release
 
-Version 0.13.0 is the active validated milestone. It adds one-revision ComponentMaps,
+Version 0.13.0 is the previous validated milestone. It adds one-revision ComponentMaps,
 SelectionSet remapping, and bounded subdivide, loop-cut, bisect, split, bridge, fill,
 and grid-fill operations on top of the 0.12 selection/surface foundation. Its automated
 and Blender 4.2.23 gates have passed; see
 [the 0.13 validation record](validation/2026-08-31-topology-component-maps.md).
 
-Version 0.13.1 is the active implementation target. It composes exact map chains,
+Version 0.13.1 is the current implementation milestone. It composes exact map chains,
 separates one connected face region into a guarded object branch, and executes bounded
-Mesh-only declarative batches with named resources and automatic remapping. These
-features are not described as validated until their automated and Blender gates pass.
+Mesh-only declarative batches with named resources, automatic remapping, validation
+assertions, one-generation success semantics, and whole-transaction runtime recovery.
+Its final validation record is added only after the complete Blender gate passes.
 
 Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
 SurfaceRefs, topology-preserving surface deformation, and quantitative Mesh validation;

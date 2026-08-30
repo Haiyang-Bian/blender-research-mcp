@@ -265,6 +265,11 @@ mesh.remesh
 ComponentMap 分支。声明式 `mesh.batch.execute` 仅组合已有 SelectionSet 查询/派生、
 Mesh 编辑、该分离操作与有界验证，不开放任意命令或 Blender operator。
 
+实现状态（0.13.1）：上述窄化接口已实现。连续 Map 可通过公开 compose 工具组合；
+分离返回 SOURCE/SEPARATED 精确分支；batch 使用一次调用内符号表并在每次拓扑变化
+后自动重映射受影响 SelectionSet。对象分离以外的任意对象级批处理、Map 任意图组合、
+UV/权重迁移和求值 Mesh 实体化仍未授权。
+
 ### 6.4 属性编辑与迁移
 
 ```text
