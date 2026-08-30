@@ -1,7 +1,7 @@
 # Blender Research MCP — design and handoff
 
 - Status: 0.13 topology revision and ComponentMap validated in Blender 4.2.23
-- Next milestone: 0.13.1 object separation and declarative topology batches
+- Next milestone: 0.13.1 object separation and declarative Mesh batches
 - Primary Blender target: 4.2.23 LTS
 - Package and add-on version: 0.13.0
 - Protocol version: 1
@@ -406,6 +406,15 @@ closed Mesh union gains subdivide, edge-ring loop cut, plane bisect, in-Mesh spl
 bridge, fill, and grid fill. Transaction capability 7 binds map validity to commit,
 rollback, disconnect, native save, and file-load lifecycle. See
 `docs/roadmap/0.13.0-topology-component-maps.md` and decision 0013.
+
+Version 0.13.1 composes strictly continuous ComponentMaps and adds two bounded
+authorities on top of that evidence. `mesh.separate` splits one connected proper-subset
+FACE SelectionSet into a new guarded object while returning independent source and
+separated branch maps. `mesh.batch.execute` is a closed Mesh-only sequence of selection,
+edit, separation, and validation steps with named resources, automatic remapping, one
+global generation update, and whole-transaction rollback after any runtime failure.
+It is not a general scene script or arbitrary BMesh surface. See
+`docs/roadmap/0.13.1-mesh-separation-batches.md` and decision 0014.
 
 Tool count is not a success metric. A small composable surface with precise
 preconditions is preferable to dozens of overlapping convenience tools.
