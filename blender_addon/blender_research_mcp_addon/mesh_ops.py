@@ -156,6 +156,12 @@ def mesh_fingerprint(mesh: Any) -> str:
     _hash_foreach(hasher, mesh.polygons, "use_smooth", "b", 1)
     _hash_foreach(hasher, mesh.polygons, "select", "b", 1)
     _hash_foreach(hasher, mesh.polygons, "hide", "b", 1)
+    hasher.update(struct.pack("<I", len(mesh.materials)))
+    for material in mesh.materials:
+        _hash_text(
+            hasher,
+            session_identity("material", material) if material is not None else None,
+        )
     _hash_attributes(hasher, mesh)
     return hasher.hexdigest()
 
@@ -185,6 +191,18 @@ def mesh_counts(mesh: Any) -> dict[str, int]:
         "edges": len(mesh.edges),
         "faces": len(mesh.polygons),
         "loops": len(mesh.loops),
+    }
+
+
+def _mesh_reference(mesh: Any) -> dict[str, Any]:
+    return {
+        "name": mesh.name,
+        "session_identity": session_identity("mesh", mesh),
+        "users": int(mesh.users),
+        "user_objects": [
+            {"object_name": name, "session_identity": identity}
+            for name, identity in mesh_user_refs(mesh)
+        ],
     }
 
 
@@ -232,7 +250,7 @@ def _mesh_object(object_name: str) -> tuple[Any, Any]:
 def _writable_reasons(obj: Any, mesh: Any) -> list[str]:
     reasons = []
     if obj.library is not None and obj.override_library is None:
-        reasons.append("OBJECT_LINKED")
+        reasons.append("MESH_LINKED")
     if mesh.library is not None and mesh.override_library is None:
         reasons.append("MESH_LINKED")
     if mesh.shape_keys is not None:
@@ -291,6 +309,16 @@ def inspect_mesh(
             "shape_keys": mesh.shape_keys is not None,
             "uv_layers": [layer.name for layer in mesh.uv_layers],
             "color_attributes": [attribute.name for attribute in mesh.color_attributes],
+            "material_slots": [
+                {
+                    "slot_index": index,
+                    "material_name": material.name if material is not None else None,
+                    "material_identity": (
+                        session_identity("material", material) if material is not None else None
+                    ),
+                }
+                for index, material in enumerate(mesh.materials)
+            ],
             "attributes": attribute_summaries,
         },
         "user_objects": [
@@ -766,7 +794,32 @@ def _requested_components(
     operation: dict[str, Any], baseline: dict[str, list[Any]]
 ) -> dict[str, Any]:
     operation_type = operation["type"]
-    if operation_type in {"transform", "delete", "dissolve"}:
+    if operation_type == "transform":
+        target = operation["target"]
+        target_type = str(target["type"])
+        indices = list(target["indices"])
+        result = {target_type: _index_page(indices)}
+        if target_type == "vertices":
+            expanded = indices
+        elif target_type == "edges":
+            expanded = sorted(
+                {
+                    int(vertex.index)
+                    for index in indices
+                    for vertex in baseline["edges"][index].verts
+                }
+            )
+        else:
+            expanded = sorted(
+                {
+                    int(vertex.index)
+                    for index in indices
+                    for vertex in baseline["faces"][index].verts
+                }
+            )
+        result["expanded_vertices"] = _index_page(expanded)
+        return result
+    if operation_type in {"delete", "dissolve"}:
         target = operation["target"]
         return {str(target["type"]): _index_page(list(target["indices"]))}
     if operation_type in {"extrude_faces", "inset_faces", "face_settings"}:
@@ -783,6 +836,22 @@ def _requested_components(
             "all": True,
         }
     return {}
+
+
+def _component_warnings(components: dict[str, Any]) -> list[dict[str, Any]]:
+    warnings = []
+    for section in ("created", "deleted", "affected"):
+        for kind, page in components[section].items():
+            if isinstance(page, dict) and page.get("truncated") is True:
+                warnings.append(
+                    {
+                        "code": "MESH_COMPONENT_INDICES_TRUNCATED",
+                        "section": section,
+                        "component": kind,
+                        "count": page["count"],
+                    }
+                )
+    return warnings
 
 
 def _target_geometry(bm: Any, target: dict[str, Any]) -> tuple[list[Any], list[Any]]:
@@ -814,6 +883,276 @@ def _vector(raw: Any, field: str) -> Vector:
     if not all(math.isfinite(value) for value in result):
         raise MeshOperationError("MESH_OPERATION_INVALID", f"{field} components must be finite")
     return result
+
+
+def _closed_payload(
+    value: Any,
+    field: str,
+    *,
+    required: set[str],
+    optional: set[str] = frozenset(),
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise MeshOperationError("MESH_OPERATION_INVALID", f"{field} must be an object")
+    keys = set(value)
+    missing = required - keys
+    extra = keys - required - optional
+    if missing or extra:
+        raise MeshOperationError(
+            "MESH_OPERATION_INVALID",
+            f"{field} has invalid fields",
+            details={"missing": sorted(missing), "extra": sorted(extra)},
+        )
+    return value
+
+
+def _number(
+    value: Any,
+    field: str,
+    *,
+    minimum: float,
+    maximum: float,
+    minimum_exclusive: bool = False,
+) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise MeshOperationError("MESH_OPERATION_INVALID", f"{field} must be a JSON number")
+    result = float(value)
+    valid_minimum = result > minimum if minimum_exclusive else result >= minimum
+    if not math.isfinite(result) or not valid_minimum or result > maximum:
+        boundary = ">" if minimum_exclusive else ">="
+        raise MeshOperationError(
+            "MESH_OPERATION_INVALID",
+            f"{field} must be finite and {boundary} {minimum} and <= {maximum}",
+        )
+    return result
+
+
+def _strict_bool(value: Any, field: str) -> bool:
+    if type(value) is not bool:
+        raise MeshOperationError("MESH_OPERATION_INVALID", f"{field} must be a boolean")
+    return value
+
+
+def _validate_target_payload(value: Any, field: str) -> dict[str, Any]:
+    target = _closed_payload(value, field, required={"type", "indices"})
+    if target["type"] not in {"vertices", "edges", "faces"}:
+        raise MeshOperationError(
+            "MESH_OPERATION_INVALID", f"{field}.type must be vertices, edges, or faces"
+        )
+    _indices(target["indices"], f"{field}.indices")
+    return target
+
+
+def _validate_vector_range(
+    value: Any,
+    field: str,
+    *,
+    minimum: float,
+    maximum: float,
+) -> Vector:
+    result = _vector(value, field)
+    if any(component < minimum or component > maximum for component in result):
+        raise MeshOperationError(
+            "MESH_OPERATION_INVALID",
+            f"{field} components must be between {minimum} and {maximum}",
+        )
+    return result
+
+
+def _validate_operation(operation: Any) -> dict[str, Any]:
+    if not isinstance(operation, dict):
+        raise MeshOperationError("MESH_OPERATION_INVALID", "operation must be an object")
+    operation_type = operation.get("type")
+    if operation_type == "transform":
+        payload = _closed_payload(
+            operation,
+            "operation",
+            required={"type", "target"},
+            optional={"translation", "rotation_euler_degrees", "scale", "pivot"},
+        )
+        _validate_target_payload(payload["target"], "operation.target")
+        patches = [
+            field
+            for field in ("translation", "rotation_euler_degrees", "scale")
+            if field in payload
+        ]
+        if not patches:
+            raise MeshOperationError(
+                "MESH_OPERATION_INVALID", "transform requires at least one transform field"
+            )
+        if "translation" in payload:
+            _validate_vector_range(
+                payload["translation"], "translation", minimum=-1_000_000, maximum=1_000_000
+            )
+        if "rotation_euler_degrees" in payload:
+            _validate_vector_range(
+                payload["rotation_euler_degrees"],
+                "rotation_euler_degrees",
+                minimum=-360_000,
+                maximum=360_000,
+            )
+        if "scale" in payload:
+            _validate_vector_range(payload["scale"], "scale", minimum=-1000, maximum=1000)
+        pivot = payload.get("pivot", {"type": "MEDIAN"})
+        if not isinstance(pivot, dict) or pivot.get("type") not in {"MEDIAN", "POINT"}:
+            raise MeshOperationError("MESH_OPERATION_INVALID", "pivot must be MEDIAN or POINT")
+        if pivot["type"] == "MEDIAN":
+            _closed_payload(pivot, "pivot", required={"type"})
+        else:
+            _closed_payload(pivot, "pivot", required={"type", "value"})
+            _validate_vector_range(
+                pivot["value"], "pivot.value", minimum=-1_000_000, maximum=1_000_000
+            )
+        return payload
+    if operation_type == "extrude_faces":
+        payload = _closed_payload(
+            operation,
+            "operation",
+            required={"type", "face_indices", "offset"},
+        )
+        _indices(payload["face_indices"], "face_indices")
+        offset = _validate_vector_range(
+            payload["offset"], "offset", minimum=-1_000_000, maximum=1_000_000
+        )
+        if not any(offset):
+            raise MeshOperationError("MESH_OPERATION_INVALID", "extrude offset must be non-zero")
+        return payload
+    if operation_type == "inset_faces":
+        payload = _closed_payload(
+            operation,
+            "operation",
+            required={"type", "face_indices", "thickness"},
+            optional={"depth", "individual", "even_offset"},
+        )
+        _indices(payload["face_indices"], "face_indices")
+        thickness = _number(payload["thickness"], "thickness", minimum=0, maximum=100_000)
+        depth = _number(payload.get("depth", 0), "depth", minimum=-100_000, maximum=100_000)
+        if thickness == 0 and depth == 0:
+            raise MeshOperationError(
+                "MESH_OPERATION_INVALID", "inset thickness and depth cannot both be zero"
+            )
+        _strict_bool(payload.get("individual", False), "individual")
+        _strict_bool(payload.get("even_offset", True), "even_offset")
+        return payload
+    if operation_type == "bevel_edges":
+        payload = _closed_payload(
+            operation,
+            "operation",
+            required={"type", "edge_indices", "width"},
+            optional={"segments", "profile", "clamp_overlap"},
+        )
+        _indices(payload["edge_indices"], "edge_indices")
+        _number(payload["width"], "width", minimum=0, maximum=100_000, minimum_exclusive=True)
+        segments = payload.get("segments", 1)
+        if isinstance(segments, bool) or not isinstance(segments, int) or not 1 <= segments <= 32:
+            raise MeshOperationError(
+                "MESH_OPERATION_INVALID", "segments must be an integer between 1 and 32"
+            )
+        _number(payload.get("profile", 0.5), "profile", minimum=0, maximum=1)
+        _strict_bool(payload.get("clamp_overlap", True), "clamp_overlap")
+        return payload
+    if operation_type == "delete":
+        payload = _closed_payload(operation, "operation", required={"type", "target"})
+        _validate_target_payload(payload["target"], "operation.target")
+        return payload
+    if operation_type == "dissolve":
+        payload = _closed_payload(
+            operation,
+            "operation",
+            required={"type", "target"},
+            optional={"use_face_split", "use_boundary_tear", "use_verts"},
+        )
+        target = _validate_target_payload(payload["target"], "operation.target")
+        flags = {
+            name: _strict_bool(payload.get(name, False), name)
+            for name in ("use_face_split", "use_boundary_tear", "use_verts")
+        }
+        invalid_true = {
+            "vertices": {"use_verts"},
+            "edges": {"use_boundary_tear"},
+            "faces": {"use_face_split", "use_boundary_tear"},
+        }[target["type"]]
+        if any(flags[name] for name in invalid_true):
+            raise MeshOperationError(
+                "MESH_OPERATION_INVALID",
+                f"Dissolve options do not match target type {target['type']}",
+            )
+        return payload
+    if operation_type == "merge_vertices":
+        payload = _closed_payload(
+            operation,
+            "operation",
+            required={"type", "vertex_indices"},
+            optional={"destination", "target_index"},
+        )
+        indices = _indices(payload["vertex_indices"], "vertex_indices")
+        if len(indices) < 2:
+            raise MeshOperationError(
+                "MESH_OPERATION_INVALID", "merge_vertices requires at least two vertices"
+            )
+        destination = payload.get("destination", "CENTER")
+        target_index = payload.get("target_index")
+        if destination not in {"CENTER", "TARGET"}:
+            raise MeshOperationError(
+                "MESH_OPERATION_INVALID", "destination must be CENTER or TARGET"
+            )
+        if destination == "TARGET":
+            if (
+                isinstance(target_index, bool)
+                or not isinstance(target_index, int)
+                or target_index not in indices
+            ):
+                raise MeshOperationError(
+                    "MESH_OPERATION_INVALID", "TARGET requires target_index in vertex_indices"
+                )
+        elif target_index is not None:
+            raise MeshOperationError(
+                "MESH_OPERATION_INVALID", "target_index is only valid for TARGET"
+            )
+        return payload
+    if operation_type == "face_settings":
+        payload = _closed_payload(
+            operation,
+            "operation",
+            required={"type", "face_indices"},
+            optional={"material_slot_index", "smooth"},
+        )
+        _indices(payload["face_indices"], "face_indices")
+        if "material_slot_index" not in payload and "smooth" not in payload:
+            raise MeshOperationError(
+                "MESH_OPERATION_INVALID", "face_settings requires material and/or smooth"
+            )
+        material = payload.get("material_slot_index")
+        if material is not None and (
+            isinstance(material, bool) or not isinstance(material, int) or not 0 <= material <= 63
+        ):
+            raise MeshOperationError(
+                "MESH_OPERATION_INVALID", "material_slot_index must be between 0 and 63"
+            )
+        if "smooth" in payload:
+            _strict_bool(payload["smooth"], "smooth")
+        return payload
+    if operation_type == "normals":
+        payload = _closed_payload(
+            operation,
+            "operation",
+            required={"type", "mode"},
+            optional={"face_indices"},
+        )
+        mode = payload["mode"]
+        if mode == "FLIP":
+            if "face_indices" not in payload:
+                raise MeshOperationError("MESH_OPERATION_INVALID", "FLIP requires face_indices")
+            _indices(payload["face_indices"], "face_indices")
+        elif mode == "RECALCULATE_OUTSIDE":
+            if "face_indices" in payload:
+                raise MeshOperationError(
+                    "MESH_OPERATION_INVALID", "RECALCULATE_OUTSIDE targets the complete Mesh"
+                )
+        else:
+            raise MeshOperationError("MESH_OPERATION_INVALID", f"Unsupported normals mode: {mode}")
+        return payload
+    raise MeshOperationError("MESH_OPERATION_INVALID", f"Unsupported operation: {operation_type}")
 
 
 def _operation_transform(bm: Any, operation: dict[str, Any]) -> dict[str, Any]:
@@ -1067,14 +1406,9 @@ def _restore_failed_edit(
 
 def edit_mesh(transaction: Transaction, params: dict[str, Any]) -> dict[str, Any]:
     obj, initial_mesh, data_scope, _refs = _validate_mesh_target(params)
-    operation = params.get("operation")
-    if not isinstance(operation, dict):
-        raise MeshOperationError("MESH_OPERATION_INVALID", "operation must be an object")
+    initial_mesh_reference = _mesh_reference(initial_mesh)
+    operation = _validate_operation(params.get("operation"))
     operation_type = operation.get("type")
-    if operation_type not in {*_OPERATION_HANDLERS, "face_settings"}:
-        raise MeshOperationError(
-            "MESH_OPERATION_INVALID", f"Unsupported operation: {operation_type}"
-        )
     transaction.ensure_capacity()
     guard = transaction.mesh_snapshot_guard(
         initial_mesh.name, session_identity("mesh", initial_mesh)
@@ -1160,6 +1494,8 @@ def edit_mesh(transaction: Transaction, params: dict[str, Any]) -> dict[str, Any
                 "session_identity": session_identity("mesh", obj.data),
                 "users": int(obj.data.users),
             },
+            "before_mesh": initial_mesh_reference,
+            "after_mesh": _mesh_reference(obj.data),
             "before_mesh_fingerprint": before_fingerprint,
             "after_mesh_fingerprint": after_fingerprint,
             "before_topology_fingerprint": before_topology,
@@ -1168,7 +1504,12 @@ def edit_mesh(transaction: Transaction, params: dict[str, Any]) -> dict[str, Any
             "after_counts": mesh_counts(obj.data),
             "components": components,
             "evidence": evidence,
-            "warnings": [],
+            "delta": {
+                "type": "mesh_edit",
+                "recorded": False,
+                "snapshot_reused": not new_guard,
+            },
+            "warnings": _component_warnings(components),
         }
     guard.expected_fingerprint = after_fingerprint
     guard.expected_users = int(mesh.users)
@@ -1205,6 +1546,8 @@ def edit_mesh(transaction: Transaction, params: dict[str, Any]) -> dict[str, Any
                 for name, identity in mesh_user_refs(mesh)
             ],
         },
+        "before_mesh": initial_mesh_reference,
+        "after_mesh": _mesh_reference(mesh),
         "before_mesh_fingerprint": before_fingerprint,
         "after_mesh_fingerprint": after_fingerprint,
         "before_topology_fingerprint": before_topology,
@@ -1213,17 +1556,12 @@ def edit_mesh(transaction: Transaction, params: dict[str, Any]) -> dict[str, Any
         "after_counts": mesh_counts(mesh),
         "components": components,
         "evidence": evidence,
-        "warnings": [
-            {
-                "code": "MESH_COMPONENT_INDICES_TRUNCATED",
-                "section": section,
-                "component": kind,
-                "count": page["count"],
-            }
-            for section in ("created", "deleted")
-            for kind, page in components[section].items()
-            if page["truncated"]
-        ],
+        "delta": {
+            "type": "mesh_edit",
+            "recorded": True,
+            "snapshot_reused": not new_guard,
+        },
+        "warnings": _component_warnings(components),
     }
 
 

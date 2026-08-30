@@ -103,3 +103,60 @@ def test_component_indices_are_strict_integers_and_bounded() -> None:
                 "target": {"type": "vertices", "indices": list(range(4097))},
             }
         )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "type": "transform",
+            "target": {"type": "vertices", "indices": [0]},
+            "translation": {"x": True, "y": 0, "z": 0},
+        },
+        {
+            "type": "transform",
+            "target": {"type": "vertices", "indices": [0]},
+            "rotation_euler_degrees": {"x": float("inf"), "y": 0, "z": 0},
+        },
+        {
+            "type": "bevel_edges",
+            "edge_indices": [0],
+            "width": 0.1,
+            "segments": True,
+        },
+        {"type": "bevel_edges", "edge_indices": [0], "width": 100_001},
+        {"type": "inset_faces", "face_indices": [0], "thickness": -0.1},
+    ],
+)
+def test_numeric_mesh_parameters_are_finite_strict_and_bounded(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        OPERATIONS.validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "type": "dissolve",
+            "target": {"type": "vertices", "indices": [0]},
+            "use_verts": True,
+        },
+        {
+            "type": "dissolve",
+            "target": {"type": "edges", "indices": [0]},
+            "use_boundary_tear": True,
+        },
+        {
+            "type": "dissolve",
+            "target": {"type": "faces", "indices": [0]},
+            "use_face_split": True,
+        },
+    ],
+)
+def test_dissolve_options_are_scoped_to_the_selected_component_kind(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        OPERATIONS.validate_python(payload)

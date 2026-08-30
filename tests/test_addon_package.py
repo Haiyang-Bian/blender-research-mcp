@@ -98,10 +98,10 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
         "scene.inspect",
         "object.create",
         "object.duplicate",
-            "object.delete",
-            "object.set",
-            "mesh.inspect",
-            "mesh.edit",
+        "object.delete",
+        "object.set",
+        "mesh.inspect",
+        "mesh.edit",
         "material.create",
         "material.assign",
         "image.load",
@@ -143,15 +143,16 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
     assert "_test.structure.touch" not in capabilities_source
     assert "_test.property.touch" not in capabilities_source
     assert "_test.modifier.touch" not in capabilities_source
+    assert "_test.mesh.touch" not in capabilities_source
     assert 'os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1"' in state
-    assert 'self.active_command in MUTATION_COMMANDS' in state
+    assert "self.active_command in MUTATION_COMMANDS" in state
     assert "view_layer.update()" in state
     authoring = (SOURCE / "authoring_ops.py").read_text(encoding="utf-8")
     assert "duplicate.select_set(False)" in authoring
     assert "transaction.refresh_object_data_users" in authoring
     world_render = (SOURCE / "world_render_ops.py").read_text(encoding="utf-8")
     assert 'session_identity("node", link.from_node) != background_identity' in world_render
-    assert 'bpy.data.images.load(str(output_path), check_existing=False)' in world_render
+    assert "bpy.data.images.load(str(output_path), check_existing=False)" in world_render
     assert "os.replace(temporary_path, output_path)" in world_render
 
 
@@ -168,6 +169,29 @@ def test_addon_supports_session_only_managed_enable_without_saved_preferences() 
     assert "_preference_port(bpy.context)" in register
 
 
+def test_mesh_authoring_uses_bounded_data_api_snapshots_without_operators() -> None:
+    source = (SOURCE / "mesh_ops.py").read_text(encoding="utf-8")
+
+    for limit in ("MAX_VERTICES", "MAX_EDGES", "MAX_FACES", "MAX_LOOPS"):
+        assert limit in source
+    for operation in (
+        "transform",
+        "extrude_faces",
+        "inset_faces",
+        "bevel_edges",
+        "delete",
+        "dissolve",
+        "merge_vertices",
+        "face_settings",
+        "normals",
+    ):
+        assert f'"{operation}"' in source
+    assert "mesh.copy()" in source
+    assert "mesh.clear_geometry()" in source
+    assert "bmesh.ops" in source
+    assert "bpy.ops" not in source
+
+
 def test_addon_zip_has_an_installable_package_root(tmp_path: Path) -> None:
     output = build(tmp_path / "addon.zip")
     with zipfile.ZipFile(output) as archive:
@@ -179,6 +203,7 @@ def test_addon_zip_has_an_installable_package_root(tmp_path: Path) -> None:
     assert f"{PACKAGE_NAME}/geometry_model.py" in names
     assert f"{PACKAGE_NAME}/lookdev_ops.py" in names
     assert f"{PACKAGE_NAME}/lookdev_model.py" in names
+    assert f"{PACKAGE_NAME}/mesh_ops.py" in names
     assert f"{PACKAGE_NAME}/project_ops.py" in names
     assert f"{PACKAGE_NAME}/runtime.py" in names
     assert all(name.startswith(f"{PACKAGE_NAME}/") for name in names)

@@ -155,6 +155,16 @@ class DissolveOperation(BaseModel):
     use_boundary_tear: StrictBool = False
     use_verts: StrictBool = False
 
+    @model_validator(mode="after")
+    def validate_target_options(self) -> DissolveOperation:
+        if self.target.type == "vertices" and self.use_verts:
+            raise ValueError("use_verts is not valid when dissolving vertices")
+        if self.target.type == "edges" and self.use_boundary_tear:
+            raise ValueError("use_boundary_tear is only valid when dissolving vertices")
+        if self.target.type == "faces" and (self.use_face_split or self.use_boundary_tear):
+            raise ValueError("face_split and boundary_tear are not valid for faces")
+        return self
+
 
 class MergeVerticesOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
