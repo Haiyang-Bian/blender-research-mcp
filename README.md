@@ -31,6 +31,9 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 `6.2` 回读为 `6.199999809...` 时误报事务外冲突，同时仍能识别相邻 ULP 修改。
 0.11.0 新增基础 Mesh 的分页检查、双指纹和事务 v4 快照，以及统一且封闭的
 `mesh.edit` 组件编辑入口；自动化门禁和 Blender 4.2.23 发布验收均已通过。
+0.11.1 将事务升级为协作语义 v5：用户可在 Agent 工作期间自由导航视图、切换
+Shading/Overlay、选择和活动对象；Blender 原生保存则作为用户接受眼前状态的最终
+意图屏障，停止后续写入和回退。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -145,6 +148,19 @@ Bevel、Subdivision、Solidify 和 Boolean，并在事务中守护完整栈；�
 Modifier Apply、Shape Key 拓扑或任意 Python。详细契约见
 [0.11.0 路线图](docs/roadmap/0.11.0-semantic-mesh-editing.md)。
 
+## 0.11.1 人机协作上下文与用户保存优先
+
+事务硬上下文只守护 Scene、View Layer、模式、当前帧和活动 Camera；视图矩阵、
+缩放、透视、Viewport lens、Shading、Overlay、选择和活动对象属于用户可协作的 UI
+状态。rollback 只恢复事务数据，保留用户最新 UI。比较候选固定使用基线证据矩阵，
+因此用户导航不会污染像素差异。
+
+Blender 原生 Ctrl+S、Save As 和 Save Copy 在 `save_pre` 阶段接管活动事务，保留
+保存时可见状态并取消断线回退。后续事务或比较请求收到稳定的“已由用户保存接受”
+结果后必须停止，不重复保存。MCP `project.save/open/quit` 使用 managed-save 标记，
+继续遵循既有先提交再写盘流程。架构依据见
+[decision 0011](docs/decisions/0011-collaborative-ui-and-native-save-authority.md)。
+
 ## 目录
 
 ~~~text
@@ -175,7 +191,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.11.0
+uv run --no-sync python scripts/build_addon.py --version 0.11.1
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认

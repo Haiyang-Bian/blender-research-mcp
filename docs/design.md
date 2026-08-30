@@ -1,9 +1,9 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.11.0 semantic base-Mesh editing implemented and live-validated
+- Status: 0.11.1 collaborative UI and native-save authority implemented
 - Next milestone: design 0.12 bounded UV authority on the proven snapshot model
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.11.0
+- Package and add-on version: 0.11.1
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,7 +12,7 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.11.0 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.11.1 now covers
 the validated observation/lifecycle/static-authoring path, unified typed object,
 Light, and Camera settings, four bounded non-destructive Modifier families, and exact
 base-Mesh component editing with transaction snapshots; the older bridge is no longer
@@ -88,8 +88,9 @@ The bridge runs with Blender-process authority. It must be local-first:
 2. **Reversible** — preview changes can be rolled back without reopening the
    file or relying on user intervention.
 3. **Semantic** — tools express Blender intent rather than keyboard shortcuts.
-4. **Context-aware** — mode, active object, selection, area, shading, overlays,
-   visibility, and view transform are explicit state.
+4. **Context-aware** — Scene, View Layer, mode, frame, active Camera, and data evidence
+   are hard guards; navigation, display, selection, and active object are explicit but
+   user-collaborative UI state.
 5. **Deterministic** — identical requests against the same scene generation
    produce the same result or a clear precondition error.
 6. **Local-first** — no telemetry or third-party network dependency.
@@ -319,8 +320,9 @@ surface:
 Structural writes require an active transaction, current generation, per-operation
 idempotency UUID, exact identities, and the domain capability. A direct static-scene
 creation/modification request authorizes a coherent multi-step transaction and commit
-after successful preview. Any property, context, identity, structure, link, users, or
-preview failure stops the batch and rolls it back. Commit remains memory-only; project
+after successful preview. Any property, hard-context, identity, structure, link, users,
+or preview failure stops the batch and rolls it back. User navigation, display, and
+selection are not hard context. Commit remains memory-only; project
 save and render export are separate explicit deliverable operations. See
 `docs/roadmap/0.8.0-semantic-scene-authoring.md`.
 
@@ -369,12 +371,27 @@ unsupported attributes, and fixed geometry budgets are rejected before mutation.
 `docs/roadmap/0.11.0-semantic-mesh-editing.md` and decision 0010. UV values remain
 read-only until a separate 0.12 contract.
 
+Version 0.11.1 upgrades transaction capability to 5. It separates hard transaction
+context, user-collaborative UI context, and capture evidence. User orbit/pan/zoom,
+projection/lens, Shading, Overlay, selection, and active-object changes neither reject a
+data write nor block commit/rollback. Rollback restores transaction data only and
+reports the preserved UI paths. Scene, View Layer, mode, frame, active Camera, identity,
+users, properties, and structural fingerprints remain hard conflicts.
+
+Persistent Blender save handlers form an intent barrier. A native Ctrl+S, Save As, or
+Save Copy adopts the current transaction before serialization, finalizes only
+Agent-owned deferred work that still matches its guard, and disables later rollback.
+The terminal transaction record lets already queued requests return
+`TRANSACTION_ACCEPTED_BY_USER_SAVE`; comparison maps the same event to
+`COMPARISON_ACCEPTED_BY_USER_SAVE` and stops without cleanup rollback. Managed MCP
+project saves are marked internally and retain their existing commit-before-save flow.
+
 Tool count is not a success metric. A small composable surface with precise
 preconditions is preferable to dozens of overlapping convenience tools.
 
 ## 8. Context and transaction model
 
-A context snapshot should record at least:
+A complete UI/capture snapshot should record at least:
 
 - active scene, view layer, workspace, window, area, and region identity;
 - Blender mode;
@@ -384,8 +401,11 @@ A context snapshot should record at least:
 - current frame and active camera;
 - scene-generation counter.
 
-Read-only inspection may temporarily change selection or view only when it
-restores the snapshot in a finally path.
+Read-only inspection may temporarily change selection or view only when it restores
+the call-local snapshot in a finally path. A transaction hard-context projection keeps
+only Scene, View Layer, mode, frame, and active Camera. Workspace/viewport identity,
+view transform, lens/projection, Shading, Overlay, selection, and active object are a
+separate user-UI projection and may change while the transaction remains valid.
 
 Mutation transactions combine typed property and structural deltas, with at most 256
 deltas. Repeated property writes guard the last Agent value. Structural writes guard
@@ -399,6 +419,12 @@ Transaction capability v4 adds `MeshEditDelta` and `MeshSnapshotGuard`. The firs
 of one working Mesh owns one baseline `Mesh.copy()`; subsequent edits reuse it and
 advance the expected fingerprint. Component indices are never treated as persistent
 identities and must be reacquired after topology changes.
+
+Transaction capability v5 adds collaborative context projection and native-save
+terminal adoption. Rollback no longer restores a transaction-opening UI snapshot.
+Blender native save handlers run on the same main-thread sequence as queued semantic
+commands, so the operation that actually executes first determines whether the write
+precedes the user-save barrier or is rejected by its terminal record.
 
 ## 9. Development phases
 
@@ -458,7 +484,8 @@ Status: implemented and live-validated on Blender 4.2.23; see
 - Roll back and verify the original property and user context after every candidate.
 - Return image hashes and deterministic difference statistics without aesthetic
   ranking or automatic acceptance.
-- Stop on any context, generation, identity, property, or rollback conflict.
+- Stop on any hard-context, generation, identity, property, or rollback conflict. User
+  navigation, display, selection, and active-object changes are collaborative UI.
 
 This stage deliberately reuses the 0.5.1 Blender authority. Light controls, arbitrary
 modifier parameters, node topology, object location/rotation, and file saving remain

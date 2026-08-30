@@ -19,9 +19,11 @@
    requires `object_settings: 1`; typed Modifier authoring requires
    `modifier_authoring: 1`. Exact base-Mesh inspection/editing requires
    `mesh_topology: 1`, and editing additionally requires `transactions: 4`.
+   Collaborative UI and native-save adoption are guaranteed only by
+   `transactions: 5`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.11.0.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.11.1.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -62,6 +64,28 @@ All file parameters must be absolute `.blend` paths. Open targets must exist; Sa
 targets may be new if their parent directory exists. Paths are not restricted to a
 project root. `project.*` never starts Blender implicitly and returns
 `APPLICATION_NOT_RUNNING` when no session exists.
+
+## Collaborate in Blender while the Agent works
+
+With transaction capability 5, user orbit, pan, zoom, view projection/lens, Shading,
+Overlay, selection, and active-object changes are collaborative UI state. They do not
+invalidate ordinary data writes, commit, rollback, observation bundles, or comparison.
+Rollback restores transaction data while preserving the user's newest UI;
+`context_restored=true` means only that no Agent-created UI debt remains.
+
+Scene, View Layer, Object/Edit/Sculpt mode, current frame, active Camera, identities,
+shared users, properties, Modifier stacks, Mesh fingerprints, and structural evidence
+remain hard guards. A command such as visibility or delete that truly depends on the
+current selection still performs its own call-local context check.
+
+Native Ctrl+S, Save As, and Save Copy are authoritative user intent. Before Blender
+serializes the file, the add-on accepts the current visible transaction state, cancels
+automatic rollback, and records `connection.ping.user_intent_revision` plus
+`last_user_action`. Do not issue further writes, rollback, comparison cleanup, or a
+duplicate `project.save` after `TRANSACTION_ACCEPTED_BY_USER_SAVE` or
+`COMPARISON_ACCEPTED_BY_USER_SAVE`. A failed native save is reported but still leaves
+the current in-memory state under user control. MCP lifecycle saves remain managed and
+continue to commit before writing.
 
 ## Observe a target
 

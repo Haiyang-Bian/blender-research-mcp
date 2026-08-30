@@ -187,7 +187,7 @@ CAPABILITY_VERSIONS = {
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 4,
+    "transactions": 5,
     "object_transform_scale": 1,
     "object_transform": 1,
     "object_settings": 1,

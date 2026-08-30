@@ -117,7 +117,7 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
     ):
         assert command in state
     for capability in (
-        '"transactions": 4',
+        '"transactions": 5',
         '"scene_inspection": 1',
         '"object_authoring": 1',
         '"object_settings": 1',

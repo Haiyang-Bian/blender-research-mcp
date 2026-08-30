@@ -39,6 +39,11 @@ After selecting the application/project state:
 Viewport capture requires a `VIEW_3D` area. Treat `CAPTURE_GPU_UNAVAILABLE` as a failed
 evidence capture, not permission to use desktop automation or raw Python.
 
+When `transactions >= 5`, treat user navigation, display, selection, and active-object
+changes as collaborative UI, not transaction conflicts. Preserve them through rollback.
+If native Blender save accepts the transaction, stop writing, comparing, rolling back,
+or saving again; the user's saved visible state is final for that operation.
+
 ## Follow scene-authoring intent
 
 When the user asks to build or modify a static scene, that request authorizes the
@@ -46,8 +51,9 @@ complete in-memory authoring chain. Inspect exact scene/resource identities, beg
 structural transaction, execute the bounded object/material/image/World/Camera writes,
 render the smallest useful preview, and commit when the structured and visual checks
 succeed. Do not stop for per-object or per-material confirmation. On any write,
-preview, context, property, or structure conflict, roll the whole transaction back and
-report the preserved state.
+preview, hard-context, property, or structure conflict, roll the whole transaction back
+and report the preserved state. User view, display, selection, and active-object changes
+are not hard-context conflicts with transaction capability 5.
 
 Authoring requires `transactions >= 3` plus the capability for each requested domain;
 exact component editing requires `transactions >= 4` and `mesh_topology: 1`.
@@ -131,7 +137,7 @@ change: require the user's intent before setting `allow_shared=true`, use the ex
 inspected user count, and review affected objects. Never create a single-user copy,
 edit topology, or substitute another unsupported write.
 
-If a context, property, generation, or idempotency conflict occurs, stop. Do not force
+If a hard-context, property, generation, or idempotency conflict occurs, stop. Do not force
 restore, overwrite user state, open a second transaction, or fall back to unrestricted
 Python. Connection loss may trigger the add-on's automatic rollback.
 

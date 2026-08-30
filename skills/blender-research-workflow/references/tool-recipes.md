@@ -310,6 +310,34 @@ smooth, and supported generic layers are snapshot-protected, but only face mater
 and smooth are writable in 0.11. On a write or disconnect recovery, verify both the
 Mesh fingerprint and object-to-data relationships before continuing.
 
+## Collaborative UI and native-save barrier
+
+Use this transaction-v5 recipe whenever the user watches or manipulates Blender while
+an Agent transaction is open:
+
+1. Read `connection.ping.user_intent_revision` before a multi-step write or comparison.
+   Scene, View Layer, mode, frame, active Camera, identities, users, properties, and
+   structural fingerprints are hard evidence. Viewport identity/matrices, orbit, zoom,
+   projection/lens, Shading, Overlay, selection, and active object are user UI.
+2. Continue data-API writes across user UI changes. Commands that actually depend on
+   selection or active-object context must still validate that context when called.
+3. Rollback transaction data only. Accept `context_restored=true` together with
+   `user_ui_preserved=true`; use `preserved_ui_changes` to explain what the user kept.
+4. Candidate comparison captures every candidate with its baseline evidence matrices,
+   projection, dimensions, Shading, and Overlay. User navigation may continue, but it
+   must not alter the comparison image basis.
+5. Blender Ctrl+S, Save As, or Save Copy increments `user_intent_revision` during
+   `save_pre` and adopts the visible transaction state before serialization. Execution
+   order on Blender's main thread decides whether a queued semantic write happened
+   before that barrier or receives `TRANSACTION_ACCEPTED_BY_USER_SAVE` afterward.
+6. On `TRANSACTION_ACCEPTED_BY_USER_SAVE` or
+   `COMPARISON_ACCEPTED_BY_USER_SAVE`, stop all remaining writes/candidates, skip
+   cleanup rollback, and do not call `project.save`. Report the native-save operation ID,
+   result, and path from the error or latest ping.
+7. A native-save failure leaves current memory state in user control. Report it without
+   rolling back or retrying a save. Managed MCP save/open/quit remains a separate flow
+   that commits its transaction before writing and does not create a native-save event.
+
 ## Principled materials and local textures
 
 1. Create a canonical material with `material.create`; colors may be `#RRGGBB` sRGB or
