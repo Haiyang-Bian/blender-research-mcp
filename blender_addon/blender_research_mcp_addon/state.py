@@ -89,6 +89,7 @@ from .mesh_query_ops import (
 )
 from .mesh_resource_model import MeshResourceBook, MeshResourceError
 from .mesh_surface_ops import prepare_surface, query_surface, validate_mesh
+from .mesh_topology_ops import TOPOLOGY_OPERATIONS, edit_mesh_topology
 from .modifier_ops import (
     adopt_modifier_delta_for_native_save,
     clear_modifier_pending_deletes,
@@ -1213,8 +1214,10 @@ class AddonState:
                     result = edit_mesh_deform(
                         transaction, self.mesh_resources, self.captures, params
                     )
+                elif operation_type in TOPOLOGY_OPERATIONS:
+                    result = edit_mesh_topology(transaction, self.mesh_resources, params)
                 else:
-                    result = edit_mesh(transaction, params)
+                    result = edit_mesh(transaction, params, self.mesh_resources)
                 bpy.context.view_layer.update()
             if len(transaction.deltas) > previous_count:
                 self.scene_generation += 1
