@@ -52,6 +52,8 @@ float32 guard 与独立月光水面实作见
 [0.10.2 验收记录](docs/validation/2026-08-30-float32-guard-and-moon-water.md)，语义
 Mesh 编辑见
 [0.11.0 验收记录](docs/validation/2026-08-30-semantic-mesh-editing.md)。
+0.11.1 协作上下文与用户保存优先见
+[0.11.1 验收记录](docs/validation/2026-08-30-collaborative-ui-native-save.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见

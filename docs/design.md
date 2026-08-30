@@ -1,6 +1,6 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.11.1 collaborative UI and native-save authority implemented
+- Status: 0.11.1 collaborative UI and native-save authority live-validated
 - Next milestone: design 0.12 bounded UV authority on the proven snapshot model
 - Primary Blender target: 4.2.23 LTS
 - Package and add-on version: 0.11.1

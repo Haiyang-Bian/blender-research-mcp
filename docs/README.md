@@ -34,6 +34,8 @@ visible state as an intent barrier and prevents later automatic rollback. Versio
 component writer with explicit object-only/shared-data scope and reversible Mesh
 snapshots. Its automated and Blender 4.2.23 release gates have passed; see
 [the 0.11 validation record](validation/2026-08-30-semantic-mesh-editing.md).
+The transaction-v5 patch is independently recorded in
+[the 0.11.1 validation record](validation/2026-08-30-collaborative-ui-native-save.md).
 Version 0.10.2 retains the 0.10.0 exact ordered Modifier-stack surface, the 0.10.1
 linked-data guard repair, and compares numeric transaction evidence at Blender's
 actual float32 RNA storage precision.

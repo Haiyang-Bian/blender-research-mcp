@@ -31,6 +31,7 @@ from .context_ops import (
     inspect_geometry,
     inspect_object,
     raycast_capture,
+    resolve_viewport,
     restore_context,
 )
 from .generation import has_persistent_scene_update
@@ -669,6 +670,90 @@ class AddonState:
                 )
             with self.suppress_generation():
                 return touch_mesh_for_test(params)
+        if command == "_test.context.touch":
+            if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":
+                raise ContextOperationError(
+                    "COMMAND_NOT_FOUND",
+                    f"Unsupported command: {command}",
+                    kind="not_found",
+                )
+            viewport = resolve_viewport(
+                str(params["viewport_id"]) if params.get("viewport_id") else None
+            )
+            region_3d = viewport.space.region_3d
+            active_name = params.get("active_object")
+            active = None
+            if active_name is not None:
+                active = bpy.data.objects.get(str(active_name))
+                if active is None or active.name not in viewport.window.view_layer.objects:
+                    raise ContextOperationError(
+                        "OBJECT_NOT_FOUND",
+                        f"Test UI object does not exist in the active View Layer: {active_name}",
+                        kind="not_found",
+                    )
+            shading = str(params.get("shading", "WIREFRAME"))
+            if shading not in {"WIREFRAME", "SOLID", "MATERIAL", "RENDERED"}:
+                raise ContextOperationError(
+                    "TEST_CONTEXT_TOUCH_INVALID",
+                    f"Unsupported test shading: {shading}",
+                    kind="validation",
+                )
+            with self.suppress_generation():
+                region_3d.view_location = tuple(
+                    float(value) + offset
+                    for value, offset in zip(
+                        region_3d.view_location,
+                        (0.75, -0.5, 0.25),
+                        strict=True,
+                    )
+                )
+                region_3d.view_rotation = (0.9659258, 0.0, 0.0, 0.258819)
+                region_3d.view_distance = max(0.1, float(region_3d.view_distance) * 0.72)
+                region_3d.view_perspective = (
+                    "ORTHO" if region_3d.view_perspective != "ORTHO" else "PERSP"
+                )
+                viewport.space.lens = min(250.0, float(viewport.space.lens) + 7.0)
+                viewport.space.shading.type = shading
+                viewport.space.overlay.show_overlays = bool(
+                    params.get("show_overlays", False)
+                )
+                if active_name is not None:
+                    for obj in viewport.window.view_layer.objects:
+                        obj.select_set(False)
+                    assert active is not None
+                    active.select_set(True)
+                    viewport.window.view_layer.objects.active = active
+                region_3d.update()
+            return {
+                "test_hook": "context_touch",
+                "context": capture_context(viewport.viewport_id),
+            }
+        if command == "_test.native_save":
+            if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":
+                raise ContextOperationError(
+                    "COMMAND_NOT_FOUND",
+                    f"Unsupported command: {command}",
+                    kind="not_found",
+                )
+            path = params.get("path")
+            if path is None:
+                result = bpy.ops.wm.save_mainfile()
+            else:
+                result = bpy.ops.wm.save_as_mainfile(
+                    filepath=str(path),
+                    check_existing=False,
+                )
+            if "FINISHED" not in result:
+                raise ContextOperationError(
+                    "TEST_NATIVE_SAVE_FAILED",
+                    f"Blender native save returned: {sorted(result)}",
+                    kind="blender_api",
+                )
+            return {
+                "test_hook": "native_save",
+                "operator_result": sorted(result),
+                "last_user_action": self.last_user_action,
+            }
         if command == "context.get":
             with self.suppress_generation():
                 return context_summary()
