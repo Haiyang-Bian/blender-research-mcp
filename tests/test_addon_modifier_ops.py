@@ -547,6 +547,47 @@ def test_delete_is_pending_until_commit_and_rollback_restores_state() -> None:
     assert obj.modifiers.get("Shell") is None
 
 
+def test_native_save_finalizes_only_an_untouched_pending_delete() -> None:
+    modifier = FakeModifier("Shell", "SOLIDIFY")
+    obj = FakeObject([modifier])
+    ops, model = _load_modules(obj)
+    transaction = _transaction(model)
+    ops.delete_modifier(transaction, _target_params(ops, obj, modifier))
+
+    finalized = ops.adopt_modifier_delta_for_native_save(
+        transaction.deltas[-1],
+        transaction.transaction_id,
+    )
+
+    assert finalized == {
+        "kind": "modifier_delete",
+        "modifier_name": "Shell",
+        "action": "finalized_native_save",
+    }
+    assert obj.modifiers.get("Shell") is None
+
+    user_modifier = FakeModifier("User Shell", "SOLIDIFY")
+    user_obj = FakeObject([user_modifier])
+    ops, model = _load_modules(user_obj)
+    transaction = _transaction(model)
+    ops.delete_modifier(transaction, _target_params(ops, user_obj, user_modifier))
+    user_modifier.show_viewport = True
+
+    preserved = ops.adopt_modifier_delta_for_native_save(
+        transaction.deltas[-1],
+        transaction.transaction_id,
+    )
+
+    assert preserved == {
+        "kind": "modifier_delete",
+        "modifier_name": "User Shell",
+        "action": "preserved_user_state",
+    }
+    assert user_obj.modifiers.get("User Shell") is user_modifier
+    assert user_modifier.show_viewport is True
+    assert ops.modifier_pending_delete(user_modifier) is False
+
+
 def test_subdivision_budget_and_boolean_cycles_are_rejected_before_writes() -> None:
     subsurf = FakeModifier("Smooth", "SUBSURF")
     source = FakeObject([subsurf], name="Source")

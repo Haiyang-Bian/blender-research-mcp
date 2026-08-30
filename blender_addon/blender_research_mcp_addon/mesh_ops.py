@@ -777,6 +777,44 @@ def finalize_mesh_snapshots(transaction: Transaction) -> list[dict[str, Any]]:
     return finalized
 
 
+def adopt_mesh_snapshots_for_native_save(transaction: Transaction) -> list[dict[str, Any]]:
+    """Discard only private unused snapshots without validating the user's live Mesh."""
+
+    adopted = []
+    for guard in transaction.mesh_snapshot_guards.values():
+        snapshot = guard.snapshot
+        if snapshot is not None:
+            existing = bpy.data.meshes.get(str(snapshot.name))
+            if existing is snapshot and int(snapshot.users) == 0:
+                snapshot_name = str(snapshot.name)
+                bpy.data.meshes.remove(snapshot)
+                adopted.append(
+                    {
+                        "kind": "mesh_edit",
+                        "action": "discard_snapshot_native_save",
+                        "snapshot": snapshot_name,
+                    }
+                )
+            else:
+                adopted.append(
+                    {
+                        "kind": "mesh_edit",
+                        "action": "preserved_user_snapshot",
+                        "snapshot": str(getattr(snapshot, "name", guard.mesh_name)),
+                    }
+                )
+        elif guard.source_mesh is not None:
+            adopted.append(
+                {
+                    "kind": "mesh_edit",
+                    "action": "commit_single_user_native_save",
+                    "object_name": guard.object_name,
+                    "mesh_name": guard.mesh_name,
+                }
+            )
+    return adopted
+
+
 def _remove_new_guard(transaction: Transaction, guard: MeshSnapshotGuard) -> None:
     mesh = bpy.data.meshes.get(guard.mesh_name)
     if guard.source_mesh is not None:

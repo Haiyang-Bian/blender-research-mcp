@@ -89,6 +89,8 @@ async def settle_capture_generation(
         )
     result["scene_generation"] = settled_generation
     result["settled_heartbeat"] = int(settled["heartbeat"])
+    result["user_intent_revision"] = int(settled.get("user_intent_revision", 0))
+    result["last_user_action"] = settled.get("last_user_action")
     return result
 
 

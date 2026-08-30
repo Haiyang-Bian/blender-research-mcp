@@ -66,6 +66,7 @@ from .material_authoring_ops import (
 )
 from .mesh_ops import (
     MeshOperationError,
+    adopt_mesh_snapshots_for_native_save,
     edit_mesh,
     finalize_mesh_snapshots,
     inspect_mesh,
@@ -74,6 +75,7 @@ from .mesh_ops import (
     validate_mesh_snapshot_guards,
 )
 from .modifier_ops import (
+    adopt_modifier_delta_for_native_save,
     clear_modifier_pending_deletes,
     create_modifier,
     delete_modifier,
@@ -101,6 +103,7 @@ from .project_ops import (
 )
 from .runtime import ADDON_VERSION, ListenerRuntime
 from .structural_ops import (
+    adopt_structural_delta_for_native_save,
     finalize_structural_delta,
     refresh_structure_guard_if_present,
     restore_structural_delta,
@@ -256,6 +259,10 @@ class AddonState:
         self._disconnect_rollback_deadline: float | None = None
         self.pending_lifecycle_operation: dict[str, Any] | None = None
         self.last_lifecycle_operation: dict[str, Any] | None = None
+        self.user_intent_revision = 0
+        self.last_user_action: dict[str, Any] | None = None
+        self._native_save_operation: dict[str, Any] | None = None
+        self._managed_save_depth = 0
 
     def start(self) -> None:
         self.runtime.start()
@@ -312,6 +319,46 @@ class AddonState:
         self.idempotency = IdempotencyCache()
         self._disconnect_rollback_deadline = None
         self.scene_generation += 1
+
+    def on_native_save_pre(self, filepath: str) -> None:
+        """Accept the current visible state before Blender serializes a native save."""
+
+        if self._managed_save_depth > 0:
+            return
+        self.user_intent_revision += 1
+        operation = {
+            "operation_id": str(uuid.uuid4()),
+            "kind": "native_save",
+            "status": "accepted",
+            "path": str(filepath or bpy.data.filepath),
+            "user_intent_revision": self.user_intent_revision,
+        }
+        transaction = self._adopt_active_transaction_for_native_save(operation)
+        operation["transaction"] = transaction
+        self._native_save_operation = operation
+        self.last_user_action = operation
+        self.last_lifecycle_operation = operation
+
+    def on_native_save_post(self, filepath: str) -> None:
+        if self._managed_save_depth > 0:
+            return
+        operation = self._native_save_operation
+        if operation is None:
+            return
+        operation["status"] = "succeeded"
+        operation["path"] = str(filepath or bpy.data.filepath)
+        self._native_save_operation = None
+
+    def on_native_save_failed(self, filepath: str) -> None:
+        if self._managed_save_depth > 0:
+            return
+        operation = self._native_save_operation
+        if operation is None:
+            return
+        operation["status"] = "failed"
+        operation["path"] = str(filepath or bpy.data.filepath)
+        self.last_error = "NATIVE_SAVE_FAILED: Blender did not write the requested file"
+        self._native_save_operation = None
 
     def on_depsgraph_update(self, depsgraph: Any) -> None:
         if self._suppress_generation == 0 and has_persistent_scene_update(depsgraph):
@@ -476,6 +523,8 @@ class AddonState:
                 "capture_focus_requirement": "none_when_window_exists",
                 "heartbeat": self.heartbeat,
                 "last_command_ms": self.last_command_ms,
+                "user_intent_revision": self.user_intent_revision,
+                "last_user_action": self.last_user_action,
             }
         if command == "_test.structure.touch":
             if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":
@@ -1192,6 +1241,88 @@ class AddonState:
         self.transactions.finish(transaction, "committed")
         return result
 
+    def _adopt_active_transaction_for_native_save(
+        self,
+        operation: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        transaction = self.transactions.active
+        if transaction is None:
+            return None
+        adopted: list[dict[str, Any]] = []
+        warnings: list[dict[str, Any]] = []
+        scene_changed = False
+        try:
+            with self.suppress_generation():
+                for delta in transaction.deltas:
+                    item = adopt_modifier_delta_for_native_save(
+                        delta,
+                        transaction.transaction_id,
+                    )
+                    if item is not None:
+                        adopted.append(item)
+                        scene_changed = scene_changed or item.get("action") == (
+                            "finalized_native_save"
+                        )
+                adopted.extend(adopt_mesh_snapshots_for_native_save(transaction))
+                for delta in transaction.structural_deltas():
+                    item = adopt_structural_delta_for_native_save(delta)
+                    if item is not None:
+                        adopted.append(item)
+                        scene_changed = scene_changed or item.get("action") not in {
+                            "preserved_user_state",
+                        }
+        except Exception as exc:  # noqa: BLE001 - native saving must remain authoritative
+            code = getattr(exc, "code", type(exc).__name__)
+            warnings.append(
+                {
+                    "code": "NATIVE_SAVE_ADOPTION_PARTIAL",
+                    "cause": str(code),
+                    "message": str(exc),
+                }
+            )
+            self.last_error = f"NATIVE_SAVE_ADOPTION_PARTIAL: {code}: {exc}"
+        finally:
+            clear_modifier_pending_deletes()
+        if scene_changed:
+            self.scene_generation += 1
+        result = self._transaction_result(transaction)
+        result.update(
+            {
+                "status": "accepted_user_save",
+                "adopted": adopted,
+                "warnings": warnings,
+            }
+        )
+        terminal_details = {
+            "save_operation": {
+                "operation_id": operation["operation_id"],
+                "kind": operation["kind"],
+                "path": operation["path"],
+                "user_intent_revision": operation["user_intent_revision"],
+            }
+        }
+        transaction_id = transaction.transaction_id
+        self.transactions.finish(
+            transaction,
+            "accepted_user_save",
+            details=terminal_details,
+        )
+        self.idempotency.remove_transaction(transaction_id)
+        self._disconnect_rollback_deadline = None
+        return result
+
+    @contextlib.contextmanager
+    def _managed_save(self) -> Iterator[None]:
+        self._managed_save_depth += 1
+        try:
+            yield
+        finally:
+            self._managed_save_depth -= 1
+
+    def _run_managed_save(self, path: str | None) -> dict[str, Any]:
+        with self._managed_save():
+            return save_project(path)
+
     @staticmethod
     def _optional_save_path(params: dict[str, Any], name: str) -> str | None:
         value = params.get(name)
@@ -1214,7 +1345,7 @@ class AddonState:
         path = self._optional_save_path(params, "path")
         before = self._project_status()
         transaction = self._commit_active_transaction_for_lifecycle()
-        saved = save_project(path)
+        saved = self._run_managed_save(path)
         self.scene_generation += 1
         operation = {
             "operation_id": str(uuid.uuid4()),
@@ -1249,7 +1380,7 @@ class AddonState:
                 "CURRENT_PROJECT_UNTITLED",
                 "The dirty current project is untitled; provide save_current_as",
             )
-        saved = save_project(save_current_as)
+        saved = self._run_managed_save(save_current_as)
         self.scene_generation += 1
         return transaction, saved
 
@@ -1447,6 +1578,14 @@ class AddonState:
                 "TRANSACTION_ID_INVALID",
                 "transaction_id must be a non-empty string",
                 kind="validation",
+            )
+        terminal = self.transactions.terminal(transaction_id)
+        if terminal is not None and terminal.get("status") == "accepted_user_save":
+            raise ContextOperationError(
+                "TRANSACTION_ACCEPTED_BY_USER_SAVE",
+                "The user saved and accepted the transaction's current visible state",
+                kind="conflict",
+                details=terminal,
             )
         return self.transactions.require(transaction_id)
 

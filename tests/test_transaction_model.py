@@ -115,6 +115,35 @@ def test_transaction_book_is_single_owner_and_tracks_expected_properties() -> No
     book.finish(transaction, "rolled_back")
     assert book.active is None
     assert book.last_status == "rolled_back"
+    assert book.terminal(transaction.transaction_id) == {
+        "transaction_id": transaction.transaction_id,
+        "label": "eye preview",
+        "status": "rolled_back",
+    }
+
+
+def test_transaction_terminal_state_keeps_native_save_details() -> None:
+    model = load_transaction_model()
+    book = model.TransactionBook()
+    transaction = book.begin(
+        label="compare:A",
+        context_snapshot={},
+        context_fingerprint="context",
+        scene_generation=1,
+    )
+
+    book.finish(
+        transaction,
+        "accepted_user_save",
+        details={"save_operation": {"operation_id": "save-1", "path": "scene.blend"}},
+    )
+
+    assert book.terminal(transaction.transaction_id) == {
+        "transaction_id": transaction.transaction_id,
+        "label": "compare:A",
+        "status": "accepted_user_save",
+        "save_operation": {"operation_id": "save-1", "path": "scene.blend"},
+    }
 
 
 def test_transaction_tracks_all_typed_delta_kinds_and_last_write_wins() -> None:

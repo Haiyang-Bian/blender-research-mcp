@@ -38,6 +38,8 @@ class FakeComparisonClient:
             "harden_normals": False,
         }
         self.active: dict[str, Any] | None = None
+        self.accepted_user_save = False
+        self.user_intent_revision = 0
         self.rollback_no_restore = False
         self.commands: list[str] = []
         self.mutation_keys: list[str] = []
@@ -65,6 +67,12 @@ class FakeComparisonClient:
                 "scene_generation": self.generation,
                 "heartbeat": self.heartbeat,
                 "capability_versions": {},
+                "user_intent_revision": self.user_intent_revision,
+                "last_user_action": (
+                    {"kind": "native_save", "status": "succeeded"}
+                    if self.accepted_user_save
+                    else None
+                ),
             }
         if command == "context.get":
             return {
@@ -231,6 +239,14 @@ class FakeComparisonClient:
         }:
             return self._write(command, params)
         if command == "transaction.rollback":
+            if self.accepted_user_save:
+                raise BridgeError(
+                    ErrorInfo(
+                        kind=ErrorKind.CONFLICT,
+                        code="TRANSACTION_ACCEPTED_BY_USER_SAVE",
+                        message="The user saved the current state",
+                    )
+                )
             return self._rollback()
         raise AssertionError(command)
 
@@ -322,6 +338,11 @@ class FakeComparisonClient:
     def manual_shape_key_edit(self, value: float) -> None:
         self.shape_key_value = value
         self.generation += 1
+
+    def native_save(self) -> None:
+        self.active = None
+        self.accepted_user_save = True
+        self.user_intent_revision += 1
 
     def _image(self) -> bytes:
         modifier_magnitude = sum(
@@ -868,6 +889,34 @@ def test_selection_or_view_drift_does_not_invalidate_comparison() -> None:
 
     assert len(images) == 2
     assert result["target_restored"] is True
+
+
+def test_native_save_accepts_current_candidate_and_stops_without_cleanup_rollback() -> None:
+    client = FakeComparisonClient()
+
+    async def save_after_write(
+        phase: str,
+        label: str | None,
+        details: dict[str, Any],
+    ) -> None:
+        del details
+        if phase == "after_write" and label == "A":
+            client.native_save()
+
+    with pytest.raises(BridgeError) as accepted:
+        asyncio.run(
+            run_lookdev_comparison(
+                client,
+                request("shape_key_value", (0.1, 0.2)),
+                _phase_hook=save_after_write,
+            )
+        )
+
+    assert accepted.value.error.code == "COMPARISON_ACCEPTED_BY_USER_SAVE"
+    assert accepted.value.error.details["candidate_label"] == "A"
+    assert client.shape_key_value == 0.1
+    assert client.commands.count("transaction.rollback") == 0
+    assert client.commands.count("shape_key.set_value") == 1
 
 
 def test_live_range_and_material_scope_are_rechecked_before_mutation() -> None:

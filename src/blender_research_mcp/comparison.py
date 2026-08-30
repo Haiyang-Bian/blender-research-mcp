@@ -1341,6 +1341,56 @@ def _require_same_generation(*values: int) -> int:
     return values[0]
 
 
+def _user_intent_revision(value: dict[str, Any]) -> int:
+    return int(value.get("user_intent_revision", 0))
+
+
+def _assert_user_intent_stable(
+    baseline_revision: int,
+    current: dict[str, Any],
+    *,
+    phase: str,
+    label: str | None,
+) -> None:
+    current_revision = _user_intent_revision(current)
+    if current_revision == baseline_revision:
+        return
+    details: dict[str, Any] = {
+        "comparison_phase": phase,
+        "user_intent_revision_before": baseline_revision,
+        "user_intent_revision_after": current_revision,
+        "last_user_action": current.get("last_user_action"),
+    }
+    if label is not None:
+        details["candidate_label"] = label
+    raise comparison_error(
+        ErrorKind.CONFLICT,
+        "COMPARISON_ACCEPTED_BY_USER_SAVE",
+        "The user saved and accepted the currently visible comparison state",
+        details=details,
+    )
+
+
+def _comparison_user_save_error(
+    error: BridgeError,
+    *,
+    phase: str,
+    label: str | None,
+) -> BridgeError:
+    details = {
+        "comparison_phase": phase,
+        "cause": error.error.model_dump(mode="json"),
+    }
+    if label is not None:
+        details["candidate_label"] = label
+    return comparison_error(
+        ErrorKind.CONFLICT,
+        "COMPARISON_ACCEPTED_BY_USER_SAVE",
+        "The user saved and accepted the currently visible comparison state",
+        details=details,
+    )
+
+
 async def _read_guarded_state(
     client: ComparisonClient,
     request: ComparisonRequest,
@@ -1527,6 +1577,7 @@ async def run_lookdev_comparison(
     baseline_context, baseline_object, baseline_target, ping_before = await _read_guarded_state(
         client, request
     )
+    user_intent_revision = _user_intent_revision(ping_before)
     _validate_live_candidates(request, baseline_target)
     capture = request.capture
     baseline_started = time.perf_counter()
@@ -1540,7 +1591,15 @@ async def run_lookdev_comparison(
         overlays=capture.overlays,
         orbit=capture.orbit.model_dump() if capture.orbit is not None else None,
     )
-    await settle_capture_generation(client, baseline_capture)  # type: ignore[arg-type]
+    baseline_settled = await settle_capture_generation(
+        client, baseline_capture  # type: ignore[arg-type]
+    )
+    _assert_user_intent_stable(
+        user_intent_revision,
+        baseline_settled,
+        phase="baseline_capture",
+        label=None,
+    )
     try:
         validate_evidence_image(baseline_image, label="baseline")
     except ValueError as exc:
@@ -1588,6 +1647,12 @@ async def run_lookdev_comparison(
             context, evidence_object, current_target, ping = await _read_guarded_state(
                 client, request
             )
+            _assert_user_intent_stable(
+                user_intent_revision,
+                ping,
+                phase=phase,
+                label=label,
+            )
             _assert_context_matches(baseline_context, context)
             _assert_object_matches(baseline_object, evidence_object)
             _assert_target_matches(baseline_target, current_target)
@@ -1627,7 +1692,15 @@ async def run_lookdev_comparison(
                 orbit=capture.orbit.model_dump() if capture.orbit is not None else None,
                 view_reference_capture_id=str(baseline_capture["capture_id"]),
             )
-            await settle_capture_generation(client, capture_metadata)  # type: ignore[arg-type]
+            capture_settled = await settle_capture_generation(
+                client, capture_metadata  # type: ignore[arg-type]
+            )
+            _assert_user_intent_stable(
+                user_intent_revision,
+                capture_settled,
+                phase=phase,
+                label=label,
+            )
             try:
                 validate_evidence_image(image, label=f"candidate {label}")
                 statistics = image_difference_statistics(baseline_image, image)
@@ -1668,6 +1741,12 @@ async def run_lookdev_comparison(
                     "Comparison rollback could not prove baseline restoration",
                     details={"cause": exc.error.model_dump(mode="json")},
                 ) from exc
+            _assert_user_intent_stable(
+                user_intent_revision,
+                restored_ping,
+                phase=phase,
+                label=label,
+            )
 
             images.append(image)
             candidate_result = {
@@ -1688,6 +1767,13 @@ async def run_lookdev_comparison(
                     {"code": "CANDIDATE_VISUALLY_INDISTINGUISHABLE", "label": label}
                 )
         except BridgeError as exc:
+            if exc.error.code in {
+                "TRANSACTION_ACCEPTED_BY_USER_SAVE",
+                "COMPARISON_ACCEPTED_BY_USER_SAVE",
+            }:
+                if exc.error.code == "COMPARISON_ACCEPTED_BY_USER_SAVE":
+                    raise exc
+                raise _comparison_user_save_error(exc, phase=phase, label=label) from exc
             if transaction_id is not None and not rollback_attempted:
                 try:
                     await _attempt_cleanup_rollback(client, transaction_id)
@@ -1715,6 +1801,12 @@ async def run_lookdev_comparison(
 
     final_ping = await _verify_restored(
         client, request, baseline_context, baseline_object, baseline_target
+    )
+    _assert_user_intent_stable(
+        user_intent_revision,
+        final_ping,
+        phase="final_verify",
+        label=None,
     )
     return images, {
         "target": request.target.model_dump(mode="json"),

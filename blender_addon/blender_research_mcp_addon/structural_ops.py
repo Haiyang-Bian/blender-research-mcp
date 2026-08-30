@@ -389,3 +389,25 @@ def finalize_structural_delta(delta: StructuralDelta) -> dict[str, Any] | None:
         "object_name": name,
         "removed_owned": removed_owned,
     }
+
+
+def adopt_structural_delta_for_native_save(
+    delta: StructuralDelta,
+) -> dict[str, Any] | None:
+    """Finalize deferred work only while its last Agent-owned guard still matches."""
+
+    if delta.action not in {"node_graph_clear", "unlink_object"}:
+        return None
+    try:
+        for guard in delta.after:
+            validate_structure_guard(guard)
+    except TransactionModelError:
+        return {
+            "kind": delta.kind,
+            "action": "preserved_user_state",
+            "deferred_action": delta.action,
+        }
+    result = finalize_structural_delta(delta)
+    if result is not None:
+        result["native_save"] = True
+    return result

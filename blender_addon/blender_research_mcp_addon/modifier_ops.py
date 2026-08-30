@@ -1402,3 +1402,40 @@ def finalize_modifier_delta(delta: Any) -> dict[str, Any] | None:
     _PENDING_DELETE_TOKENS.pop(delta.modifier_identity, None)
     obj.modifiers.remove(modifier)
     return {"kind": "modifier_delete", "modifier_name": delta.modifier_name}
+
+
+def adopt_modifier_delta_for_native_save(
+    delta: Any,
+    transaction_id: str,
+) -> dict[str, Any] | None:
+    """Finalize an untouched pending delete, otherwise preserve the user's state."""
+
+    if not isinstance(delta, ModifierDeleteDelta):
+        return None
+    obj = delta.payload.get("object")
+    modifier = delta.payload.get("modifier")
+    token_matches = _PENDING_DELETE_TOKENS.get(delta.modifier_identity) == transaction_id
+    identity_matches = (
+        obj is not None
+        and modifier is not None
+        and bpy.data.objects.get(delta.object_name) is obj
+        and obj.modifiers.get(delta.modifier_name) is modifier
+        and session_identity("object", obj) == delta.object_identity
+        and session_identity("modifier", modifier) == delta.modifier_identity
+    )
+    state_matches = identity_matches and all(
+        bool(getattr(modifier, field)) == value for field, value in delta.after.items()
+    )
+    _PENDING_DELETE_TOKENS.pop(delta.modifier_identity, None)
+    if token_matches and state_matches:
+        obj.modifiers.remove(modifier)
+        return {
+            "kind": "modifier_delete",
+            "modifier_name": delta.modifier_name,
+            "action": "finalized_native_save",
+        }
+    return {
+        "kind": "modifier_delete",
+        "modifier_name": delta.modifier_name,
+        "action": "preserved_user_state",
+    }

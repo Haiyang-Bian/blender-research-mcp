@@ -88,6 +88,9 @@ def test_addon_registers_project_lifecycle_without_expanding_compact_panel() -> 
     assert "Project lifecycle" not in compact_status
     assert "Project lifecycle" in full_status
     assert "last_operation" in full_status
+    for handler in ("save_pre", "save_post", "save_post_fail"):
+        assert f"bpy.app.handlers.{handler}.append" in source
+        assert f"bpy.app.handlers.{handler}.remove" in source
 
 
 def test_addon_registers_structural_authoring_without_expanding_compact_panel() -> None:

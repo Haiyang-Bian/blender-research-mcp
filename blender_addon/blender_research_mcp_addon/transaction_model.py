@@ -553,6 +553,7 @@ class TransactionBook:
     def __init__(self) -> None:
         self.active: Transaction | None = None
         self.last_status = "none"
+        self._terminal: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
     def begin(
         self,
@@ -587,7 +588,13 @@ class TransactionBook:
             )
         return transaction
 
-    def finish(self, transaction: Transaction, status: str) -> None:
+    def finish(
+        self,
+        transaction: Transaction,
+        status: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         if self.active is not transaction:
             raise TransactionModelError(
                 "TRANSACTION_NOT_FOUND",
@@ -596,12 +603,27 @@ class TransactionBook:
         transaction.status = status
         self.last_status = status
         self.active = None
+        terminal = {
+            "transaction_id": transaction.transaction_id,
+            "label": transaction.label,
+            "status": status,
+        }
+        if details:
+            terminal.update(details)
+        self._terminal[transaction.transaction_id] = terminal
+        self._terminal.move_to_end(transaction.transaction_id)
+        while len(self._terminal) > 32:
+            self._terminal.popitem(last=False)
+
+    def terminal(self, transaction_id: str) -> dict[str, Any] | None:
+        result = self._terminal.get(transaction_id)
+        return dict(result) if result is not None else None
 
     def abandon(self, status: str) -> None:
         if self.active is not None:
-            self.active.status = status
-            self.active = None
-        self.last_status = status
+            self.finish(self.active, status)
+        else:
+            self.last_status = status
 
 
 def request_fingerprint(request: dict[str, Any]) -> str:
