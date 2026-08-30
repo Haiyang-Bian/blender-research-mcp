@@ -13,6 +13,9 @@ MAX_SELECTIONS = 64
 MAX_SELECTION_COMPONENTS = 2_000_000
 MAX_SURFACES = 8
 MAX_SURFACE_TRIANGLES = 2_000_000
+MAX_COMPONENT_MAPS = 8
+MAX_COMPONENT_MAP_RELATIONS = 8_000_000
+MAX_SINGLE_COMPONENT_MAP_RELATIONS = 4_000_000
 
 
 class MeshResourceError(RuntimeError):
@@ -133,11 +136,13 @@ class MeshResourceBook:
     def __init__(self) -> None:
         self._selections: OrderedDict[str, SelectionRecord] = OrderedDict()
         self._surfaces: OrderedDict[str, SurfaceRecord] = OrderedDict()
+        self._component_maps: OrderedDict[str, Any] = OrderedDict()
         self._expired: deque[str] = deque(maxlen=256)
 
     def clear(self) -> None:
         self._selections.clear()
         self._surfaces.clear()
+        self._component_maps.clear()
         self._expired.clear()
 
     def add_selection(
@@ -253,6 +258,46 @@ class MeshResourceBook:
     def release_surface(self, surface_id: str) -> bool:
         return self._surfaces.pop(surface_id, None) is not None
 
+    def add_component_map(self, record: Any) -> Any:
+        if record.relation_count > MAX_SINGLE_COMPONENT_MAP_RELATIONS:
+            raise MeshResourceError(
+                "MESH_COMPONENT_MAP_BUDGET_EXCEEDED",
+                "ComponentMap exceeds the per-resource relation budget",
+            )
+        self._component_maps[record.component_map_id] = record
+        self._component_maps.move_to_end(record.component_map_id)
+        while len(self._component_maps) > MAX_COMPONENT_MAPS or sum(
+            item.relation_count for item in self._component_maps.values()
+        ) > MAX_COMPONENT_MAP_RELATIONS:
+            component_map_id, _item = self._component_maps.popitem(last=False)
+            self._expired.append(component_map_id)
+        if record.component_map_id not in self._component_maps:
+            raise MeshResourceError(
+                "MESH_COMPONENT_MAP_BUDGET_EXCEEDED",
+                "ComponentMap exceeds the retained relation budget",
+            )
+        return record
+
+    def component_map(self, component_map_id: str) -> Any:
+        record = self._component_maps.get(component_map_id)
+        if record is None:
+            if component_map_id in self._expired:
+                raise MeshResourceError(
+                    "MESH_COMPONENT_MAP_EXPIRED",
+                    f"ComponentMap was evicted: {component_map_id}",
+                    kind="not_found",
+                )
+            raise MeshResourceError(
+                "MESH_COMPONENT_MAP_NOT_FOUND",
+                f"ComponentMap does not exist: {component_map_id}",
+                kind="not_found",
+            )
+        self._component_maps.move_to_end(component_map_id)
+        return record
+
+    def release_component_map(self, component_map_id: str) -> bool:
+        return self._component_maps.pop(component_map_id, None) is not None
+
     @property
     def selection_count(self) -> int:
         return len(self._selections)
@@ -260,3 +305,7 @@ class MeshResourceBook:
     @property
     def surface_count(self) -> int:
         return len(self._surfaces)
+
+    @property
+    def component_map_count(self) -> int:
+        return len(self._component_maps)

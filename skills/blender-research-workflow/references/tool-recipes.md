@@ -310,6 +310,35 @@ smooth, and supported generic layers are snapshot-protected, but only face mater
 and smooth are writable in 0.11. On a write or disconnect recovery, verify both the
 Mesh fingerprint and object-to-data relationships before continuing.
 
+## Revision-aware topology and ComponentMaps
+
+Use this recipe with `mesh_component_map: 1`, `mesh_topology: 2`, and
+`transactions >= 7` when one topology result feeds another operation:
+
+1. Build a revision-bound EDGE or FACE SelectionSet rather than retaining a guessed
+   index list. Begin the transaction with the latest exact object, Mesh, users,
+   fingerprint, and generation evidence.
+2. Use subdivide, loop cut, bisect, split, bridge, fill, or grid fill through the closed
+   `mesh.edit` union. Loop cut requires an unambiguous quad ring. Bridge takes exactly
+   two closed boundary loops. Grid fill selects its two compatible boundary chains and
+   leaves the connecting rails present but unselected.
+3. On a changed topology response, retain the one-step ComponentMap. Use
+   `rebound_selection` for surviving and explicit descendants, or a domain entry from
+   `created_selections` when the next step intentionally targets newly created geometry.
+4. Inspect `FORWARD`, `REVERSE`, `CREATED`, or `DELETED` pages when lineage is part of
+   the evidence. Choose `EXACT_SURVIVORS` when descendants must be excluded and
+   `STRICT` when any missing source component should abort the chain. Choose `MAX` or
+   `AVERAGE` deliberately for many-to-one weights.
+5. A ComponentMap spans exactly one revision. Remap after every topology call; do not
+   compose Maps or find replacements by spatial proximity. A no-op returns no empty Map.
+6. Commit keeps the after-revision Map. Rollback/disconnect restores the baseline and
+   invalidates after-maps; native save accepts the visible revision and stops writes.
+
+The same Map evidence is returned by topology-changing extrude, inset, bevel, delete,
+dissolve, and merge. Private lineage layers are removed before Mesh writeback. UV,
+color, material, smooth, and supported generic attribute schemas remain protected;
+Shape-Key, linked, Edit-Mode, unsupported-attribute, and budget boundaries remain hard.
+
 ## Revision-bound selection and evaluated-surface fitting
 
 Use this recipe with `mesh_selection: 1`, `mesh_surface_query: 1`,
@@ -469,6 +498,15 @@ requested scope before `allow_shared=true`.
 - `MESH_EDIT_RESTORE_FAILED`: stop all further writes; inspect transaction state, Mesh
   identity/fingerprint, user links, protected layers, and context. Never force a copied
   snapshot over state that cannot be proven to be Agent-owned.
+- ComponentMap not-found means unknown/released; expired means LRU eviction. Stale or
+  revision-mismatch means the map no longer targets the live revision. Re-inspect and
+  rerun the bounded topology step; never infer lineage or compose maps.
+- `MESH_SELECTION_REMAP_INCOMPLETE`: use a non-strict mode only when deleted sources
+  are acceptable to the requested result. Otherwise stop and inspect forward/deleted
+  pages before continuing.
+- Invalid ring/boundary, lineage-generation, topology-budget, or topology-restore
+  errors require a fresh bounded selection or a different semantic operation; do not
+  bypass them with arbitrary BMesh/operator/RNA parameters.
 - `MESH_EDIT_MODE_CONFLICT`, linked data, Shape Key, operation, component-index, or
   budget failure: correct the typed request or report the boundary; do not switch mode
   implicitly and do not fall back to arbitrary BMesh/RNA/Python.

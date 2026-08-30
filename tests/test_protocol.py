@@ -58,6 +58,7 @@ def test_capability_versions_default_to_incompatible_zeroes() -> None:
     assert versions.lookdev_inspection == 0
     assert versions.modifier_authoring == 0
     assert versions.mesh_topology == 0
+    assert versions.mesh_component_map == 0
     assert versions.mesh_selection == 0
     assert versions.mesh_surface_query == 0
     assert versions.mesh_deformation == 0

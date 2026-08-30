@@ -65,6 +65,11 @@ from .material_authoring_ops import (
     load_image,
     material_result,
 )
+from .mesh_component_map import (
+    inspect_component_map,
+    release_component_map,
+    remap_selection,
+)
 from .mesh_deform_ops import DEFORM_OPERATIONS, edit_mesh_deform
 from .mesh_ops import (
     MeshOperationError,
@@ -84,6 +89,7 @@ from .mesh_query_ops import (
 )
 from .mesh_resource_model import MeshResourceBook, MeshResourceError
 from .mesh_surface_ops import prepare_surface, query_surface, validate_mesh
+from .mesh_topology_ops import TOPOLOGY_OPERATIONS, edit_mesh_topology
 from .modifier_ops import (
     adopt_modifier_delta_for_native_save,
     clear_modifier_pending_deletes,
@@ -156,6 +162,9 @@ CAPABILITIES = [
     "mesh.selection.derive",
     "mesh.selection.inspect",
     "mesh.selection.release",
+    "mesh.component_map.inspect",
+    "mesh.component_map.release",
+    "mesh.selection.remap",
     "mesh.surface.prepare",
     "mesh.surface.query",
     "mesh.validate",
@@ -204,7 +213,7 @@ CAPABILITY_VERSIONS = {
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 6,
+    "transactions": 7,
     "object_transform_scale": 1,
     "object_transform": 1,
     "object_settings": 1,
@@ -218,11 +227,12 @@ CAPABILITY_VERSIONS = {
     "object_visibility": 1,
     "modifier_state": 1,
     "modifier_authoring": 1,
-    "mesh_topology": 1,
+    "mesh_topology": 2,
     "mesh_selection": 1,
     "mesh_surface_query": 1,
     "mesh_deformation": 1,
     "mesh_validation": 1,
+    "mesh_component_map": 1,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -918,6 +928,19 @@ class AddonState:
             result = release_selection(self.mesh_resources, params)
             result["scene_generation"] = self.scene_generation
             return result
+        if command == "mesh.component_map.inspect":
+            result = inspect_component_map(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.component_map.release":
+            result = release_component_map(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.selection.remap":
+            with self.suppress_generation():
+                result = remap_selection(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
         if command == "mesh.surface.prepare":
             with self.suppress_generation():
                 result = prepare_surface(self.mesh_resources, params)
@@ -1191,8 +1214,10 @@ class AddonState:
                     result = edit_mesh_deform(
                         transaction, self.mesh_resources, self.captures, params
                     )
+                elif operation_type in TOPOLOGY_OPERATIONS:
+                    result = edit_mesh_topology(transaction, self.mesh_resources, params)
                 else:
-                    result = edit_mesh(transaction, params)
+                    result = edit_mesh(transaction, params, self.mesh_resources)
                 bpy.context.view_layer.update()
             if len(transaction.deltas) > previous_count:
                 self.scene_generation += 1

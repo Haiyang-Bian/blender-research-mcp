@@ -8,7 +8,7 @@ from blender_research_mcp.server import MaterialInputValue, create_server
 
 def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     server = create_server()
-    assert server._mcp_server.version == "0.12.0"
+    assert server._mcp_server.version == "0.13.0"
     tools = asyncio.run(server.list_tools())
     assert [tool.name for tool in tools] == [
         "application.status",
@@ -30,6 +30,9 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
             "mesh.selection.derive",
             "mesh.selection.inspect",
             "mesh.selection.release",
+            "mesh.component_map.inspect",
+            "mesh.component_map.release",
+            "mesh.selection.remap",
             "mesh.surface.prepare",
             "mesh.surface.query",
             "mesh.validate",
@@ -271,7 +274,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     ]
     operation_schema = mesh_edit.inputSchema["properties"]["operation"]
     assert operation_schema["discriminator"]["propertyName"] == "type"
-    assert len(operation_schema["oneOf"]) == 16
+    assert len(operation_schema["oneOf"]) == 23
     shape_key = tools_by_name["shape_key.set_value"]
     assert shape_key.annotations is not None
     assert shape_key.annotations.destructiveHint is True

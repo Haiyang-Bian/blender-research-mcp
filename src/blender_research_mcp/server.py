@@ -74,6 +74,13 @@ from blender_research_mcp.mesh_resources import (
     SurfaceQueryMode,
     ValidationCheck,
 )
+from blender_research_mcp.mesh_topology import (
+    ComponentMapDirection,
+    ComponentMapDomain,
+    ComponentMapId,
+    SelectionRemapMode,
+    WeightMergeMode,
+)
 from blender_research_mcp.modifier_authoring import (
     ModifierDefinition,
     ModifierSettings,
@@ -532,6 +539,76 @@ def create_server(
         return await client.call(
             "mesh.selection.release",
             {"selection_id": selection_id},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.component_map.inspect",
+        description=(
+            "Inspect a bounded page from one exact one-revision ComponentMap without "
+            "guessing post-topology component indices."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_component_map_inspect(
+        component_map_id: ComponentMapId,
+        domain: ComponentMapDomain = "SUMMARY",
+        direction: ComponentMapDirection = "FORWARD",
+        offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=4096)] = 256,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_component_map")
+        return await client.call(
+            "mesh.component_map.inspect",
+            {
+                "component_map_id": component_map_id,
+                "domain": domain,
+                "direction": direction,
+                "offset": offset,
+                "limit": limit,
+            },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.component_map.release",
+        description="Release one session-local ComponentMap; repeated release is safe.",
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_component_map_release(component_map_id: ComponentMapId) -> dict[str, Any]:
+        await require_capability(client, "mesh_component_map")
+        return await client.call(
+            "mesh.component_map.release",
+            {"component_map_id": component_map_id},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.selection.remap",
+        description=(
+            "Remap one before-revision SelectionSet through an exact ComponentMap into "
+            "a new immutable after-revision SelectionSet."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_selection_remap(
+        selection_id: SelectionId,
+        component_map_id: ComponentMapId,
+        mode: SelectionRemapMode = "ALL_MAPPED",
+        weight_merge: WeightMergeMode = "MAX",
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_component_map")
+        return await client.call(
+            "mesh.selection.remap",
+            {
+                "selection_id": selection_id,
+                "component_map_id": component_map_id,
+                "mode": mode,
+                "weight_merge": weight_merge,
+            },
             read_only=True,
         )
 
@@ -1305,7 +1382,20 @@ def create_server(
         idempotency_key: IdempotencyKey,
     ) -> dict[str, Any]:
         await require_capability(client, "mesh_topology")
-        if operation.type in {
+        topology_v2_operations = {
+            "subdivide",
+            "loop_cut",
+            "bisect",
+            "split",
+            "bridge",
+            "fill",
+            "grid_fill",
+        }
+        if operation.type in topology_v2_operations:
+            await require_capability(client, "mesh_component_map")
+            client.require_capability("mesh_topology", 2)
+            client.require_capability("transactions", 7)
+        elif operation.type in {
             "set_positions",
             "smooth",
             "relax",
