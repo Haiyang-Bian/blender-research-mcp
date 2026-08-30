@@ -1,9 +1,9 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.12 SelectionSet and surface fitting validated in Blender 4.2.23
-- Next milestone: 0.13 topology revision and ComponentMap implementation
+- Status: 0.13 topology revision and ComponentMap validated in Blender 4.2.23
+- Next milestone: 0.13.1 object separation and declarative topology batches
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.12.0
+- Package and add-on version: 0.13.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,7 +12,7 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.12.0 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.13.0 now covers
 the validated observation/lifecycle/static-authoring path, unified typed object,
 Light, and Camera settings, four bounded non-destructive Modifier families, and exact
 base-Mesh component editing with transaction snapshots; the older bridge is no longer
@@ -560,10 +560,11 @@ duplicate-selection regressions live-validated in 0.10.1.
 
 ### Phase 9 — semantic Mesh topology, selection resources, then UV
 
-Status: 0.11 implementation, automated gate, and Blender 4.2.23 release gate complete.
-Version 0.12 now adds SelectionSet and evaluated-surface fitting on the proven topology
-rollback model. Exact ComponentMap topology revision follows in 0.13; bounded UV moves
-to 0.14. None of these responsibilities is hidden in Modifier tools.
+Status: 0.11 through 0.13 implementation, automated gates, and Blender 4.2.23 release
+gates complete. Version 0.12 adds SelectionSet and evaluated-surface fitting on the
+snapshot model. Version 0.13 adds exact one-revision ComponentMaps plus seven bounded
+topology handlers; bounded UV remains in 0.14. None of these responsibilities is hidden
+in Modifier tools.
 
 - Page exact base-Mesh components and bind indices to full fingerprints.
 - Edit one closed semantic operation through transaction-v4 snapshots.

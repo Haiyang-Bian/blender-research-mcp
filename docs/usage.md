@@ -22,9 +22,11 @@
    Collaborative UI and native-save adoption are guaranteed only by
    `transactions: 5`. SelectionSet, SurfaceRef, semantic deformation, and validation
    require their 0.12 capabilities; deformation additionally requires `transactions: 6`.
+   Revision-aware topology requires `mesh_component_map: 1`, `mesh_topology: 2`, and
+   `transactions: 7`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.12.0.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.13.0.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -250,6 +252,33 @@ fingerprint still match. 0.11 preserves UV/color/supported generic data but cann
 their values. It also rejects linked data, Edit Mode, Shape Keys, pending-delete objects,
 unsupported attributes, arbitrary arrays/operators, and Modifier Apply.
 
+## Remap selections across topology revisions
+
+Use this transaction-v7 workflow when a real topology change must feed a later semantic
+operation without guessing the next indices:
+
+1. Create an EDGE or FACE SelectionSet on the current `mesh_revision_id`; keep the
+   source selection and exact Mesh guards.
+2. Call one supported topology operation: `subdivide`, `loop_cut`, `bisect`, `split`,
+   `bridge`, `fill`, or `grid_fill`. The older extrude/inset/bevel/delete/dissolve/merge
+   operations also return a ComponentMap when topology changes.
+3. Read `component_map`, `rebound_selection`, and domain-keyed `created_selections`.
+   Use the rebound set for the intended descendants; use a created set only when the
+   next operation intentionally targets new geometry.
+4. Inspect Map pages in `FORWARD`, `REVERSE`, `CREATED`, or `DELETED` direction when
+   lineage itself is review evidence. `EXACT_SURVIVORS` excludes split descendants;
+   `STRICT` fails if any source component lacks a mapping. Weighted many-to-one remap
+   uses explicit `MAX` or `AVERAGE` aggregation.
+5. A Map spans exactly one revision. For another topology edit, remap first and use the
+   newly returned Map for the following step; do not compose or spatially match maps.
+
+`loop_cut` resolves an unambiguous quad ring from at most 64 seed edges. Bridge requires
+exactly two disjoint closed boundary loops. Grid fill requires compatible selected
+boundary chains plus the unselected rails that close the grid boundary. A topology
+no-op creates no empty Map. Commit retains the after-map; rollback/disconnect restores
+the baseline and makes that after-map stale. Native Blender save accepts the current
+revision and stops further Agent writes.
+
 ## Select, fit, and validate a Mesh region
 
 Use this transaction-v6 workflow when a region is too large or too semantic to keep
@@ -439,6 +468,17 @@ Codex after the first installation so automatic skill discovery can see it.
   sharing change and stop the transaction. Do not force the saved snapshot over it.
 - `MESH_EDIT_RESTORE_FAILED`: stop all writes and inspect the Mesh, object users,
   context, and active transaction before any recovery decision.
+- `MESH_COMPONENT_MAP_NOT_FOUND` means the map never existed or was released;
+  `MESH_COMPONENT_MAP_EXPIRED` means LRU eviction; rebuild lineage from a new topology
+  operation rather than guessing it.
+- `MESH_COMPONENT_MAP_STALE` or `MESH_COMPONENT_MAP_REVISION_MISMATCH`: keep the map
+  as historical evidence if useful, but re-inspect and rebuild the SelectionSet on the
+  current revision. Maps are never composed or spatially extrapolated.
+- `MESH_SELECTION_REMAP_INCOMPLETE`: relax `STRICT` only when the intended operation
+  accepts deleted source components; otherwise stop the chain and inspect map pages.
+- Edge-ring, boundary, lineage-generation, topology-budget, or topology-restore
+  failure: correct the bounded selection/operation from current evidence. Never fall
+  back to arbitrary BMesh parameters or guessed replacement indices.
 - Mesh linked/Shape-Key/Edit-Mode/budget/operation rejection: revise the semantic plan
   within the advertised Mesh surface; do not use arbitrary BMesh, RNA, or Python.
 - Object, collection, data, material, or image identity/user conflict: discard stale

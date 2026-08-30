@@ -37,6 +37,9 @@ Shading/Overlay、选择和活动对象；Blender 原生保存则作为用户接
 0.12.0 新增 revision-bound SelectionSet、基础/求值 SurfaceRef、定量几何验证，
 以及七种保持拓扑不变的选择区域变形；事务升级到 v6，并继续保留用户 UI 与原生
 保存优先语义；自动化与 Blender 4.2.23 发布验收均已通过。
+0.13.0 新增单 revision `ComponentMap`、跨拓扑 revision 的 SelectionSet 精确重映射，
+以及 subdivide、loop cut、bisect、split、bridge、fill 和 grid fill；事务升级到 v7，
+所有 lineage 都来自同次 BMesh 操作和精确组件标记，不用空间距离猜测新索引。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -58,7 +61,9 @@ Mesh 编辑见
 0.11.1 协作上下文与用户保存优先见
 [0.11.1 验收记录](docs/validation/2026-08-30-collaborative-ui-native-save.md)，0.12
 SelectionSet 与求值曲面拟合见
-[0.12.0 验收记录](docs/validation/2026-08-31-selection-surface-fitting.md)。
+[0.12.0 验收记录](docs/validation/2026-08-31-selection-surface-fitting.md)，拓扑 revision
+与 ComponentMap 见
+[0.13.0 验收记录](docs/validation/2026-08-31-topology-component-maps.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -182,6 +187,18 @@ smooth、relax、project、shrinkwrap、inflate 和 flatten；它们引用 Selec
 拓扑不变，并在成功后返回新 revision 及自动重绑定集合。详细契约见
 [0.12.0 路线图](docs/roadmap/0.12.0-selection-surface-fitting.md)。
 
+## 0.13.0 拓扑 Revision 与 ComponentMap
+
+`mesh.edit` 的拓扑操作现在返回一步 `ComponentMap`，记录同域组件的
+`SURVIVED/SPLIT/MERGED/DERIVED` lineage，以及新建和删除集合。Agent 可通过
+`mesh.selection.remap` 把旧 SelectionSet 映射到下一 revision，并通过
+`mesh.component_map.inspect` 分页审查正向、反向、新建或删除证据。
+
+新增的封闭操作为 subdivide、quad-ring loop cut、平面 bisect、Mesh 内 split、
+双边界 bridge、NGON/triangles fill 和带 rails 的 grid fill。Map 只跨一步；连续拓扑
+编辑必须逐步重映射，rollback/断线恢复会使 after-map 失效。详细契约见
+[0.13.0 路线图](docs/roadmap/0.13.0-topology-component-maps.md)。
+
 ## 目录
 
 ~~~text
@@ -212,7 +229,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.12.0
+uv run --no-sync python scripts/build_addon.py --version 0.13.0
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认

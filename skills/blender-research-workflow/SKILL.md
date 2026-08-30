@@ -1,6 +1,6 @@
 ---
 name: blender-research-workflow
-description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects, revision-bound Mesh selections and surface fits, typed Modifier stacks, and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, semantic Mesh modeling, evaluated-surface fitting, non-destructive Modifier modeling, or static scene delivery; do not use for arbitrary Python, arbitrary BMesh/RNA, arbitrary node graphs, animation, Modifier apply, or UV editing.
+description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects, revision-aware Mesh topology and surface fits, typed Modifier stacks, and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, semantic Mesh modeling, evaluated-surface fitting, non-destructive Modifier modeling, or static scene delivery; do not use for arbitrary Python, arbitrary BMesh/RNA, arbitrary node graphs, animation, Modifier apply, or UV editing.
 ---
 
 # Blender Research Workflow
@@ -113,8 +113,10 @@ invalidate these resources; actual Mesh, user, transform, frame, or evaluated-ge
 drift does.
 
 Mesh component indices are evidence scoped to the exact full `mesh_fingerprint` that
-reported them. Re-inspect after every topology-changing edit before choosing later
-components. Explicitly choose `OBJECT` when only the target object should leave shared
+reported them. With `mesh_component_map: 1`, use each changed topology response's
+one-revision ComponentMap and rebound SelectionSet for the next operation; never infer
+new indices by location or compose maps implicitly. Explicitly choose `OBJECT` when only
+the target object should leave shared
 Mesh data, or `SHARED_DATA` when all inspected users should change together. Do not use
 topology to imitate a material effect, edit UVs through Mesh operations, or fall back to
 arbitrary BMesh, RNA, or Python.
@@ -169,6 +171,6 @@ creation/deletion, or reordering as a comparison candidate.
 
 Read [references/tool-recipes.md](references/tool-recipes.md) when executing an
 application/project lifecycle, multi-step scene authoring, exact Mesh editing,
-SelectionSet/surface fitting, Modifier-stack authoring, material/texture binding,
+SelectionSet/surface fitting, revision-aware topology, Modifier-stack authoring,
 rendering, observation,
 comparison, preview, reconnect, or recovery workflow.

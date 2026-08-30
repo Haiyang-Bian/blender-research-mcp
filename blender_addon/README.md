@@ -16,7 +16,7 @@ uv run --no-sync python scripts/build_addon.py
 ~~~
 
 The ignored output is written to
-`artifacts/blender-research-mcp-addon-0.12.0.zip`. Install that ZIP in Blender
+`artifacts/blender-research-mcp-addon-0.13.0.zip`. Install that ZIP in Blender
 4.2, then enable **Blender Research MCP**. The listener binds only to
 `127.0.0.1:9877`, creates a random per-session token, and publishes its
 ephemeral manifest under the current user's local application data directory.
@@ -34,6 +34,9 @@ set, reorder, and deferred delete operations for Bevel, Subdivision, Solidify, a
 Boolean. Version 0.11 adds transaction-v4 exact base-Mesh inspection and one bounded
 component editor with reversible snapshots and explicit object/shared-data scope. It
 does not expose apply, UV editing, arbitrary BMesh/RNA, or component-array replacement.
+Version 0.12 adds revision-bound SelectionSets, evaluated SurfaceRefs, deformation, and
+validation. Version 0.13 adds one-revision ComponentMaps, exact SelectionSet remapping,
+and bounded subdivide, loop-cut, bisect, split, bridge, fill, and grid-fill operations.
 Captures can temporarily use solid, material, wireframe, or rendered shading and an
 absolute orbit while restoring the user's original context. Blender may be obscured by
 another window, but it must remain running with a `VIEW_3D`; minimized capture is not

@@ -11,7 +11,7 @@ in this order when starting a new implementation task:
    — validated selection, surface resource, and deformation baseline.
 4. [General Mesh authoring requirements](requirements/general-mesh-authoring.md) —
    long-term selection, topology, attribute, Shape-Key, and validation direction.
-5. [Using Blender Research MCP](usage.md) — current 0.12 operator workflow and error
+5. [Using Blender Research MCP](usage.md) — current 0.13 operator workflow and error
    recovery.
 6. [Topology lineage decision](decisions/0013-revision-aware-topology-lineage.md) —
    one-revision ComponentMap and transaction-v7 boundary.
@@ -37,9 +37,14 @@ in this order when starting a new implementation task:
 
 ## Current release
 
-Version 0.12.0 is the active validated milestone. It adds session-local revision-bound
-SelectionSets, read-only evaluated SurfaceRefs, topology-preserving surface deformation,
-and quantitative Mesh validation. Its automated and Blender 4.2.23 gates have passed;
+Version 0.13.0 is the active validated milestone. It adds one-revision ComponentMaps,
+SelectionSet remapping, and bounded subdivide, loop-cut, bisect, split, bridge, fill,
+and grid-fill operations on top of the 0.12 selection/surface foundation. Its automated
+and Blender 4.2.23 gates have passed; see
+[the 0.13 validation record](validation/2026-08-31-topology-component-maps.md).
+
+Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
+SurfaceRefs, topology-preserving surface deformation, and quantitative Mesh validation;
 see [the 0.12 validation record](validation/2026-08-31-selection-surface-fitting.md).
 
 Version 0.11.1 upgrades transactions to capability 5: UI navigation, display, selection,
