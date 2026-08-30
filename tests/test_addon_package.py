@@ -186,6 +186,15 @@ def test_mesh_authoring_uses_bounded_data_api_snapshots_without_operators() -> N
         "normals",
     ):
         assert f'"{operation}"' in source
+    assert "def _identity_transform(" in source
+    restore = source.split("def _restore_mesh_geometry", 1)[1].split(
+        "def restore_mesh_snapshots",
+        1,
+    )[0]
+    assert "_copy_mesh_snapshot(mesh, snapshot)" in restore
+    assert "bmesh.new()" not in restore
+    assert "def _restore_attributes(" in source
+    assert 'foreach_set("vertex_index"' in source
     assert "mesh.copy()" in source
     assert "mesh.clear_geometry()" in source
     assert "bmesh.ops" in source

@@ -1,7 +1,7 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.11.0 semantic base-Mesh editing implemented; automated gate passed, live gate pending
-- Next milestone: complete the 0.11 Blender gate before designing 0.12 UV authority
+- Status: 0.11.0 semantic base-Mesh editing implemented and live-validated
+- Next milestone: design 0.12 bounded UV authority on the proven snapshot model
 - Primary Blender target: 4.2.23 LTS
 - Package and add-on version: 0.11.0
 - Protocol version: 1
@@ -512,9 +512,9 @@ duplicate-selection regressions live-validated in 0.10.1.
 
 ### Phase 9 — semantic Mesh topology, then UV
 
-Status: 0.11 implementation and automated gate complete; Blender 4.2.23 release gate
-pending. Version 0.12 will add UV unwrap/transform only after the topology rollback
-model is proven. Neither responsibility is hidden in Modifier tools.
+Status: 0.11 implementation, automated gate, and Blender 4.2.23 release gate complete.
+Version 0.12 may now add bounded UV unwrap/transform on the proven topology rollback
+model. Neither responsibility is hidden in Modifier tools.
 
 - Page exact base-Mesh components and bind indices to full fingerprints.
 - Edit one closed semantic operation through transaction-v4 snapshots.

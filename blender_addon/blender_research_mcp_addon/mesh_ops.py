@@ -562,15 +562,140 @@ def validate_mesh_snapshot_guards(transaction: Transaction) -> None:
         _validate_guard(guard)
 
 
+def _foreach_values(collection: Any, prop: str, typecode: str, width: int) -> array[Any]:
+    values = array(typecode, [0]) * (len(collection) * width)
+    if values:
+        collection.foreach_get(prop, values)
+    return values
+
+
+def _remove_protected_attributes(mesh: Any) -> None:
+    for layer in tuple(mesh.uv_layers):
+        mesh.uv_layers.remove(layer)
+    for color in tuple(mesh.color_attributes):
+        mesh.color_attributes.remove(color)
+    for attribute in tuple(mesh.attributes):
+        if _is_protected_attribute(attribute):
+            mesh.attributes.remove(attribute)
+
+
+def _restore_attributes(mesh: Any, snapshot: Any) -> None:
+    uv_names = {layer.name for layer in snapshot.uv_layers}
+    color_names = {attribute.name for attribute in snapshot.color_attributes}
+    attribute_specs = []
+    for attribute in snapshot.attributes:
+        if not _is_protected_attribute(attribute):
+            continue
+        data_type = str(attribute.data_type)
+        layout = _ATTRIBUTE_LAYOUTS.get(data_type)
+        if layout is None:
+            raise MeshOperationError(
+                "MESH_EDIT_RESTORE_FAILED",
+                f"Snapshot contains an unsupported attribute: {attribute.name}:{data_type}",
+                kind="internal",
+            )
+        prop, typecode, width = layout
+        attribute_specs.append(
+            {
+                "name": attribute.name,
+                "domain": str(attribute.domain),
+                "data_type": data_type,
+                "values": _foreach_values(attribute.data, prop, typecode, width),
+                "layout": layout,
+                "uv": attribute.name in uv_names,
+                "color": attribute.name in color_names,
+            }
+        )
+
+    _remove_protected_attributes(mesh)
+    for spec in attribute_specs:
+        if spec["uv"]:
+            mesh.uv_layers.new(name=spec["name"], do_init=False)
+            attribute = mesh.attributes.get(spec["name"])
+        elif spec["color"]:
+            attribute = mesh.color_attributes.new(
+                name=spec["name"],
+                type=spec["data_type"],
+                domain=spec["domain"],
+            )
+        else:
+            attribute = mesh.attributes.new(
+                name=spec["name"],
+                type=spec["data_type"],
+                domain=spec["domain"],
+            )
+        if attribute is None:
+            raise MeshOperationError(
+                "MESH_EDIT_RESTORE_FAILED",
+                f"Could not restore attribute: {spec['name']}",
+                kind="blender_api",
+            )
+        prop, _typecode, _width = spec["layout"]
+        if spec["values"]:
+            attribute.data.foreach_set(prop, spec["values"])
+
+
+def _copy_mesh_snapshot(mesh: Any, snapshot: Any) -> None:
+    vertices = {
+        prop: _foreach_values(snapshot.vertices, prop, typecode, width)
+        for prop, typecode, width in (
+            ("co", "f", 3),
+            ("select", "b", 1),
+            ("hide", "b", 1),
+        )
+    }
+    edges = {
+        prop: _foreach_values(snapshot.edges, prop, typecode, width)
+        for prop, typecode, width in (
+            ("vertices", "i", 2),
+            ("select", "b", 1),
+            ("hide", "b", 1),
+            ("use_edge_sharp", "b", 1),
+        )
+    }
+    loops = _foreach_values(snapshot.loops, "vertex_index", "i", 1)
+    polygons = {
+        prop: _foreach_values(snapshot.polygons, prop, typecode, width)
+        for prop, typecode, width in (
+            ("loop_start", "i", 1),
+            ("loop_total", "i", 1),
+            ("material_index", "i", 1),
+            ("use_smooth", "b", 1),
+            ("select", "b", 1),
+            ("hide", "b", 1),
+        )
+    }
+    materials = tuple(snapshot.materials)
+
+    _remove_protected_attributes(mesh)
+    mesh.clear_geometry()
+    mesh.vertices.add(len(snapshot.vertices))
+    mesh.edges.add(len(snapshot.edges))
+    mesh.loops.add(len(snapshot.loops))
+    mesh.polygons.add(len(snapshot.polygons))
+    mesh.vertices.foreach_set("co", vertices["co"])
+    mesh.edges.foreach_set("vertices", edges["vertices"])
+    mesh.loops.foreach_set("vertex_index", loops)
+    mesh.polygons.foreach_set("loop_start", polygons["loop_start"])
+    mesh.polygons.foreach_set("loop_total", polygons["loop_total"])
+    mesh.update(calc_edges=True, calc_edges_loose=True)
+
+    mesh.materials.clear()
+    for material in materials:
+        mesh.materials.append(material)
+    _restore_attributes(mesh, snapshot)
+    mesh.update(calc_edges=True, calc_edges_loose=True)
+    for prop in ("select", "hide"):
+        mesh.vertices.foreach_set(prop, vertices[prop])
+        mesh.edges.foreach_set(prop, edges[prop])
+        mesh.polygons.foreach_set(prop, polygons[prop])
+    mesh.edges.foreach_set("use_edge_sharp", edges["use_edge_sharp"])
+    for prop in ("material_index", "use_smooth"):
+        mesh.polygons.foreach_set(prop, polygons[prop])
+
+
 def _restore_mesh_geometry(mesh: Any, snapshot: Any, expected: str) -> None:
-    bm = bmesh.new()
-    try:
-        bm.from_mesh(snapshot)
-        mesh.clear_geometry()
-        bm.to_mesh(mesh)
-        mesh.update(calc_edges=True, calc_edges_loose=True)
-    finally:
-        bm.free()
+    _copy_mesh_snapshot(mesh, snapshot)
     actual = mesh_fingerprint(mesh)
     if actual != expected:
         raise MeshOperationError(
@@ -1376,6 +1501,69 @@ _OPERATION_HANDLERS = {
 }
 
 
+def _identity_transform(operation: dict[str, Any]) -> bool:
+    def matches(vector: Any, expected: float, *, rotation: bool = False) -> bool:
+        if vector is None:
+            return True
+        values = (float(vector[axis]) for axis in ("x", "y", "z"))
+        if rotation:
+            return all(math.fmod(value, 360.0) == 0.0 for value in values)
+        return all(value == expected for value in values)
+
+    return (
+        operation.get("type") == "transform"
+        and matches(operation.get("translation"), 0.0)
+        and matches(operation.get("rotation_euler_degrees"), 0.0, rotation=True)
+        and matches(operation.get("scale"), 1.0)
+    )
+
+
+def _identity_transform_result(
+    transaction: Transaction,
+    obj: Any,
+    mesh: Any,
+    initial_mesh_reference: dict[str, Any],
+    data_scope: str,
+    operation: dict[str, Any],
+) -> dict[str, Any]:
+    fingerprint = mesh_fingerprint(mesh)
+    topology = topology_fingerprint(mesh)
+    counts = mesh_counts(mesh)
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(mesh)
+        component_baseline = _bmesh_baseline(bm)
+        requested = _requested_components(operation, component_baseline)
+        evidence = _operation_transform(bm, operation)
+        components = _component_changes(bm, component_baseline)
+        components["affected"] = requested
+    finally:
+        bm.free()
+    return {
+        "transaction_id": transaction.transaction_id,
+        "changed": False,
+        "operation": "transform",
+        "data_scope": data_scope,
+        "object": {
+            "name": obj.name,
+            "session_identity": session_identity("object", obj),
+        },
+        "mesh": _mesh_reference(mesh),
+        "before_mesh": initial_mesh_reference,
+        "after_mesh": _mesh_reference(mesh),
+        "before_mesh_fingerprint": fingerprint,
+        "after_mesh_fingerprint": fingerprint,
+        "before_topology_fingerprint": topology,
+        "after_topology_fingerprint": topology,
+        "before_counts": counts,
+        "after_counts": counts,
+        "components": components,
+        "evidence": evidence,
+        "delta": {"type": "mesh_edit", "recorded": False, "snapshot_reused": False},
+        "warnings": _component_warnings(components),
+    }
+
+
 def _remove_temporary_mesh(mesh: Any) -> None:
     if mesh is not None and bpy.data.meshes.get(mesh.name) is mesh and int(mesh.users) == 0:
         bpy.data.meshes.remove(mesh)
@@ -1409,6 +1597,15 @@ def edit_mesh(transaction: Transaction, params: dict[str, Any]) -> dict[str, Any
     initial_mesh_reference = _mesh_reference(initial_mesh)
     operation = _validate_operation(params.get("operation"))
     operation_type = operation.get("type")
+    if _identity_transform(operation):
+        return _identity_transform_result(
+            transaction,
+            obj,
+            initial_mesh,
+            initial_mesh_reference,
+            data_scope,
+            operation,
+        )
     transaction.ensure_capacity()
     guard = transaction.mesh_snapshot_guard(
         initial_mesh.name, session_identity("mesh", initial_mesh)

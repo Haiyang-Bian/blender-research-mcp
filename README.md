@@ -30,7 +30,7 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 0.10.2 进一步按 Blender RNA 的 float32 实际存储精度比较事务属性，避免
 `6.2` 回读为 `6.199999809...` 时误报事务外冲突，同时仍能识别相邻 ULP 修改。
 0.11.0 新增基础 Mesh 的分页检查、双指纹和事务 v4 快照，以及统一且封闭的
-`mesh.edit` 组件编辑入口；自动化门禁已通过，Blender 4.2.23 发布验收正在进行。
+`mesh.edit` 组件编辑入口；自动化门禁和 Blender 4.2.23 发布验收均已通过。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -46,7 +46,9 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 linked-data 事务修复见
 [0.10.1 验收记录](docs/validation/2026-08-30-linked-data-guard-hotfix.md)。
 float32 guard 与独立月光水面实作见
-[0.10.2 验收记录](docs/validation/2026-08-30-float32-guard-and-moon-water.md)。
+[0.10.2 验收记录](docs/validation/2026-08-30-float32-guard-and-moon-water.md)，语义
+Mesh 编辑见
+[0.11.0 验收记录](docs/validation/2026-08-30-semantic-mesh-editing.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见

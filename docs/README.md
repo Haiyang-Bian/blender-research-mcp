@@ -27,7 +27,8 @@ in this order when starting a new implementation task:
 
 Version 0.11.0 adds paged exact base-Mesh inspection and one transaction-v4 semantic
 component writer with explicit object-only/shared-data scope and reversible Mesh
-snapshots. Its Blender 4.2.23 release gate is pending; automated gates have passed.
+snapshots. Its automated and Blender 4.2.23 release gates have passed; see
+[the 0.11 validation record](validation/2026-08-30-semantic-mesh-editing.md).
 Version 0.10.2 retains the 0.10.0 exact ordered Modifier-stack surface, the 0.10.1
 linked-data guard repair, and compares numeric transaction evidence at Blender's
 actual float32 RNA storage precision.

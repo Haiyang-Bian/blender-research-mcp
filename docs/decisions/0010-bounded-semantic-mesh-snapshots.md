@@ -1,6 +1,6 @@
 # 0010 — bounded semantic base-Mesh snapshots and editing
 
-- Status: accepted and automated-gate validated in 0.11.0; live gate pending
+- Status: accepted and automated/live-gate validated in 0.11.0
 - Date: 2026-08-30
 
 ## Context
@@ -67,3 +67,8 @@ requires `mesh_topology: 1` and transaction version 4. Modifier Apply, UV editin
 arbitrary component arrays/operators, Shape-Key topology, generic RNA, and arbitrary
 Python remain unavailable.
 
+The Blender 4.2.23 gate also established that restore must rebuild exact Mesh arrays
+and protected attribute values rather than round-tripping the saved Mesh through
+BMesh. Full fingerprints are session evidence because material slots contain session
+identities; after project reload, callers must re-inspect rather than compare or reuse
+the old fingerprint.
