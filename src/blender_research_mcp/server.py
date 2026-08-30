@@ -56,6 +56,12 @@ from blender_research_mcp.lifecycle import (
     DEFAULT_LAUNCH_TIMEOUT_SECONDS,
     ApplicationManager,
 )
+from blender_research_mcp.mesh_authoring import (
+    MeshComponent,
+    MeshDataScope,
+    MeshOperation,
+    MeshUserObject,
+)
 from blender_research_mcp.modifier_authoring import (
     ModifierDefinition,
     ModifierSettings,
@@ -407,6 +413,33 @@ def create_server(
         return await client.call(
             "object.geometry.inspect",
             {"object_name": object_name},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.inspect",
+        description=(
+            "Inspect one exact base Mesh data-block with guarded topology/state "
+            "fingerprints and one bounded page of vertices, edges, or faces."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_inspect(
+        object_name: ObjectName,
+        component: MeshComponent = "summary",
+        offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=512)] = 256,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_topology")
+        return await client.call(
+            "mesh.inspect",
+            {
+                "object_name": object_name,
+                "component": component,
+                "offset": offset,
+                "limit": limit,
+            },
             read_only=True,
         )
 
@@ -1056,6 +1089,63 @@ def create_server(
                 "expected_modifier_type": expected_modifier_type,
                 "expected_stack_index": expected_stack_index,
                 "expected_stack_fingerprint": expected_stack_fingerprint,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="mesh.edit",
+        description=(
+            "Apply one bounded semantic edit to exact base-Mesh components inside the "
+            "active transaction, with explicit object-only or shared-data scope."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def mesh_edit(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_mesh_identity: SessionIdentity,
+        expected_mesh_users: DataUsers,
+        expected_mesh_user_objects: Annotated[
+            tuple[MeshUserObject, ...], Field(min_length=1, max_length=256)
+        ],
+        expected_mesh_fingerprint: Annotated[str, Field(min_length=64, max_length=64)],
+        data_scope: MeshDataScope,
+        operation: MeshOperation,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_topology")
+        client.require_capability("transactions", 4)
+        if len(
+            {
+                (item.object_name, item.expected_object_identity)
+                for item in expected_mesh_user_objects
+            }
+        ) != len(expected_mesh_user_objects):
+            raise ValueError("expected_mesh_user_objects must be unique")
+        if expected_mesh_users != len(expected_mesh_user_objects):
+            raise ValueError(
+                "expected_mesh_users must equal the number of expected_mesh_user_objects"
+            )
+        return await client.call(
+            "mesh.edit",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "expected_mesh_identity": expected_mesh_identity,
+                "expected_mesh_users": expected_mesh_users,
+                "expected_mesh_user_objects": [
+                    item.model_dump() for item in expected_mesh_user_objects
+                ],
+                "expected_mesh_fingerprint": expected_mesh_fingerprint,
+                "data_scope": data_scope,
+                "operation": operation.model_dump(exclude_none=True),
             },
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,

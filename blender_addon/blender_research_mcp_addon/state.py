@@ -64,6 +64,15 @@ from .material_authoring_ops import (
     load_image,
     material_result,
 )
+from .mesh_ops import (
+    MeshOperationError,
+    edit_mesh,
+    finalize_mesh_snapshots,
+    inspect_mesh,
+    restore_mesh_snapshots,
+    touch_mesh_for_test,
+    validate_mesh_snapshot_guards,
+)
 from .modifier_ops import (
     clear_modifier_pending_deletes,
     create_modifier,
@@ -100,6 +109,7 @@ from .structural_ops import (
 from .transaction_model import (
     IdempotencyCache,
     MaterialInputDelta,
+    MeshEditDelta,
     ModifierCreateDelta,
     ModifierDeleteDelta,
     ModifierMoveDelta,
@@ -125,6 +135,7 @@ CAPABILITIES = [
     "object.inspect",
     "scene.inspect",
     "object.geometry.inspect",
+    "mesh.inspect",
     "object.lookdev.inspect",
     "modifier.inspect",
     "material.inspect",
@@ -145,6 +156,7 @@ CAPABILITIES = [
     "modifier.set",
     "modifier.move",
     "modifier.delete",
+    "mesh.edit",
     "shape_key.set_value",
     "material.set_input",
     "material.create",
@@ -169,7 +181,7 @@ CAPABILITY_VERSIONS = {
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 3,
+    "transactions": 4,
     "object_transform_scale": 1,
     "object_transform": 1,
     "object_settings": 1,
@@ -183,6 +195,7 @@ CAPABILITY_VERSIONS = {
     "object_visibility": 1,
     "modifier_state": 1,
     "modifier_authoring": 1,
+    "mesh_topology": 1,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -203,6 +216,7 @@ MUTATION_COMMANDS = {
     "modifier.set",
     "modifier.move",
     "modifier.delete",
+    "mesh.edit",
     "shape_key.set_value",
     "material.set_input",
     "material.create",
@@ -387,6 +401,15 @@ class AddonState:
                 details=exc.details,
             )
         except AuthoringOperationError as exc:
+            self.last_error = f"{exc.code}: {exc}"
+            return self._error(
+                request_id,
+                exc.kind,
+                exc.code,
+                str(exc),
+                details=exc.details,
+            )
+        except MeshOperationError as exc:
             self.last_error = f"{exc.code}: {exc}"
             return self._error(
                 request_id,
@@ -585,6 +608,15 @@ class AddonState:
                 )
             with self.suppress_generation():
                 return touch_modifier_for_test(params)
+        if command == "_test.mesh.touch":
+            if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":
+                raise ContextOperationError(
+                    "COMMAND_NOT_FOUND",
+                    f"Unsupported command: {command}",
+                    kind="not_found",
+                )
+            with self.suppress_generation():
+                return touch_mesh_for_test(params)
         if command == "context.get":
             with self.suppress_generation():
                 return context_summary()
@@ -678,6 +710,26 @@ class AddonState:
                 )
             with self.suppress_generation():
                 return inspect_geometry(object_name)
+        if command == "mesh.inspect":
+            object_name = params.get("object_name")
+            component = params.get("component", "summary")
+            offset = params.get("offset", 0)
+            limit = params.get("limit", 256)
+            if not isinstance(object_name, str) or not object_name:
+                raise MeshOperationError(
+                    "OBJECT_NAME_INVALID",
+                    "object_name must be a non-empty string",
+                )
+            if not isinstance(component, str):
+                raise MeshOperationError("MESH_COMPONENT_INVALID", "component must be a string")
+            if isinstance(offset, bool) or not isinstance(offset, int):
+                raise MeshOperationError("MESH_PAGINATION_INVALID", "offset must be an integer")
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise MeshOperationError("MESH_PAGINATION_INVALID", "limit must be an integer")
+            with self.suppress_generation():
+                result = inspect_mesh(object_name, component, offset, limit)
+            result["scene_generation"] = self.scene_generation
+            return result
         if command == "object.lookdev.inspect":
             object_name = params.get("object_name")
             if not isinstance(object_name, str) or not object_name:
@@ -908,6 +960,25 @@ class AddonState:
                 "delta_count": len(transaction.deltas),
                 "delta_kinds": transaction.delta_kinds(),
             }
+        if command == "mesh.edit":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            with self.suppress_generation():
+                result = edit_mesh(transaction, params)
+                bpy.context.view_layer.update()
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
         if command == "object.visibility.set":
             transaction = self._require_transaction(params, request)
             return self._set_object_visibility(transaction, params)
@@ -1046,6 +1117,7 @@ class AddonState:
                     item = finalize_modifier_delta(delta)
                     if item is not None:
                         finalized.append(item)
+                finalized.extend(finalize_mesh_snapshots(transaction))
                 for delta in transaction.structural_deltas():
                     item = finalize_structural_delta(delta)
                     if item is not None:
@@ -1084,6 +1156,11 @@ class AddonState:
         result = self._transaction_result(transaction)
         finalized: list[dict[str, Any]] = []
         with self.suppress_generation():
+            for delta in transaction.deltas:
+                item = finalize_modifier_delta(delta)
+                if item is not None:
+                    finalized.append(item)
+            finalized.extend(finalize_mesh_snapshots(transaction))
             for delta in transaction.structural_deltas():
                 item = finalize_structural_delta(delta)
                 if item is not None:
@@ -1385,6 +1462,7 @@ class AddonState:
                     },
                 )
         validate_modifier_stack_guards(transaction)
+        validate_mesh_snapshot_guards(transaction)
         validate_structural_transaction(transaction)
 
     def _set_object_settings(
@@ -1978,8 +2056,11 @@ class AddonState:
                     restored.append(restore_modifier_delta(delta))
             bpy.context.view_layer.update()
             validate_restored_modifier_stacks(transaction)
+            restored.extend(restore_mesh_snapshots(transaction))
             for delta in reversed(transaction.deltas):
                 if isinstance(delta, modifier_delta_types):
+                    continue
+                if isinstance(delta, MeshEditDelta):
                     continue
                 if isinstance(delta, StructuralDelta):
                     restored.append(restore_structural_delta(delta))

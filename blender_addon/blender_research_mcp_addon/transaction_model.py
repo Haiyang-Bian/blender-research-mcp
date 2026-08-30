@@ -161,6 +161,40 @@ class ModifierStackGuard:
 
 
 @dataclass
+class MeshSnapshotGuard:
+    """Baseline snapshot and latest expected state for one edited Mesh data-block."""
+
+    object_name: str
+    object_identity: str
+    mesh_name: str
+    mesh_identity: str
+    baseline_fingerprint: str
+    expected_fingerprint: str
+    expected_users: int
+    expected_user_objects: tuple[tuple[str, str], ...]
+    data_scope: str
+    snapshot: Any | None = None
+    source_mesh: Any | None = None
+    source_mesh_name: str | None = None
+    source_mesh_identity: str | None = None
+    source_fingerprint: str | None = None
+    source_expected_users: int | None = None
+    source_expected_user_objects: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass
+class MeshEditDelta:
+    object_name: str
+    object_identity: str
+    mesh_name: str
+    mesh_identity: str
+    operation: str
+    before_fingerprint: str
+    after_fingerprint: str
+    data_scope: str
+
+
+@dataclass
 class StructuralDelta:
     """A reversible structural change interpreted by the Blender-side authoring layer.
 
@@ -188,6 +222,7 @@ TransactionDelta = (
     | ShapeKeyDelta
     | MaterialInputDelta
     | ObjectDataDelta
+    | MeshEditDelta
     | StructuralDelta
 )
 
@@ -328,7 +363,13 @@ def delta_properties(
         ]
     if isinstance(
         delta,
-        (ModifierSettingsDelta, ModifierCreateDelta, ModifierMoveDelta, ModifierDeleteDelta),
+        (
+            ModifierSettingsDelta,
+            ModifierCreateDelta,
+            ModifierMoveDelta,
+            ModifierDeleteDelta,
+            MeshEditDelta,
+        ),
     ):
         return []
     if isinstance(delta, StructuralDelta):
@@ -364,9 +405,8 @@ class Transaction:
     started_generation: int
     status: str = "active"
     deltas: list[TransactionDelta] = field(default_factory=list)
-    modifier_stack_guards: dict[tuple[str, str], ModifierStackGuard] = field(
-        default_factory=dict
-    )
+    modifier_stack_guards: dict[tuple[str, str], ModifierStackGuard] = field(default_factory=dict)
+    mesh_snapshot_guards: dict[tuple[str, str], MeshSnapshotGuard] = field(default_factory=dict)
 
     def ensure_capacity(self, additional: int = 1) -> None:
         if isinstance(additional, bool) or additional < 0:
@@ -451,6 +491,21 @@ class Transaction:
             )
         guard.expected_fingerprint = fingerprint
 
+    def mesh_snapshot_guard(self, mesh_name: str, mesh_identity: str) -> MeshSnapshotGuard | None:
+        return self.mesh_snapshot_guards.get((mesh_name, mesh_identity))
+
+    def add_mesh_snapshot_guard(self, guard: MeshSnapshotGuard) -> None:
+        key = (guard.mesh_name, guard.mesh_identity)
+        if key in self.mesh_snapshot_guards:
+            raise TransactionModelError(
+                "MESH_SNAPSHOT_ACTIVE",
+                f"A Mesh snapshot already exists for {guard.mesh_name}",
+            )
+        self.mesh_snapshot_guards[key] = guard
+
+    def remove_mesh_snapshot_guard(self, guard: MeshSnapshotGuard) -> None:
+        self.mesh_snapshot_guards.pop((guard.mesh_name, guard.mesh_identity), None)
+
     def expected_properties(self) -> dict[PropertyRef, PropertyValue]:
         expected: dict[PropertyRef, PropertyValue] = {}
         for delta in self.deltas:
@@ -460,9 +515,7 @@ class Transaction:
 
     def delta_kinds(self) -> list[str]:
         kinds = {
-            reference.kind
-            for delta in self.deltas
-            for reference, _, _ in delta_properties(delta)
+            reference.kind for delta in self.deltas for reference, _, _ in delta_properties(delta)
         }
         kinds.update(delta.kind for delta in self.structural_deltas())
         for delta in self.deltas:
@@ -474,6 +527,8 @@ class Transaction:
                 kinds.add("modifier_move")
             elif isinstance(delta, ModifierDeleteDelta):
                 kinds.add("modifier_delete")
+            elif isinstance(delta, MeshEditDelta):
+                kinds.add("mesh_edit")
         return sorted(kinds)
 
 

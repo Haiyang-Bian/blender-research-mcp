@@ -345,3 +345,40 @@ def test_modifier_stack_guard_keeps_baseline_and_refreshes_latest_expected_state
     assert guard.expected_fingerprint == "after-agent-write"
     assert transaction.expected_properties() == {}
     assert transaction.delta_kinds() == ["modifier_settings"]
+
+
+def test_mesh_snapshot_guard_and_edit_delta_are_transaction_local() -> None:
+    model = load_transaction_model()
+    transaction = model.Transaction("tx-mesh", None, {}, "context", 0)
+    guard = model.MeshSnapshotGuard(
+        object_name="Hull",
+        object_identity="object:hull",
+        mesh_name="Hull Mesh",
+        mesh_identity="mesh:hull",
+        baseline_fingerprint="a" * 64,
+        expected_fingerprint="a" * 64,
+        expected_users=1,
+        expected_user_objects=(("Hull", "object:hull"),),
+        data_scope="OBJECT",
+    )
+
+    transaction.add_mesh_snapshot_guard(guard)
+    guard.expected_fingerprint = "b" * 64
+    transaction.record(
+        model.MeshEditDelta(
+            object_name="Hull",
+            object_identity="object:hull",
+            mesh_name="Hull Mesh",
+            mesh_identity="mesh:hull",
+            operation="extrude_faces",
+            before_fingerprint="a" * 64,
+            after_fingerprint="b" * 64,
+            data_scope="OBJECT",
+        )
+    )
+
+    assert transaction.mesh_snapshot_guard("Hull Mesh", "mesh:hull") is guard
+    assert transaction.expected_properties() == {}
+    assert transaction.delta_kinds() == ["mesh_edit"]
+    transaction.remove_mesh_snapshot_guard(guard)
+    assert transaction.mesh_snapshot_guards == {}

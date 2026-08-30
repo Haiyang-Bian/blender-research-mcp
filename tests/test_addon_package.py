@@ -98,8 +98,10 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
         "scene.inspect",
         "object.create",
         "object.duplicate",
-        "object.delete",
-        "object.set",
+            "object.delete",
+            "object.set",
+            "mesh.inspect",
+            "mesh.edit",
         "material.create",
         "material.assign",
         "image.load",
@@ -112,11 +114,12 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
     ):
         assert command in state
     for capability in (
-        '"transactions": 3',
+        '"transactions": 4',
         '"scene_inspection": 1',
         '"object_authoring": 1',
         '"object_settings": 1',
         '"modifier_authoring": 1',
+        '"mesh_topology": 1',
         '"material_authoring": 1',
         '"image_assets": 1',
         '"world_authoring": 1',
