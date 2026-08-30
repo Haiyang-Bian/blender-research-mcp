@@ -60,4 +60,4 @@ the new domain requires `modifier_authoring: 1`.
 
 The bridge still cannot apply Modifiers, edit mesh components, unwrap/transform UVs,
 expose arbitrary RNA, or run arbitrary Python. Version 0.11 must design semantic Mesh
-topology snapshots before destructive component editing; UV authority remains 0.12.
+topology snapshots before destructive component editing; UV authority now follows in 0.14.

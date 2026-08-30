@@ -13,8 +13,9 @@ bounded LookDev writes, managed application/project lifecycle, and bounded seman
 static-scene authoring, plus the unified typed object-settings boundary.
 The current set also records bounded typed Modifier-stack authoring separately from
 transaction-v4 semantic base-Mesh snapshots and component editing, followed by
-transaction-v5 collaborative UI and native-save authority. UV authority remains a
-later decision.
+transaction-v5 collaborative UI and native-save authority. Decision 0012 defines
+revision-bound SelectionSets, evaluated SurfaceRefs, and transaction-v6 resource
+lifecycle. Exact topology maps and UV authority remain later decisions.
 
 Each record should include context, decision, alternatives, consequences, and
 status. Do not use decision records for routine implementation details.

@@ -48,6 +48,10 @@ def test_client_handshake_ping_and_read_only_reconnect(tmp_path) -> None:
                         "modifier_state": 1,
                         "shape_key_value": 1,
                         "material_input": 1,
+                        "mesh_selection": 1,
+                        "mesh_surface_query": 1,
+                        "mesh_deformation": 1,
+                        "mesh_validation": 1,
                     },
                 },
             }

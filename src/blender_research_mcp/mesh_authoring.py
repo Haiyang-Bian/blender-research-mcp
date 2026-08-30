@@ -7,6 +7,15 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
 from blender_research_mcp.authoring import FiniteNumber, Vector3
+from blender_research_mcp.mesh_resources import (
+    FlattenOperation,
+    InflateOperation,
+    ProjectOperation,
+    RelaxOperation,
+    SetPositionsOperation,
+    ShrinkwrapOperation,
+    SmoothOperation,
+)
 
 MeshComponent = Literal["summary", "vertices", "edges", "faces"]
 MeshDataScope = Literal["OBJECT", "SHARED_DATA"]
@@ -231,6 +240,13 @@ MeshOperation = Annotated[
     | DissolveOperation
     | MergeVerticesOperation
     | FaceSettingsOperation
-    | NormalsOperation,
+    | NormalsOperation
+    | SetPositionsOperation
+    | SmoothOperation
+    | RelaxOperation
+    | ProjectOperation
+    | ShrinkwrapOperation
+    | InflateOperation
+    | FlattenOperation,
     Field(discriminator="type"),
 ]

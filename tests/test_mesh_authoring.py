@@ -60,6 +60,27 @@ def test_transform_requires_unique_exact_components_and_a_patch() -> None:
         {"type": "face_settings", "face_indices": [0], "smooth": True},
         {"type": "normals", "mode": "FLIP", "face_indices": [0]},
         {"type": "normals", "mode": "RECALCULATE_OUTSIDE"},
+        {
+            "type": "set_positions",
+            "selection_id": "selection",
+            "positions": [{"x": 0, "y": 0, "z": 1}],
+        },
+        {"type": "smooth", "selection_id": "selection"},
+        {"type": "relax", "selection_id": "selection"},
+        {
+            "type": "project",
+            "selection_id": "selection",
+            "surface_id": "surface",
+            "maximum_distance": 10,
+        },
+        {
+            "type": "shrinkwrap",
+            "selection_id": "selection",
+            "surface_id": "surface",
+            "maximum_distance": 10,
+        },
+        {"type": "inflate", "selection_id": "selection", "amount": 0.1},
+        {"type": "flatten", "selection_id": "selection"},
     ],
 )
 def test_all_semantic_mesh_operations_are_closed_and_typed(payload: dict[str, object]) -> None:

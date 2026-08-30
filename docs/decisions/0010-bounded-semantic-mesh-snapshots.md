@@ -49,7 +49,7 @@ for verified local restoration if writeback fails.
   sharing, Modifier references, and downstream evidence even for single-user data.
 - **Treat indices as persistent identities.** Rejected because topology mutation makes
   that claim false. Fingerprint-coupled ephemeral indices are explicit and testable.
-- **Include UV editing.** Deferred to 0.12 so the new topology snapshot layer can be
+- **Include UV editing.** Deferred to 0.14 so topology revision and ComponentMap can be
   independently proven before adding unwrap/island/transform authority.
 - **Model visual water waves as geometry.** Rejected as a general rule: surface detail
   belongs in the material unless the user explicitly needs geometric silhouette or

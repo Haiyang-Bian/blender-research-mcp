@@ -34,6 +34,9 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 0.11.1 将事务升级为协作语义 v5：用户可在 Agent 工作期间自由导航视图、切换
 Shading/Overlay、选择和活动对象；Blender 原生保存则作为用户接受眼前状态的最终
 意图屏障，停止后续写入和回退。
+0.12.0 新增 revision-bound SelectionSet、基础/求值 SurfaceRef、定量几何验证，
+以及七种保持拓扑不变的选择区域变形；事务升级到 v6，并继续保留用户 UI 与原生
+保存优先语义；自动化与 Blender 4.2.23 发布验收均已通过。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -53,7 +56,9 @@ float32 guard 与独立月光水面实作见
 Mesh 编辑见
 [0.11.0 验收记录](docs/validation/2026-08-30-semantic-mesh-editing.md)。
 0.11.1 协作上下文与用户保存优先见
-[0.11.1 验收记录](docs/validation/2026-08-30-collaborative-ui-native-save.md)。
+[0.11.1 验收记录](docs/validation/2026-08-30-collaborative-ui-native-save.md)，0.12
+SelectionSet 与求值曲面拟合见
+[0.12.0 验收记录](docs/validation/2026-08-31-selection-surface-fitting.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -163,6 +168,20 @@ Blender 原生 Ctrl+S、Save As 和 Save Copy 在 `save_pre` 阶段接管活动�
 继续遵循既有先提交再写盘流程。架构依据见
 [decision 0011](docs/decisions/0011-collaborative-ui-and-native-save-authority.md)。
 
+## 0.12.0 SelectionSet 与求值曲面拟合
+
+`mesh.inspect` 现在返回由 Blender instance、Mesh identity、完整内容指纹和精确
+用户集派生的 `mesh_revision_id`。`mesh.selection.query/derive/inspect/release`
+在 add-on 会话内维护有界、不可变的 SelectionSet，不改变 Blender 的真实选择；
+局部/世界空间、拓扑、材质、法线、测量和 capture-bound 屏幕查询都绑定该 revision。
+
+`mesh.surface.prepare/query` 可将基础或求值几何固定为带 Scene、View Layer、帧、
+对象变换和三角指纹的 SurfaceRef，并提供最近点、射线与距离统计。`mesh.validate`
+返回非流形、退化、朝向、相交、距离和穿透证据。`mesh.edit` 新增 set positions、
+smooth、relax、project、shrinkwrap、inflate 和 flatten；它们引用 SelectionSet，保持
+拓扑不变，并在成功后返回新 revision 及自动重绑定集合。详细契约见
+[0.12.0 路线图](docs/roadmap/0.12.0-selection-surface-fitting.md)。
+
 ## 目录
 
 ~~~text
@@ -193,7 +212,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.11.1
+uv run --no-sync python scripts/build_addon.py --version 0.12.0
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认

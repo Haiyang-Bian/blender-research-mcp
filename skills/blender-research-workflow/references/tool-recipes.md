@@ -310,6 +310,45 @@ smooth, and supported generic layers are snapshot-protected, but only face mater
 and smooth are writable in 0.11. On a write or disconnect recovery, verify both the
 Mesh fingerprint and object-to-data relationships before continuing.
 
+## Revision-bound selection and evaluated-surface fitting
+
+Use this recipe with `mesh_selection: 1`, `mesh_surface_query: 1`,
+`mesh_deformation: 1`, `mesh_validation: 1`, and `transactions >= 6`:
+
+1. Inspect the base Mesh summary and retain its `mesh_revision_id`. Create a
+   SelectionSet with an explicit/domain/spatial/material/normal/measure/topology query,
+   or with a screen query bound to one exact capture matrix. `VISIBLE_ONLY` checks
+   capture-space occlusion; `THROUGH` does not. Neither changes Blender UI selection.
+2. Derive unions, intersections, differences, expansion/contraction, boundaries,
+   connectivity, domain conversions, or weighted geodesic falloff rather than shipping
+   large index arrays. Inspect pages for evidence and explicitly release no-longer-used
+   sets when resource pressure matters.
+3. Prepare `EVALUATED` when Shape Keys, Armature, or Modifiers define the destination;
+   use `BASE` only when the underlying Mesh itself is the intended surface. A SurfaceRef
+   is pinned to Scene, View Layer, frame, object identity/transform, base revision, and
+   evaluated triangle fingerprint. Re-prepare on any stale error.
+4. Record a baseline with `mesh.surface.query`. Closest-point queries are independent
+   of a viewport; directional ray queries use a world vector. Treat signed values as
+   trustworthy only when the target reports closed manifold and consistent orientation.
+5. Begin or continue a transaction using the latest exact Mesh guards. Use
+   `set_positions` for at most 4096 explicit coordinates; use smooth/relax/project/
+   shrinkwrap/inflate/flatten for larger semantic regions. Project supports closest,
+   source-normal, axis, vector, and capture-view rays with explicit miss behavior.
+6. After a changed call, discard the old working revision and carry
+   `rebound_selection`. If the destination surface itself changed, prepare it again.
+   Verify distance percentiles, misses, penetration reliability, topology counts, and
+   non-manifold/degenerate/intersection sets before commit.
+7. Rollback restores the transaction baseline and resource validity follows the actual
+   restored fingerprint. Disconnect uses the same path. Native Blender save adopts the
+   current after-revision, so stop further writes/rollback on the accepted-save error.
+
+Resource-not-found means the ID never existed or was released; expired means LRU
+eviction; stale means Blender evidence changed. Rebuild from current inspection rather
+than guessing the prior indices. SelectionSets may contain 500,000 components, but
+`set_positions` remains capped at 4096 coordinates and the transport stays below 1 MiB.
+0.12 deformations preserve topology and protected UV/color/generic data. They do not
+write Shape Keys, UVs, weights, arbitrary arrays, arbitrary BMesh, or Modifier results.
+
 ## Collaborative UI and native-save barrier
 
 Use this transaction-v5 recipe whenever the user watches or manipulates Blender while
