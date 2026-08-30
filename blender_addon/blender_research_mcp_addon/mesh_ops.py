@@ -166,6 +166,19 @@ def mesh_fingerprint(mesh: Any) -> str:
     return hasher.hexdigest()
 
 
+def mesh_revision_id(mesh: Any) -> str:
+    """Return session-scoped content evidence for one exact Mesh revision."""
+
+    hasher = hashlib.sha256()
+    _hash_text(hasher, session_identity("mesh", mesh))
+    _hash_text(hasher, mesh_fingerprint(mesh))
+    _hash_text(hasher, int(mesh.users))
+    for object_name, object_identity in mesh_user_refs(mesh):
+        _hash_text(hasher, object_name)
+        _hash_text(hasher, object_identity)
+    return hasher.hexdigest()
+
+
 def unsupported_attributes(mesh: Any) -> tuple[str, ...]:
     return tuple(
         f"{attribute.name}:{attribute.data_type}"
@@ -329,6 +342,7 @@ def inspect_mesh(
         "budget": _budget_details(mesh),
         "topology_fingerprint": topology_fingerprint(mesh),
         "mesh_fingerprint": mesh_fingerprint(mesh),
+        "mesh_revision_id": mesh_revision_id(mesh),
         "component": component,
         "writable": not _writable_reasons(obj, mesh),
         "write_blockers": _writable_reasons(obj, mesh),
@@ -666,6 +680,25 @@ def _copy_mesh_snapshot(mesh: Any, snapshot: Any) -> None:
         )
     }
     materials = tuple(snapshot.materials)
+
+    if topology_fingerprint(mesh) == topology_fingerprint(snapshot):
+        if vertices["co"]:
+            mesh.vertices.foreach_set("co", vertices["co"])
+        mesh.materials.clear()
+        for material in materials:
+            mesh.materials.append(material)
+        # Same-topology edits never have authority to mutate protected custom data.
+        # Keeping the live layers avoids lossy remove/recreate cycles for UV and color
+        # storage while their values remain covered by the fingerprint guard.
+        mesh.update()
+        for prop in ("select", "hide"):
+            mesh.vertices.foreach_set(prop, vertices[prop])
+            mesh.edges.foreach_set(prop, edges[prop])
+            mesh.polygons.foreach_set(prop, polygons[prop])
+        mesh.edges.foreach_set("use_edge_sharp", edges["use_edge_sharp"])
+        for prop in ("material_index", "use_smooth"):
+            mesh.polygons.foreach_set(prop, polygons[prop])
+        return
 
     _remove_protected_attributes(mesh)
     mesh.clear_geometry()
