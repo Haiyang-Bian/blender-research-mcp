@@ -29,6 +29,7 @@ SUPPORTED_ATTRIBUTE_TYPES = {
     "FLOAT_COLOR",
     "BYTE_COLOR",
     "FLOAT2",
+    "INT32_2D",
 }
 _ATTRIBUTE_LAYOUTS = {
     "FLOAT": ("value", "f", 1),
@@ -38,6 +39,13 @@ _ATTRIBUTE_LAYOUTS = {
     "FLOAT_COLOR": ("color", "f", 4),
     "BYTE_COLOR": ("color", "f", 4),
     "FLOAT2": ("vector", "f", 2),
+    "INT32_2D": ("value", "i", 2),
+}
+_BUILTIN_ATTRIBUTE_NAMES = {
+    "position",
+    "material_index",
+    "sharp_edge",
+    "sharp_face",
 }
 
 
@@ -87,7 +95,16 @@ def topology_fingerprint(mesh: Any) -> str:
             len(mesh.loops),
         )
     )
-    _hash_foreach(hasher, mesh.edges, "vertices", "i", 2)
+    edge_vertices = array("i", [0]) * (len(mesh.edges) * 2)
+    if edge_vertices:
+        mesh.edges.foreach_get("vertices", edge_vertices)
+        for index in range(0, len(edge_vertices), 2):
+            first = edge_vertices[index]
+            second = edge_vertices[index + 1]
+            if first > second:
+                edge_vertices[index] = second
+                edge_vertices[index + 1] = first
+        hasher.update(edge_vertices.tobytes())
     _hash_foreach(hasher, mesh.loops, "vertex_index", "i", 1)
     _hash_foreach(hasher, mesh.loops, "edge_index", "i", 1)
     _hash_foreach(hasher, mesh.polygons, "loop_start", "i", 1)
@@ -95,9 +112,14 @@ def topology_fingerprint(mesh: Any) -> str:
     return hasher.hexdigest()
 
 
+def _is_protected_attribute(attribute: Any) -> bool:
+    return not attribute.name.startswith(".") and attribute.name not in _BUILTIN_ATTRIBUTE_NAMES
+
+
 def _hash_attributes(hasher: Any, mesh: Any) -> tuple[str, ...]:
     unsupported: list[str] = []
-    for attribute in sorted(mesh.attributes, key=lambda item: item.name):
+    attributes = (attribute for attribute in mesh.attributes if _is_protected_attribute(attribute))
+    for attribute in sorted(attributes, key=lambda item: item.name):
         data_type = str(attribute.data_type)
         _hash_text(hasher, attribute.name)
         _hash_text(hasher, attribute.domain)
@@ -142,7 +164,8 @@ def unsupported_attributes(mesh: Any) -> tuple[str, ...]:
     return tuple(
         f"{attribute.name}:{attribute.data_type}"
         for attribute in mesh.attributes
-        if str(attribute.data_type) not in SUPPORTED_ATTRIBUTE_TYPES
+        if _is_protected_attribute(attribute)
+        and str(attribute.data_type) not in SUPPORTED_ATTRIBUTE_TYPES
     )
 
 
@@ -248,7 +271,9 @@ def inspect_mesh(
             "domain": str(attribute.domain),
             "data_type": str(attribute.data_type),
             "length": len(attribute.data),
-            "supported": str(attribute.data_type) in SUPPORTED_ATTRIBUTE_TYPES,
+            "protected": _is_protected_attribute(attribute),
+            "supported": not _is_protected_attribute(attribute)
+            or str(attribute.data_type) in SUPPORTED_ATTRIBUTE_TYPES,
         }
         for attribute in mesh.attributes
     ]
@@ -336,11 +361,15 @@ def inspect_mesh(
                 }
             )
         else:
+            edge_indices = [
+                int(mesh.loops[loop_index].edge_index)
+                for loop_index in range(item.loop_start, item.loop_start + item.loop_total)
+            ]
             items.append(
                 {
                     "index": index,
                     "vertices": list(item.vertices),
-                    "edges": list(item.edge_keys),
+                    "edges": edge_indices,
                     "center": list(item.center),
                     "normal": list(item.normal),
                     "area": float(item.area),
@@ -690,6 +719,72 @@ def _elements(sequence: Any, indices: list[int], field: str) -> list[Any]:
     return [sequence[index] for index in indices]
 
 
+def _bmesh_baseline(bm: Any) -> dict[str, list[Any]]:
+    bm.verts.ensure_lookup_table()
+    bm.edges.ensure_lookup_table()
+    bm.faces.ensure_lookup_table()
+    return {
+        "vertices": list(bm.verts),
+        "edges": list(bm.edges),
+        "faces": list(bm.faces),
+    }
+
+
+def _index_page(indices: list[int]) -> dict[str, Any]:
+    ordered = sorted(indices)
+    return {
+        "indices": ordered[:MAX_COMPONENT_TARGETS],
+        "count": len(ordered),
+        "truncated": len(ordered) > MAX_COMPONENT_TARGETS,
+    }
+
+
+def _component_changes(bm: Any, baseline: dict[str, list[Any]]) -> dict[str, Any]:
+    bm.verts.index_update()
+    bm.edges.index_update()
+    bm.faces.index_update()
+    current = {
+        "vertices": list(bm.verts),
+        "edges": list(bm.edges),
+        "faces": list(bm.faces),
+    }
+    created = {}
+    deleted = {}
+    for kind in ("vertices", "edges", "faces"):
+        before_items = baseline[kind]
+        before_set = set(before_items)
+        created[kind] = _index_page(
+            [int(item.index) for item in current[kind] if item not in before_set]
+        )
+        deleted[kind] = _index_page(
+            [index for index, item in enumerate(before_items) if not item.is_valid]
+        )
+    return {"created": created, "deleted": deleted}
+
+
+def _requested_components(
+    operation: dict[str, Any], baseline: dict[str, list[Any]]
+) -> dict[str, Any]:
+    operation_type = operation["type"]
+    if operation_type in {"transform", "delete", "dissolve"}:
+        target = operation["target"]
+        return {str(target["type"]): _index_page(list(target["indices"]))}
+    if operation_type in {"extrude_faces", "inset_faces", "face_settings"}:
+        return {"faces": _index_page(list(operation["face_indices"]))}
+    if operation_type == "bevel_edges":
+        return {"edges": _index_page(list(operation["edge_indices"]))}
+    if operation_type == "merge_vertices":
+        return {"vertices": _index_page(list(operation["vertex_indices"]))}
+    if operation_type == "normals" and operation["mode"] == "FLIP":
+        return {"faces": _index_page(list(operation["face_indices"]))}
+    if operation_type == "normals":
+        return {
+            "faces": _index_page(list(range(len(baseline["faces"])))),
+            "all": True,
+        }
+    return {}
+
+
 def _target_geometry(bm: Any, target: dict[str, Any]) -> tuple[list[Any], list[Any]]:
     target_type = target.get("type")
     indices = _indices(target.get("indices"), "target.indices")
@@ -942,6 +1037,34 @@ _OPERATION_HANDLERS = {
 }
 
 
+def _remove_temporary_mesh(mesh: Any) -> None:
+    if mesh is not None and bpy.data.meshes.get(mesh.name) is mesh and int(mesh.users) == 0:
+        bpy.data.meshes.remove(mesh)
+
+
+def _restore_failed_edit(
+    mesh: Any,
+    call_snapshot: Any,
+    before_fingerprint: str,
+    failure: Exception,
+) -> None:
+    try:
+        if mesh_fingerprint(mesh) != before_fingerprint:
+            _restore_mesh_geometry(mesh, call_snapshot, before_fingerprint)
+    except Exception as restore_error:
+        raise MeshOperationError(
+            "MESH_EDIT_RESTORE_FAILED",
+            f"Mesh edit failed and the call state could not be restored: {mesh.name}",
+            kind="blender_api",
+            details={
+                "failure_type": type(failure).__name__,
+                "failure": str(failure),
+                "restore_type": type(restore_error).__name__,
+                "restore": str(restore_error),
+            },
+        ) from restore_error
+
+
 def edit_mesh(transaction: Transaction, params: dict[str, Any]) -> dict[str, Any]:
     obj, initial_mesh, data_scope, _refs = _validate_mesh_target(params)
     operation = params.get("operation")
@@ -974,20 +1097,20 @@ def edit_mesh(transaction: Transaction, params: dict[str, Any]) -> dict[str, Any
     before_fingerprint = mesh_fingerprint(mesh)
     before_topology = topology_fingerprint(mesh)
     before_counts = mesh_counts(mesh)
+    call_snapshot = mesh.copy()
+    call_snapshot.name = f"{mesh.name}.MCP-Call-Snapshot"
     bm = bmesh.new()
     try:
         bm.from_mesh(mesh)
-        bm.verts.ensure_lookup_table()
-        bm.edges.ensure_lookup_table()
-        bm.faces.ensure_lookup_table()
+        component_baseline = _bmesh_baseline(bm)
+        requested = _requested_components(operation, component_baseline)
         if operation_type == "face_settings":
             evidence = _operation_face_settings(bm, operation, len(mesh.materials))
         else:
             evidence = _OPERATION_HANDLERS[operation_type](bm, operation)
         bm.normal_update()
-        bm.verts.index_update()
-        bm.edges.index_update()
-        bm.faces.index_update()
+        components = _component_changes(bm, component_baseline)
+        components["affected"] = requested
         if (
             len(bm.verts) > MAX_VERTICES
             or len(bm.edges) > MAX_EDGES
@@ -1000,11 +1123,13 @@ def edit_mesh(transaction: Transaction, params: dict[str, Any]) -> dict[str, Any
             )
         bm.to_mesh(mesh)
         mesh.update(calc_edges=True, calc_edges_loose=True)
-    except MeshOperationError:
+    except MeshOperationError as exc:
+        _restore_failed_edit(mesh, call_snapshot, before_fingerprint, exc)
         if new_guard:
             _remove_new_guard(transaction, guard)
         raise
     except Exception as exc:
+        _restore_failed_edit(mesh, call_snapshot, before_fingerprint, exc)
         if new_guard:
             _remove_new_guard(transaction, guard)
         raise MeshOperationError(
@@ -1015,6 +1140,7 @@ def edit_mesh(transaction: Transaction, params: dict[str, Any]) -> dict[str, Any
         ) from exc
     finally:
         bm.free()
+        _remove_temporary_mesh(call_snapshot)
     after_fingerprint = mesh_fingerprint(mesh)
     after_topology = topology_fingerprint(mesh)
     if after_fingerprint == before_fingerprint:
@@ -1040,7 +1166,9 @@ def edit_mesh(transaction: Transaction, params: dict[str, Any]) -> dict[str, Any
             "after_topology_fingerprint": after_topology,
             "before_counts": before_counts,
             "after_counts": mesh_counts(obj.data),
+            "components": components,
             "evidence": evidence,
+            "warnings": [],
         }
     guard.expected_fingerprint = after_fingerprint
     guard.expected_users = int(mesh.users)
@@ -1083,7 +1211,19 @@ def edit_mesh(transaction: Transaction, params: dict[str, Any]) -> dict[str, Any
         "after_topology_fingerprint": after_topology,
         "before_counts": before_counts,
         "after_counts": mesh_counts(mesh),
+        "components": components,
         "evidence": evidence,
+        "warnings": [
+            {
+                "code": "MESH_COMPONENT_INDICES_TRUNCATED",
+                "section": section,
+                "component": kind,
+                "count": page["count"],
+            }
+            for section in ("created", "deleted")
+            for kind, page in components[section].items()
+            if page["truncated"]
+        ],
     }
 
 
