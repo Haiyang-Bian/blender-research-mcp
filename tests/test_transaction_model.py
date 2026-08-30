@@ -1,4 +1,5 @@
 import importlib.util
+import struct
 import sys
 from pathlib import Path
 
@@ -18,6 +19,69 @@ def load_transaction_model():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_transaction_context_excludes_collaborative_ui_state() -> None:
+    model = load_transaction_model()
+    baseline = {
+        "scene": "Scene",
+        "view_layer": "ViewLayer",
+        "mode": "OBJECT",
+        "frame_current": 1,
+        "active_camera": "Camera",
+        "workspace": "Layout",
+        "viewport_id": "1:2",
+        "active_object": "Cube",
+        "selected_objects": ["Cube"],
+        "view": {"distance": 2.0, "shading": "SOLID"},
+    }
+    changed_ui = {
+        **baseline,
+        "workspace": "Modeling",
+        "viewport_id": "5:6",
+        "active_object": "Sphere",
+        "selected_objects": ["Sphere"],
+        "view": {"distance": 5.0, "shading": "MATERIAL"},
+    }
+
+    assert model.transaction_context_state(baseline) == model.transaction_context_state(
+        changed_ui
+    )
+    assert model.changed_context_paths(
+        model.user_ui_context_state(baseline),
+        model.user_ui_context_state(changed_ui),
+    ) == [
+        "active_object",
+        "selected_objects",
+        "view.distance",
+        "view.shading",
+        "viewport_id",
+        "workspace",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("scene", "Other"),
+        ("view_layer", "Other"),
+        ("mode", "EDIT_MESH"),
+        ("frame_current", 2),
+        ("active_camera", "Camera.B"),
+    ],
+)
+def test_transaction_context_keeps_write_relevant_state(field: str, value: object) -> None:
+    model = load_transaction_model()
+    baseline = {
+        "scene": "Scene",
+        "view_layer": "ViewLayer",
+        "mode": "OBJECT",
+        "frame_current": 1,
+        "active_camera": "Camera",
+    }
+    changed = {**baseline, field: value}
+
+    assert model.transaction_context_state(baseline) != model.transaction_context_state(changed)
 
 
 def test_transaction_book_is_single_owner_and_tracks_expected_properties() -> None:
@@ -51,6 +115,35 @@ def test_transaction_book_is_single_owner_and_tracks_expected_properties() -> No
     book.finish(transaction, "rolled_back")
     assert book.active is None
     assert book.last_status == "rolled_back"
+    assert book.terminal(transaction.transaction_id) == {
+        "transaction_id": transaction.transaction_id,
+        "label": "eye preview",
+        "status": "rolled_back",
+    }
+
+
+def test_transaction_terminal_state_keeps_native_save_details() -> None:
+    model = load_transaction_model()
+    book = model.TransactionBook()
+    transaction = book.begin(
+        label="compare:A",
+        context_snapshot={},
+        context_fingerprint="context",
+        scene_generation=1,
+    )
+
+    book.finish(
+        transaction,
+        "accepted_user_save",
+        details={"save_operation": {"operation_id": "save-1", "path": "scene.blend"}},
+    )
+
+    assert book.terminal(transaction.transaction_id) == {
+        "transaction_id": transaction.transaction_id,
+        "label": "compare:A",
+        "status": "accepted_user_save",
+        "save_operation": {"operation_id": "save-1", "path": "scene.blend"},
+    }
 
 
 def test_transaction_tracks_all_typed_delta_kinds_and_last_write_wins() -> None:
@@ -130,6 +223,11 @@ def test_property_values_compare_without_bool_or_vector_coercion() -> None:
     model = load_transaction_model()
 
     assert model.values_equal(0.5, 0.50000001)
+    blender_roundtrip = struct.unpack("<f", struct.pack("<f", 6.2))[0]
+    assert model.values_equal(6.2, blender_roundtrip)
+    bits = struct.unpack("<I", struct.pack("<f", blender_roundtrip))[0]
+    next_float32 = struct.unpack("<f", struct.pack("<I", bits + 1))[0]
+    assert not model.values_equal(blender_roundtrip, next_float32)
     assert model.values_equal((0.1, 0.2, 0.3), (0.1, 0.2, 0.30000001))
     assert model.values_equal(True, True)
     assert not model.values_equal(True, 1)
@@ -307,3 +405,72 @@ def test_object_data_delta_guards_identity_users_and_typed_values() -> None:
         ("Key Light", "object:1", "Key Light Data", "light:1", "3"),
         "shape",
     ) in refreshed
+
+
+def test_modifier_stack_guard_keeps_baseline_and_refreshes_latest_expected_state() -> None:
+    model = load_transaction_model()
+    transaction = model.Transaction("tx-modifiers", None, {}, "context", 0)
+
+    guard = transaction.ensure_modifier_stack_guard(
+        object_name="Hull",
+        object_identity="object:hull",
+        fingerprint="baseline",
+    )
+    transaction.refresh_modifier_stack_guard(
+        object_name="Hull",
+        object_identity="object:hull",
+        fingerprint="after-agent-write",
+    )
+    transaction.record(
+        model.ModifierSettingsDelta(
+            "Hull",
+            "object:hull",
+            "Soft Edges",
+            "modifier:bevel",
+            "BEVEL",
+            {"width": 0.1},
+            {"width": 0.25},
+        )
+    )
+
+    assert guard.baseline_fingerprint == "baseline"
+    assert guard.expected_fingerprint == "after-agent-write"
+    assert transaction.expected_properties() == {}
+    assert transaction.delta_kinds() == ["modifier_settings"]
+
+
+def test_mesh_snapshot_guard_and_edit_delta_are_transaction_local() -> None:
+    model = load_transaction_model()
+    transaction = model.Transaction("tx-mesh", None, {}, "context", 0)
+    guard = model.MeshSnapshotGuard(
+        object_name="Hull",
+        object_identity="object:hull",
+        mesh_name="Hull Mesh",
+        mesh_identity="mesh:hull",
+        baseline_fingerprint="a" * 64,
+        expected_fingerprint="a" * 64,
+        expected_users=1,
+        expected_user_objects=(("Hull", "object:hull"),),
+        data_scope="OBJECT",
+    )
+
+    transaction.add_mesh_snapshot_guard(guard)
+    guard.expected_fingerprint = "b" * 64
+    transaction.record(
+        model.MeshEditDelta(
+            object_name="Hull",
+            object_identity="object:hull",
+            mesh_name="Hull Mesh",
+            mesh_identity="mesh:hull",
+            operation="extrude_faces",
+            before_fingerprint="a" * 64,
+            after_fingerprint="b" * 64,
+            data_scope="OBJECT",
+        )
+    )
+
+    assert transaction.mesh_snapshot_guard("Hull Mesh", "mesh:hull") is guard
+    assert transaction.expected_properties() == {}
+    assert transaction.delta_kinds() == ["mesh_edit"]
+    transaction.remove_mesh_snapshot_guard(guard)
+    assert transaction.mesh_snapshot_guards == {}

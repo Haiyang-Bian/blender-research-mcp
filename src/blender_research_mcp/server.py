@@ -47,6 +47,7 @@ from blender_research_mcp.comparison import (
     ComparisonCapture,
     ComparisonRequest,
     ComparisonTarget,
+    ModifierSettingTarget,
     ObjectSettingTarget,
     run_lookdev_comparison,
 )
@@ -54,6 +55,18 @@ from blender_research_mcp.constants import DEFAULT_PORT, PACKAGE_VERSION
 from blender_research_mcp.lifecycle import (
     DEFAULT_LAUNCH_TIMEOUT_SECONDS,
     ApplicationManager,
+)
+from blender_research_mcp.mesh_authoring import (
+    MeshComponent,
+    MeshDataScope,
+    MeshOperation,
+    MeshUserObject,
+)
+from blender_research_mcp.modifier_authoring import (
+    ModifierDefinition,
+    ModifierSettings,
+    ModifierStackIndex,
+    ModifierType,
 )
 from blender_research_mcp.object_settings import ObjectSettingPatches
 from blender_research_mcp.observation import (
@@ -404,6 +417,33 @@ def create_server(
         )
 
     @server.tool(
+        name="mesh.inspect",
+        description=(
+            "Inspect one exact base Mesh data-block with guarded topology/state "
+            "fingerprints and one bounded page of vertices, edges, or faces."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_inspect(
+        object_name: ObjectName,
+        component: MeshComponent = "summary",
+        offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=512)] = 256,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_topology")
+        return await client.call(
+            "mesh.inspect",
+            {
+                "object_name": object_name,
+                "component": component,
+                "offset": offset,
+                "limit": limit,
+            },
+            read_only=True,
+        )
+
+    @server.tool(
         name="object.lookdev.inspect",
         description=(
             "List bounded object-local visibility, modifier, shape-key, and material-slot "
@@ -415,6 +455,23 @@ def create_server(
     async def object_lookdev_inspect(object_name: ObjectName) -> dict[str, Any]:
         return await client.call(
             "object.lookdev.inspect",
+            {"object_name": object_name},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="modifier.inspect",
+        description=(
+            "Inspect the exact ordered Modifier stack for one mesh object, including typed "
+            "settings, session identities, drivers, write ranges, and a guarded fingerprint."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def modifier_inspect(object_name: ObjectName) -> dict[str, Any]:
+        await require_capability(client, "modifier_authoring")
+        return await client.call(
+            "modifier.inspect",
             {"object_name": object_name},
             read_only=True,
         )
@@ -579,6 +636,8 @@ def create_server(
     ) -> CallToolResult:
         if isinstance(target, ObjectSettingTarget):
             await require_capability(client, "object_settings")
+        if isinstance(target, ModifierSettingTarget):
+            await require_capability(client, "modifier_authoring")
         request = ComparisonRequest(target=target, candidates=candidates, capture=capture)
         images, result = await run_lookdev_comparison(client, request)
         content: list[ContentBlock] = [
@@ -872,6 +931,221 @@ def create_server(
                 "modifier_name": modifier_name,
                 "expected_modifier_identity": expected_modifier_identity,
                 "state": state,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="modifier.create",
+        description=(
+            "Create one typed Bevel, Subdivision, Solidify, or Boolean Modifier at an "
+            "exact guarded stack position inside the active transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def modifier_create(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_stack_fingerprint: SessionIdentity,
+        definition: ModifierDefinition,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "modifier_authoring")
+        client.require_capability("transactions", 3)
+        return await client.call(
+            "modifier.create",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "expected_stack_fingerprint": expected_stack_fingerprint,
+                "definition": definition.model_dump(exclude_none=True),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="modifier.set",
+        description=(
+            "Atomically patch typed settings on one exact supported Modifier after "
+            "validating its identity, type, stack index, drivers, and stack fingerprint."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def modifier_set(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        modifier_name: ModifierName,
+        expected_modifier_identity: SessionIdentity,
+        expected_modifier_type: ModifierType,
+        expected_stack_index: ModifierStackIndex,
+        expected_stack_fingerprint: SessionIdentity,
+        settings: ModifierSettings,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "modifier_authoring")
+        client.require_capability("transactions", 3)
+        return await client.call(
+            "modifier.set",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "modifier_name": modifier_name,
+                "expected_modifier_identity": expected_modifier_identity,
+                "expected_modifier_type": expected_modifier_type,
+                "expected_stack_index": expected_stack_index,
+                "expected_stack_fingerprint": expected_stack_fingerprint,
+                "settings": settings.model_dump(exclude_none=True),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="modifier.move",
+        description=(
+            "Move one exact supported Modifier to an absolute stack index without changing "
+            "the properties of intervening supported or unsupported Modifiers."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def modifier_move(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        modifier_name: ModifierName,
+        expected_modifier_identity: SessionIdentity,
+        expected_modifier_type: ModifierType,
+        expected_stack_index: ModifierStackIndex,
+        expected_stack_fingerprint: SessionIdentity,
+        target_stack_index: ModifierStackIndex,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "modifier_authoring")
+        client.require_capability("transactions", 3)
+        return await client.call(
+            "modifier.move",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "modifier_name": modifier_name,
+                "expected_modifier_identity": expected_modifier_identity,
+                "expected_modifier_type": expected_modifier_type,
+                "expected_stack_index": expected_stack_index,
+                "expected_stack_fingerprint": expected_stack_fingerprint,
+                "target_stack_index": target_stack_index,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="modifier.delete",
+        description=(
+            "Disable and mark one exact supported Modifier for deletion; rollback restores "
+            "the same identity and commit performs the final removal."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def modifier_delete(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        modifier_name: ModifierName,
+        expected_modifier_identity: SessionIdentity,
+        expected_modifier_type: ModifierType,
+        expected_stack_index: ModifierStackIndex,
+        expected_stack_fingerprint: SessionIdentity,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "modifier_authoring")
+        client.require_capability("transactions", 3)
+        return await client.call(
+            "modifier.delete",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "modifier_name": modifier_name,
+                "expected_modifier_identity": expected_modifier_identity,
+                "expected_modifier_type": expected_modifier_type,
+                "expected_stack_index": expected_stack_index,
+                "expected_stack_fingerprint": expected_stack_fingerprint,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="mesh.edit",
+        description=(
+            "Apply one bounded semantic edit to exact base-Mesh components inside the "
+            "active transaction, with explicit object-only or shared-data scope."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def mesh_edit(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_mesh_identity: SessionIdentity,
+        expected_mesh_users: DataUsers,
+        expected_mesh_user_objects: Annotated[
+            tuple[MeshUserObject, ...], Field(min_length=1, max_length=256)
+        ],
+        expected_mesh_fingerprint: Annotated[str, Field(min_length=64, max_length=64)],
+        data_scope: MeshDataScope,
+        operation: MeshOperation,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_topology")
+        client.require_capability("transactions", 4)
+        if len(
+            {
+                (item.object_name, item.expected_object_identity)
+                for item in expected_mesh_user_objects
+            }
+        ) != len(expected_mesh_user_objects):
+            raise ValueError("expected_mesh_user_objects must be unique")
+        if expected_mesh_users != len(expected_mesh_user_objects):
+            raise ValueError(
+                "expected_mesh_users must equal the number of expected_mesh_user_objects"
+            )
+        return await client.call(
+            "mesh.edit",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "expected_mesh_identity": expected_mesh_identity,
+                "expected_mesh_users": expected_mesh_users,
+                "expected_mesh_user_objects": [
+                    item.model_dump() for item in expected_mesh_user_objects
+                ],
+                "expected_mesh_fingerprint": expected_mesh_fingerprint,
+                "data_scope": data_scope,
+                "operation": operation.model_dump(exclude_none=True),
             },
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,

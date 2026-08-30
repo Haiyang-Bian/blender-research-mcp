@@ -11,6 +11,10 @@ Current records cover authenticated transport, reversible transactions,
 focus-independent off-screen observation, capture-bound spatial diagnosis, and
 bounded LookDev writes, managed application/project lifecycle, and bounded semantic
 static-scene authoring, plus the unified typed object-settings boundary.
+The current set also records bounded typed Modifier-stack authoring separately from
+transaction-v4 semantic base-Mesh snapshots and component editing, followed by
+transaction-v5 collaborative UI and native-save authority. UV authority remains a
+later decision.
 
 Each record should include context, decision, alternatives, consequences, and
 status. Do not use decision records for routine implementation details.

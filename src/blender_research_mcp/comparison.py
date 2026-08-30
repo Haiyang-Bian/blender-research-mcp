@@ -6,6 +6,7 @@ import asyncio
 import io
 import math
 import re
+import struct
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from pydantic import (
     model_validator,
 )
 
+from blender_research_mcp.context_policy import changed_paths, guarded_context_identity
 from blender_research_mcp.errors import BridgeError, ErrorInfo, ErrorKind
 from blender_research_mcp.observation import (
     capture_image,
@@ -241,13 +243,117 @@ class ObjectSettingTarget(BaseModel):
     locator: ObjectSettingLocator
 
 
+ModifierSettingProperty = Literal[
+    "show_viewport",
+    "show_render",
+    "width",
+    "segments",
+    "limit_method",
+    "angle_limit_degrees",
+    "affect",
+    "width_mode",
+    "profile",
+    "clamp_overlap",
+    "harden_normals",
+    "subdivision_type",
+    "levels",
+    "render_levels",
+    "quality",
+    "show_only_control_edges",
+    "use_limit_surface",
+    "use_creases",
+    "thickness",
+    "offset",
+    "use_even_offset",
+    "use_quality_normals",
+    "use_rim",
+    "use_rim_only",
+    "use_flip_normals",
+    "operation",
+    "solver",
+    "use_self",
+    "use_hole_tolerant",
+    "double_threshold",
+]
+
+_MODIFIER_COMPARABLE_FIELDS = {
+    "BEVEL": {
+        "show_viewport",
+        "show_render",
+        "width",
+        "segments",
+        "limit_method",
+        "angle_limit_degrees",
+        "affect",
+        "width_mode",
+        "profile",
+        "clamp_overlap",
+        "harden_normals",
+    },
+    "SUBSURF": {
+        "show_viewport",
+        "show_render",
+        "subdivision_type",
+        "levels",
+        "render_levels",
+        "quality",
+        "show_only_control_edges",
+        "use_limit_surface",
+        "use_creases",
+    },
+    "SOLIDIFY": {
+        "show_viewport",
+        "show_render",
+        "thickness",
+        "offset",
+        "use_even_offset",
+        "use_quality_normals",
+        "use_rim",
+        "use_rim_only",
+        "use_flip_normals",
+    },
+    "BOOLEAN": {
+        "show_viewport",
+        "show_render",
+        "operation",
+        "solver",
+        "use_self",
+        "use_hole_tolerant",
+        "double_threshold",
+    },
+}
+
+
+class ModifierSettingTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["modifier_setting"]
+    object_name: ObjectName
+    expected_object_identity: SessionIdentity
+    modifier_name: Annotated[str, Field(min_length=1, max_length=255)]
+    expected_modifier_identity: SessionIdentity
+    expected_modifier_type: Literal["BEVEL", "SUBSURF", "SOLIDIFY", "BOOLEAN"]
+    expected_stack_index: Annotated[StrictInt, Field(ge=0, le=255)]
+    expected_stack_fingerprint: Annotated[str, Field(min_length=64, max_length=64)]
+    property: ModifierSettingProperty
+
+    @model_validator(mode="after")
+    def validate_property_for_modifier_type(self) -> ModifierSettingTarget:
+        if self.property not in _MODIFIER_COMPARABLE_FIELDS[self.expected_modifier_type]:
+            raise ValueError(
+                f"{self.property} is not valid for {self.expected_modifier_type} Modifiers"
+            )
+        return self
+
+
 ComparisonTarget = Annotated[
     ObjectScaleAxisTarget
     | ObjectVisibilityTarget
     | ModifierStateTarget
     | ShapeKeyValueTarget
     | MaterialInputTarget
-    | ObjectSettingTarget,
+    | ObjectSettingTarget
+    | ModifierSettingTarget,
     Field(discriminator="type"),
 ]
 
@@ -303,7 +409,7 @@ def property_values_equal(left: Any, right: Any) -> bool:
     if isinstance(left, int) or isinstance(right, int):
         return type(left) is type(right) and left == right
     if isinstance(left, float) and isinstance(right, float):
-        return abs(left - right) <= 1e-7
+        return struct.pack("<f", left) == struct.pack("<f", right)
     if isinstance(left, str) or isinstance(right, str):
         return type(left) is type(right) and left == right
     return False
@@ -328,12 +434,50 @@ class ComparisonRequest(BaseModel):
             ):
                 raise ValueError("candidate values must be unique")
 
+        modifier_boolean = (
+            isinstance(self.target, ModifierSettingTarget)
+            and self.target.property
+            in {
+                "show_viewport",
+                "show_render",
+                "clamp_overlap",
+                "harden_normals",
+                "show_only_control_edges",
+                "use_limit_surface",
+                "use_creases",
+                "use_even_offset",
+                "use_quality_normals",
+                "use_rim",
+                "use_rim_only",
+                "use_flip_normals",
+                "use_self",
+                "use_hole_tolerant",
+            }
+        )
         if isinstance(self.target, (ObjectVisibilityTarget, ModifierStateTarget)) or (
             isinstance(self.target, ObjectSettingTarget)
             and isinstance(self.target.locator, ObjectVisibilitySettingLocator)
-        ):
+        ) or modifier_boolean:
             if len(self.candidates) != 1 or type(self.candidates[0].value) is not bool:
                 raise ValueError("boolean targets require exactly one boolean candidate")
+        elif isinstance(self.target, ModifierSettingTarget):
+            integer_fields = {"segments", "levels", "render_levels", "quality"}
+            enum_fields = {
+                "limit_method",
+                "affect",
+                "width_mode",
+                "subdivision_type",
+                "operation",
+                "solver",
+            }
+            if self.target.property in integer_fields:
+                if any(type(candidate.value) is not int for candidate in self.candidates):
+                    raise ValueError("integer Modifier candidates must be JSON integers")
+            elif self.target.property in enum_fields:
+                if any(type(candidate.value) is not str for candidate in self.candidates):
+                    raise ValueError("enum Modifier candidates must be strings")
+            elif any(type(candidate.value) is not float for candidate in self.candidates):
+                raise ValueError("numeric Modifier candidates must be floating-point values")
         elif isinstance(self.target, ObjectSettingTarget):
             locator = self.target.locator
             if isinstance(locator, ObjectLightSettingLocator) and locator.property == "color":
@@ -460,6 +604,7 @@ class ResolvedTarget:
     value_kind: str
     minimum: float | int | None = None
     maximum: float | int | None = None
+    allowed_values: tuple[str, ...] | None = None
 
 
 def comparison_error(
@@ -743,6 +888,138 @@ async def _resolve_target(
             maximum=setting_maximum,
         )
 
+    if isinstance(target, ModifierSettingTarget):
+        inspected = await client.call(
+            "modifier.inspect", {"object_name": target.object_name}, read_only=True
+        )
+        _require_identity(
+            inspected.get("object_identity"), target.expected_object_identity, kind="object"
+        )
+        actual_fingerprint = inspected.get("stack_fingerprint")
+        if actual_fingerprint != target.expected_stack_fingerprint:
+            raise comparison_error(
+                ErrorKind.CONFLICT,
+                "MODIFIER_STACK_CONFLICT",
+                "The Modifier stack fingerprint no longer matches the comparison target",
+                retryable=True,
+                details={
+                    "expected": target.expected_stack_fingerprint,
+                    "actual": actual_fingerprint,
+                },
+            )
+        modifier = _find_named(
+            inspected.get("modifiers"), target.modifier_name, kind="modifier"
+        )
+        _require_identity(
+            modifier.get("session_identity"),
+            target.expected_modifier_identity,
+            kind="modifier",
+        )
+        if modifier.get("type") != target.expected_modifier_type:
+            raise comparison_error(
+                ErrorKind.CONFLICT,
+                "MODIFIER_TYPE_MISMATCH",
+                "The Modifier type changed after inspection",
+                retryable=True,
+            )
+        if modifier.get("stack_index") != target.expected_stack_index:
+            raise comparison_error(
+                ErrorKind.CONFLICT,
+                "MODIFIER_STACK_INDEX_MISMATCH",
+                "The Modifier stack index changed after inspection",
+                retryable=True,
+            )
+        if not modifier.get("supported") or modifier.get("pending_delete"):
+            raise comparison_error(
+                ErrorKind.PRECONDITION,
+                "MODIFIER_SETTING_NOT_WRITABLE",
+                "The inspected Modifier is unsupported or pending deletion",
+            )
+        writable_fields = modifier.get("writable_fields")
+        if not isinstance(writable_fields, list) or target.property not in writable_fields:
+            raise comparison_error(
+                ErrorKind.PRECONDITION,
+                "MODIFIER_SETTING_NOT_WRITABLE",
+                f"The inspected Modifier setting is not writable: {target.property}",
+            )
+        settings = modifier.get("settings")
+        if target.property in {"show_viewport", "show_render"}:
+            value = modifier.get(target.property)
+        elif isinstance(settings, dict):
+            value = settings.get(target.property)
+        else:
+            value = None
+        ranges = modifier.get("ranges")
+        metadata = ranges.get(target.property) if isinstance(ranges, dict) else None
+        modifier_minimum: float | int | None = None
+        modifier_maximum: float | int | None = None
+        allowed_values: tuple[str, ...] | None = None
+        if type(value) is bool:
+            value_kind = "BOOLEAN"
+        elif type(value) is int:
+            value_kind = "INT"
+        elif type(value) is float:
+            value_kind = "FLOAT"
+        elif type(value) is str:
+            value_kind = "ENUM"
+        else:
+            raise comparison_error(
+                ErrorKind.BLENDER_API,
+                "TARGET_INSPECTION_INVALID",
+                "Modifier inspection returned an unsupported property value",
+            )
+        if isinstance(metadata, list):
+            if value_kind == "ENUM" and metadata:
+                allowed_values = tuple(str(item) for item in metadata)
+            elif len(metadata) == 2:
+                modifier_minimum, modifier_maximum = metadata
+        if target.expected_modifier_type == "SUBSURF" and target.property in {
+            "levels",
+            "render_levels",
+        }:
+            base_faces = inspected.get("base_faces")
+            if type(base_faces) is not int or base_faces < 0:
+                raise comparison_error(
+                    ErrorKind.BLENDER_API,
+                    "TARGET_INSPECTION_INVALID",
+                    "Modifier inspection did not return a valid base face count",
+                )
+            budget_level = 4
+            while budget_level > 0 and base_faces * (4**budget_level) > 2_000_000:
+                budget_level -= 1
+            modifier_maximum = min(
+                int(modifier_maximum if modifier_maximum is not None else 4),
+                budget_level,
+            )
+        guard = {
+            "type": target.type,
+            "object_name": target.object_name,
+            "object_identity": target.expected_object_identity,
+            "modifier_name": target.modifier_name,
+            "modifier_identity": target.expected_modifier_identity,
+            "modifier_type": target.expected_modifier_type,
+            "stack_index": target.expected_stack_index,
+            "stack_fingerprint": target.expected_stack_fingerprint,
+            "property": target.property,
+            "writable": True,
+        }
+        return ResolvedTarget(
+            value=value,
+            guard=guard,
+            evidence={
+                **guard,
+                "value": value,
+                "minimum": modifier_minimum,
+                "maximum": modifier_maximum,
+                "allowed_values": list(allowed_values) if allowed_values else None,
+            },
+            scene_generation=int(inspected["scene_generation"]),
+            value_kind=value_kind,
+            minimum=modifier_minimum,
+            maximum=modifier_maximum,
+            allowed_values=allowed_values,
+        )
+
     if isinstance(target, MaterialInputTarget):
         inspected = await client.call(
             "material.inspect",
@@ -986,6 +1263,16 @@ def _validate_live_candidates(
                 f"Candidate {candidate.label} equals the inspected baseline",
                 details={"candidate_label": candidate.label},
             )
+        if baseline.allowed_values is not None and value not in baseline.allowed_values:
+            raise comparison_error(
+                ErrorKind.VALIDATION,
+                "CANDIDATE_OUT_OF_RANGE",
+                f"Candidate {candidate.label} is not an allowed enum value",
+                details={
+                    "candidate_label": candidate.label,
+                    "allowed_values": list(baseline.allowed_values),
+                },
+            )
         if not _numeric_value_in_range(value, baseline.minimum, baseline.maximum):
             raise comparison_error(
                 ErrorKind.VALIDATION,
@@ -1019,13 +1306,15 @@ def _assert_target_matches(baseline: ResolvedTarget, current: ResolvedTarget) ->
 
 
 def _assert_context_matches(baseline: dict[str, Any], current: dict[str, Any]) -> None:
-    if _identity(baseline) != _identity(current):
+    baseline_identity = guarded_context_identity(baseline)
+    current_identity = guarded_context_identity(current)
+    if baseline_identity != current_identity:
         raise comparison_error(
             ErrorKind.CONFLICT,
             "COMPARISON_CONTEXT_DRIFT",
             "Blender user context changed during comparison",
             retryable=True,
-            details={"changed_fields": _changed_fields(_identity(baseline), _identity(current))},
+            details={"changed_fields": changed_paths(baseline_identity, current_identity)},
         )
 
 
@@ -1050,6 +1339,56 @@ def _require_same_generation(*values: int) -> int:
             details={"scene_generations": list(values)},
         )
     return values[0]
+
+
+def _user_intent_revision(value: dict[str, Any]) -> int:
+    return int(value.get("user_intent_revision", 0))
+
+
+def _assert_user_intent_stable(
+    baseline_revision: int,
+    current: dict[str, Any],
+    *,
+    phase: str,
+    label: str | None,
+) -> None:
+    current_revision = _user_intent_revision(current)
+    if current_revision == baseline_revision:
+        return
+    details: dict[str, Any] = {
+        "comparison_phase": phase,
+        "user_intent_revision_before": baseline_revision,
+        "user_intent_revision_after": current_revision,
+        "last_user_action": current.get("last_user_action"),
+    }
+    if label is not None:
+        details["candidate_label"] = label
+    raise comparison_error(
+        ErrorKind.CONFLICT,
+        "COMPARISON_ACCEPTED_BY_USER_SAVE",
+        "The user saved and accepted the currently visible comparison state",
+        details=details,
+    )
+
+
+def _comparison_user_save_error(
+    error: BridgeError,
+    *,
+    phase: str,
+    label: str | None,
+) -> BridgeError:
+    details = {
+        "comparison_phase": phase,
+        "cause": error.error.model_dump(mode="json"),
+    }
+    if label is not None:
+        details["candidate_label"] = label
+    return comparison_error(
+        ErrorKind.CONFLICT,
+        "COMPARISON_ACCEPTED_BY_USER_SAVE",
+        "The user saved and accepted the currently visible comparison state",
+        details=details,
+    )
 
 
 async def _read_guarded_state(
@@ -1153,6 +1492,22 @@ async def _call_writer(
             "expected_modifier_identity": target.expected_modifier_identity,
             "state": {target.property: value},
         }
+    elif isinstance(target, ModifierSettingTarget):
+        command = "modifier.set"
+        params = {
+            "transaction_id": transaction_id,
+            "object_name": target.object_name,
+            "expected_object_identity": target.expected_object_identity,
+            "modifier_name": target.modifier_name,
+            "expected_modifier_identity": target.expected_modifier_identity,
+            "expected_modifier_type": target.expected_modifier_type,
+            "expected_stack_index": target.expected_stack_index,
+            "expected_stack_fingerprint": target.expected_stack_fingerprint,
+            "settings": {
+                "type": target.expected_modifier_type,
+                target.property: value,
+            },
+        }
     elif isinstance(target, ShapeKeyValueTarget):
         command = "shape_key.set_value"
         params = {
@@ -1222,6 +1577,7 @@ async def run_lookdev_comparison(
     baseline_context, baseline_object, baseline_target, ping_before = await _read_guarded_state(
         client, request
     )
+    user_intent_revision = _user_intent_revision(ping_before)
     _validate_live_candidates(request, baseline_target)
     capture = request.capture
     baseline_started = time.perf_counter()
@@ -1235,7 +1591,15 @@ async def run_lookdev_comparison(
         overlays=capture.overlays,
         orbit=capture.orbit.model_dump() if capture.orbit is not None else None,
     )
-    await settle_capture_generation(client, baseline_capture)  # type: ignore[arg-type]
+    baseline_settled = await settle_capture_generation(
+        client, baseline_capture  # type: ignore[arg-type]
+    )
+    _assert_user_intent_stable(
+        user_intent_revision,
+        baseline_settled,
+        phase="baseline_capture",
+        label=None,
+    )
     try:
         validate_evidence_image(baseline_image, label="baseline")
     except ValueError as exc:
@@ -1283,6 +1647,12 @@ async def run_lookdev_comparison(
             context, evidence_object, current_target, ping = await _read_guarded_state(
                 client, request
             )
+            _assert_user_intent_stable(
+                user_intent_revision,
+                ping,
+                phase=phase,
+                label=label,
+            )
             _assert_context_matches(baseline_context, context)
             _assert_object_matches(baseline_object, evidence_object)
             _assert_target_matches(baseline_target, current_target)
@@ -1320,8 +1690,17 @@ async def run_lookdev_comparison(
                 display_mode=capture.display_mode,
                 overlays=capture.overlays,
                 orbit=capture.orbit.model_dump() if capture.orbit is not None else None,
+                view_reference_capture_id=str(baseline_capture["capture_id"]),
             )
-            await settle_capture_generation(client, capture_metadata)  # type: ignore[arg-type]
+            capture_settled = await settle_capture_generation(
+                client, capture_metadata  # type: ignore[arg-type]
+            )
+            _assert_user_intent_stable(
+                user_intent_revision,
+                capture_settled,
+                phase=phase,
+                label=label,
+            )
             try:
                 validate_evidence_image(image, label=f"candidate {label}")
                 statistics = image_difference_statistics(baseline_image, image)
@@ -1362,6 +1741,12 @@ async def run_lookdev_comparison(
                     "Comparison rollback could not prove baseline restoration",
                     details={"cause": exc.error.model_dump(mode="json")},
                 ) from exc
+            _assert_user_intent_stable(
+                user_intent_revision,
+                restored_ping,
+                phase=phase,
+                label=label,
+            )
 
             images.append(image)
             candidate_result = {
@@ -1382,6 +1767,13 @@ async def run_lookdev_comparison(
                     {"code": "CANDIDATE_VISUALLY_INDISTINGUISHABLE", "label": label}
                 )
         except BridgeError as exc:
+            if exc.error.code in {
+                "TRANSACTION_ACCEPTED_BY_USER_SAVE",
+                "COMPARISON_ACCEPTED_BY_USER_SAVE",
+            }:
+                if exc.error.code == "COMPARISON_ACCEPTED_BY_USER_SAVE":
+                    raise exc
+                raise _comparison_user_save_error(exc, phase=phase, label=label) from exc
             if transaction_id is not None and not rollback_attempted:
                 try:
                     await _attempt_cleanup_rollback(client, transaction_id)
@@ -1409,6 +1801,12 @@ async def run_lookdev_comparison(
 
     final_ping = await _verify_restored(
         client, request, baseline_context, baseline_object, baseline_target
+    )
+    _assert_user_intent_stable(
+        user_intent_revision,
+        final_ping,
+        phase="final_verify",
+        label=None,
     )
     return images, {
         "target": request.target.model_dump(mode="json"),

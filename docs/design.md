@@ -1,9 +1,9 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.9.0 unified typed object settings implemented and live-validated
-- Next milestone: select the next bounded scene-authoring authority domain
+- Status: 0.11.1 collaborative UI and native-save authority live-validated
+- Next milestone: design 0.12 bounded UV authority on the proven snapshot model
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.9.0
+- Package and add-on version: 0.11.1
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,10 +12,11 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.9.0 now covers
-the validated observation/lifecycle/static-authoring path plus a unified typed object,
-Light, and Camera setting surface; the older bridge is no longer the primary interface
-for this repository.
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.11.1 now covers
+the validated observation/lifecycle/static-authoring path, unified typed object,
+Light, and Camera settings, four bounded non-destructive Modifier families, and exact
+base-Mesh component editing with transaction snapshots; the older bridge is no longer
+the primary interface for this repository.
 
 That shape creates a poor long-running LookDev loop:
 
@@ -87,8 +88,9 @@ The bridge runs with Blender-process authority. It must be local-first:
 2. **Reversible** — preview changes can be rolled back without reopening the
    file or relying on user intervention.
 3. **Semantic** — tools express Blender intent rather than keyboard shortcuts.
-4. **Context-aware** — mode, active object, selection, area, shading, overlays,
-   visibility, and view transform are explicit state.
+4. **Context-aware** — Scene, View Layer, mode, frame, active Camera, and data evidence
+   are hard guards; navigation, display, selection, and active object are explicit but
+   user-collaborative UI state.
 5. **Deterministic** — identical requests against the same scene generation
    produce the same result or a clear precondition error.
 6. **Local-first** — no telemetry or third-party network dependency.
@@ -204,6 +206,7 @@ single socket recv call must never be treated as one complete JSON message.
 - context.restore
 - object.inspect
 - object.geometry.inspect
+- mesh.inspect
 - object.lookdev.inspect
 - material.inspect
 - viewport.capture
@@ -222,6 +225,11 @@ normalized image coordinates for evaluated-scene raycasts.
 - object.transform
 - object.visibility.set
 - modifier.set_state
+- modifier.create
+- modifier.set
+- modifier.move
+- modifier.delete
+- mesh.edit
 - shape_key.set_value
 - material.set_input
 
@@ -231,6 +239,24 @@ local TRS, visibility, typed Light data, and typed Camera data. It is one public
 object-level operation with internal typed dispatch, not a generic RNA writer.
 Structural object changes, active-Camera selection, materials, World, images, Modifier
 parameters, rendering, and project saving remain separate tools.
+
+Version 0.10 adds a separate typed Modifier-stack domain for Mesh objects. Bevel,
+Subdivision, Solidify, and Boolean can be created, configured, reordered, and marked
+for commit-time deletion. Every mutation carries exact object/Modifier identities,
+index, type, and full stack fingerprint. Apply, arbitrary Modifier types/RNA, and direct
+mesh topology remain outside the Modifier surface.
+
+Version 0.11 adds a separate exact base-Mesh domain. `mesh.inspect` pages vertices,
+edges, or faces and binds their ephemeral indices to topology/full SHA-256
+fingerprints. `mesh.edit` routes one closed transform/extrude/inset/bevel/delete/
+dissolve/merge/face-setting/normals request to typed internal BMesh handlers. It is not
+an arbitrary BMesh or RNA writer.
+
+Version 0.10.1 repairs transaction-owned data-user evidence for linked object
+duplicates. A successful linked duplicate refreshes any already guarded Mesh,
+Camera, or Light data-block plus an existing typed Light/Camera data delta. The
+operation still rejects a later external users change. Newly linked duplicates are
+explicitly unselected so selection remains stable after save/reload.
 
 Every new writer requires an active transaction, a current scene generation, a unique
 idempotency key, and exact session identities returned by inspection. Shared materials
@@ -255,7 +281,8 @@ Comparison is transient mutation, not a read-only operation. It will never commi
 save a blend file, rank candidates, or widen the Blender command surface. A selected
 candidate must be applied later through the existing explicit transaction workflow.
 In 0.9 the closed target union also accepts one typed `object_setting` locator and uses
-`object.set`; older comparison targets remain compatible.
+`object.set`. Version 0.10 adds `modifier_setting`, routed through `modifier.set`, for a
+single comparable field. Older comparison targets remain compatible.
 The complete contract and acceptance gate are recorded in
 `docs/roadmap/0.6.0-comparative-previews.md`.
 
@@ -293,8 +320,9 @@ surface:
 Structural writes require an active transaction, current generation, per-operation
 idempotency UUID, exact identities, and the domain capability. A direct static-scene
 creation/modification request authorizes a coherent multi-step transaction and commit
-after successful preview. Any property, context, identity, structure, link, users, or
-preview failure stops the batch and rolls it back. Commit remains memory-only; project
+after successful preview. Any property, hard-context, identity, structure, link, users,
+or preview failure stops the batch and rolls it back. User navigation, display, and
+selection are not hard context. Commit remains memory-only; project
 save and render export are separate explicit deliverable operations. See
 `docs/roadmap/0.8.0-semantic-scene-authoring.md`.
 
@@ -311,12 +339,59 @@ Apply failures restore and verify this call's partial writes before returning. L
 `object.transform` and `object.visibility.set` retain their schemas while using the same
 kernel. See `docs/roadmap/0.9.0-unified-object-settings.md` and decision 0008.
 
+### Implemented bounded Modifier authoring
+
+Version 0.10.0 adds `modifier.inspect` and typed create/set/move/delete operations for
+Bevel, Subdivision, Solidify, and Boolean on Mesh objects. Inspection returns the full
+ordered stack and a SHA-256 fingerprint. Transaction-level stack guards advance after
+each Agent mutation and protect identity, order, public state, typed settings, Boolean
+operand, and pending-delete state during commit, rollback, and disconnect recovery.
+
+Delete is deferred: the Modifier is disabled and marked in the transaction, rollback
+restores the same identity, and commit removes it only after all guards pass. Boolean
+operands are exact Mesh identities with direct/transitive cycle rejection; Subdivision
+and Boolean enforce bounded geometry budgets. Legacy `modifier.set_state` retains its
+schema and works for unsupported Modifier types. See
+`docs/roadmap/0.10.0-modifier-authoring.md` and decision 0009.
+
+### Implemented semantic base-Mesh editing
+
+Version 0.11.0 upgrades transactions to capability version 4 and adds one complete
+Mesh snapshot guard per edited working data-block. The guard preserves Mesh identity,
+object users, topology, coordinates, material/smooth state, UV/color data, and
+supported attributes. Agent writes refresh the expected fingerprint; commit discards
+the baseline, while rollback and disconnect restore it only when the full guard still
+matches.
+
+`OBJECT` scope transactionally single-users shared data for only the target object;
+`SHARED_DATA` edits the exact data-block for its complete inspected user set. Each call
+also keeps a temporary immediate snapshot so a partial Blender write can be locally
+restored and verified. Library links, Edit Mode, Shape Keys, pending deletion,
+unsupported attributes, and fixed geometry budgets are rejected before mutation. See
+`docs/roadmap/0.11.0-semantic-mesh-editing.md` and decision 0010. UV values remain
+read-only until a separate 0.12 contract.
+
+Version 0.11.1 upgrades transaction capability to 5. It separates hard transaction
+context, user-collaborative UI context, and capture evidence. User orbit/pan/zoom,
+projection/lens, Shading, Overlay, selection, and active-object changes neither reject a
+data write nor block commit/rollback. Rollback restores transaction data only and
+reports the preserved UI paths. Scene, View Layer, mode, frame, active Camera, identity,
+users, properties, and structural fingerprints remain hard conflicts.
+
+Persistent Blender save handlers form an intent barrier. A native Ctrl+S, Save As, or
+Save Copy adopts the current transaction before serialization, finalizes only
+Agent-owned deferred work that still matches its guard, and disables later rollback.
+The terminal transaction record lets already queued requests return
+`TRANSACTION_ACCEPTED_BY_USER_SAVE`; comparison maps the same event to
+`COMPARISON_ACCEPTED_BY_USER_SAVE` and stops without cleanup rollback. Managed MCP
+project saves are marked internally and retain their existing commit-before-save flow.
+
 Tool count is not a success metric. A small composable surface with precise
 preconditions is preferable to dozens of overlapping convenience tools.
 
 ## 8. Context and transaction model
 
-A context snapshot should record at least:
+A complete UI/capture snapshot should record at least:
 
 - active scene, view layer, workspace, window, area, and region identity;
 - Blender mode;
@@ -326,8 +401,11 @@ A context snapshot should record at least:
 - current frame and active camera;
 - scene-generation counter.
 
-Read-only inspection may temporarily change selection or view only when it
-restores the snapshot in a finally path.
+Read-only inspection may temporarily change selection or view only when it restores
+the call-local snapshot in a finally path. A transaction hard-context projection keeps
+only Scene, View Layer, mode, frame, and active Camera. Workspace/viewport identity,
+view transform, lens/projection, Shading, Overlay, selection, and active object are a
+separate user-UI projection and may change while the transaction remains valid.
 
 Mutation transactions combine typed property and structural deltas, with at most 256
 deltas. Repeated property writes guard the last Agent value. Structural writes guard
@@ -336,6 +414,17 @@ images, World, and active Camera. Reverse rollback restores original state; obje
 deletion is finalized only after all commit guards pass. Rollback only overwrites state
 that still matches the last Agent write. Blender Undo is not the transaction contract
 because user and Agent actions can interleave.
+
+Transaction capability v4 adds `MeshEditDelta` and `MeshSnapshotGuard`. The first edit
+of one working Mesh owns one baseline `Mesh.copy()`; subsequent edits reuse it and
+advance the expected fingerprint. Component indices are never treated as persistent
+identities and must be reacquired after topology changes.
+
+Transaction capability v5 adds collaborative context projection and native-save
+terminal adoption. Rollback no longer restores a transaction-opening UI snapshot.
+Blender native save handlers run on the same main-thread sequence as queued semantic
+commands, so the operation that actually executes first determines whether the write
+precedes the user-save barrier or is rejected by its terminal record.
 
 ## 9. Development phases
 
@@ -395,7 +484,8 @@ Status: implemented and live-validated on Blender 4.2.23; see
 - Roll back and verify the original property and user context after every candidate.
 - Return image hashes and deterministic difference statistics without aesthetic
   ranking or automatic acceptance.
-- Stop on any context, generation, identity, property, or rollback conflict.
+- Stop on any hard-context, generation, identity, property, or rollback conflict. User
+  navigation, display, selection, and active-object changes are collaborative UI.
 
 This stage deliberately reuses the 0.5.1 Blender authority. Light controls, arbitrary
 modifier parameters, node topology, object location/rotation, and file saving remain
@@ -427,8 +517,7 @@ Status: implemented and validated on Blender 4.2.23 in 0.8.0. See
 
 ### Phase 7 — unified typed object settings
 
-Status: implemented with automated gates in 0.9.0; Blender 4.2.23 live acceptance is
-pending.
+Status: implemented and Blender 4.2.23 live-validated in 0.9.0.
 
 - Add a closed typed `object.set` surface for object, Light, and Camera settings.
 - Keep one public object-level entry while dispatching to typed internal handlers.
@@ -437,17 +526,28 @@ pending.
 - Preserve all 0.8 tools when connected to an older add-on; reject only new capability
   use.
 
-### Phase 8 — adoption and reviewed authority expansion
+### Phase 8 — bounded typed Modifier authoring
 
-Status: initial adoption complete. Codex is configured against the new MCP, versions
-0.2 through 0.5.1 have live Blender validation records, and the repository is public
-with its validated history merged into `main`.
+Status: implemented and Blender 4.2.23 live-validated in 0.10.0; linked-data guard and
+duplicate-selection regressions live-validated in 0.10.1.
 
-- Reuse the validated 0.8 authoring and 0.6 comparison smokes as regression suites.
-- Keep any older bridge only as an external fallback; do not copy its unrestricted
-  execution surface into this repository.
-- Complete the 0.9 object-settings acceptance before selecting another typed domain;
-  keep selected Modifier families as a separate proposal.
+- Inspect exact full ordered Modifier stacks and guard them with one fingerprint.
+- Create, configure, reorder, and defer deletion for four bounded Modifier families.
+- Preserve `modifier.set_state` compatibility and reject only the new surface when
+  `modifier_authoring: 1` is absent.
+- Compare one typed Modifier field through independent rollback-safe candidates.
+
+### Phase 9 — semantic Mesh topology, then UV
+
+Status: 0.11 implementation, automated gate, and Blender 4.2.23 release gate complete.
+Version 0.12 may now add bounded UV unwrap/transform on the proven topology rollback
+model. Neither responsibility is hidden in Modifier tools.
+
+- Page exact base-Mesh components and bind indices to full fingerprints.
+- Edit one closed semantic operation through transaction-v4 snapshots.
+- Preserve explicit object-only or complete shared-data scope.
+- Keep material surface detail, Modifier effects, Mesh structure, and future UV
+  authority as separate decisions.
 
 ## 10. Acceptance criteria for the first milestone
 
@@ -491,8 +591,8 @@ research scenarios.
   current traditional ZIP.
 - Whether a bounded repository script tool is necessary beyond project-owned Blender
   drivers/startup scripts; arbitrary inline Python remains out of scope.
-- Which bounded modeling domain should follow static authoring: selected Modifier
-  families or a narrow mesh-component operation. Do not combine both in one release.
+- Which bounded UV unwrap/island/transform operations can reuse transaction-v4 Mesh
+  snapshots without exposing arbitrary loop arrays; keep that authority for 0.12.
 - Blender 5.x capability policy and the project license; decide both before publishing.
 
 ## 13. Guidance for a new Codex task

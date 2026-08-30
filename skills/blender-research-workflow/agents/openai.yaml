@@ -1,7 +1,7 @@
 interface:
   display_name: "Blender Research Workflow"
-  short_description: "Launch, manage, diagnose, and preview Blender projects"
-  default_prompt: "Use $blender-research-workflow to follow my Blender application and project intent, then diagnose or preview bounded LookDev changes as requested."
+  short_description: "Manage, inspect, model, and review Blender projects"
+  default_prompt: "Use $blender-research-workflow to follow my Blender application and project intent, then inspect, author, or review bounded object, Mesh, Modifier, and material changes as requested."
 dependencies:
   tools:
     - type: "mcp"

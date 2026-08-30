@@ -15,6 +15,7 @@ class FakeComparisonClient:
         self.generation = 0
         self.heartbeat = 100
         self.context_marker = "stable"
+        self.mode = "OBJECT"
         self.object_identity = "object-id"
         self.scale = [1.0, 1.0, 1.0]
         self.hide_render = False
@@ -24,7 +25,21 @@ class FakeComparisonClient:
         self.material_kind = "FLOAT"
         self.material_users = 1
         self.camera_lens = 50.0
+        self.modifier_stack_fingerprint = "f" * 64
+        self.modifier_settings: dict[str, Any] = {
+            "width": 0.1,
+            "segments": 2,
+            "limit_method": "ANGLE",
+            "angle_limit_degrees": 30.0,
+            "affect": "EDGES",
+            "width_mode": "OFFSET",
+            "profile": 0.5,
+            "clamp_overlap": True,
+            "harden_normals": False,
+        }
         self.active: dict[str, Any] | None = None
+        self.accepted_user_save = False
+        self.user_intent_revision = 0
         self.rollback_no_restore = False
         self.commands: list[str] = []
         self.mutation_keys: list[str] = []
@@ -52,11 +67,17 @@ class FakeComparisonClient:
                 "scene_generation": self.generation,
                 "heartbeat": self.heartbeat,
                 "capability_versions": {},
+                "user_intent_revision": self.user_intent_revision,
+                "last_user_action": (
+                    {"kind": "native_save", "status": "succeeded"}
+                    if self.accepted_user_save
+                    else None
+                ),
             }
         if command == "context.get":
             return {
                 "scene": "Scene",
-                "mode": "OBJECT",
+                "mode": self.mode,
                 "active_object": "mesh",
                 "selected_objects": ["mesh"],
                 "marker": self.context_marker,
@@ -128,6 +149,41 @@ class FakeComparisonClient:
                 ],
                 "scene_generation": self.generation,
             }
+        if command == "modifier.inspect":
+            return {
+                "object_name": params["object_name"],
+                "object_identity": self.object_identity,
+                "scene_generation": self.generation,
+                "base_faces": 12,
+                "stack_fingerprint": self.modifier_stack_fingerprint,
+                "modifiers": [
+                    {
+                        "name": "Soft Edges",
+                        "session_identity": "modifier-bevel-id",
+                        "stack_index": 0,
+                        "type": "BEVEL",
+                        "supported": True,
+                        "pending_delete": False,
+                        "show_viewport": True,
+                        "show_render": True,
+                        "settings": dict(self.modifier_settings),
+                        "writable_fields": [
+                            "show_viewport",
+                            "show_render",
+                            *self.modifier_settings,
+                        ],
+                        "ranges": {
+                            "width": [0.0, 100_000.0],
+                            "segments": [1, 64],
+                            "limit_method": ["NONE", "ANGLE"],
+                            "angle_limit_degrees": [0.0, 180.0],
+                            "affect": ["EDGES", "VERTICES"],
+                            "width_mode": ["OFFSET", "WIDTH", "DEPTH", "ABSOLUTE"],
+                            "profile": [0.0, 1.0],
+                        },
+                    }
+                ],
+            }
         if command == "material.inspect":
             return {
                 "object_name": params["object_name"],
@@ -154,6 +210,8 @@ class FakeComparisonClient:
                 "scene_generation": self.generation,
             }
         if command == "viewport.capture":
+            if self.active is not None:
+                assert params["_view_reference_capture_id"] is not None
             image = self._image()
             return {
                 "png_base64": base64.b64encode(image).decode("ascii"),
@@ -177,13 +235,24 @@ class FakeComparisonClient:
             "shape_key.set_value",
             "material.set_input",
             "object.set",
+            "modifier.set",
         }:
             return self._write(command, params)
         if command == "transaction.rollback":
+            if self.accepted_user_save:
+                raise BridgeError(
+                    ErrorInfo(
+                        kind=ErrorKind.CONFLICT,
+                        code="TRANSACTION_ACCEPTED_BY_USER_SAVE",
+                        message="The user saved the current state",
+                    )
+                )
             return self._rollback()
         raise AssertionError(command)
 
     def _current_value(self, kind: str) -> Any:
+        if kind.startswith("typed_modifier:"):
+            return self.modifier_settings[kind.split(":", 1)[1]]
         return {
             "scale": self.scale[2],
             "visibility": self.hide_render,
@@ -194,7 +263,9 @@ class FakeComparisonClient:
         }[kind]
 
     def _set_value(self, kind: str, value: Any) -> None:
-        if kind == "scale":
+        if kind.startswith("typed_modifier:"):
+            self.modifier_settings[kind.split(":", 1)[1]] = value
+        elif kind == "scale":
             self.scale[2] = value
         elif kind == "visibility":
             self.hide_render = value
@@ -225,6 +296,10 @@ class FakeComparisonClient:
                 kind, value = "visibility", patch["hide_render"]
             else:
                 kind, value = "camera", patch["lens"]
+        elif command == "modifier.set":
+            settings = params["settings"]
+            property_name = next(key for key in settings if key != "type")
+            kind, value = f"typed_modifier:{property_name}", settings[property_name]
         else:
             kind, value = "material", params["value"]
         before = self._current_value(kind)
@@ -264,7 +339,15 @@ class FakeComparisonClient:
         self.shape_key_value = value
         self.generation += 1
 
+    def native_save(self) -> None:
+        self.active = None
+        self.accepted_user_save = True
+        self.user_intent_revision += 1
+
     def _image(self) -> bytes:
+        modifier_magnitude = sum(
+            ord(character) for character in repr(sorted(self.modifier_settings.items()))
+        )
         magnitude = (
             self.scale[2] * 11
             + int(self.hide_render) * 23
@@ -272,6 +355,7 @@ class FakeComparisonClient:
             + self.shape_key_value * 71
             + float(self.material_value) * 89
             + self.camera_lens * 3
+            + modifier_magnitude
         )
         color = int(magnitude) % 180 + 20
         image = Image.new("RGB", (32, 16), (color, 30, 210 - color))
@@ -436,6 +520,16 @@ def target(target_type: str) -> dict[str, Any]:
                 "property": "lens",
             },
         }
+    if target_type == "modifier_setting":
+        return {
+            **common,
+            "modifier_name": "Soft Edges",
+            "expected_modifier_identity": "modifier-bevel-id",
+            "expected_modifier_type": "BEVEL",
+            "expected_stack_index": 0,
+            "expected_stack_fingerprint": "f" * 64,
+            "property": "width",
+        }
     return {
         **common,
         "material_slot_index": 0,
@@ -483,6 +577,25 @@ def object_setting_request(
     )
 
 
+def modifier_setting_request(
+    property_name: str,
+    values: tuple[Any, ...],
+) -> ComparisonRequest:
+    return ComparisonRequest.model_validate(
+        {
+            "target": {
+                **target("modifier_setting"),
+                "property": property_name,
+            },
+            "candidates": [
+                {"label": chr(ord("A") + index), "value": value}
+                for index, value in enumerate(values)
+            ],
+            "capture": {"object_name": "mesh", "view": "FRONT", "max_size": 512},
+        }
+    )
+
+
 @pytest.mark.parametrize(
     ("target_type", "values", "writer"),
     [
@@ -492,6 +605,7 @@ def object_setting_request(
         ("shape_key_value", (0.1, 0.2), "shape_key.set_value"),
         ("material_input", (0.4, 0.6), "material.set_input"),
         ("object_setting", (35.0, 85.0), "object.set"),
+        ("modifier_setting", (0.2, 0.3), "modifier.set"),
     ],
 )
 def test_comparison_routes_every_target_and_restores_each_candidate(
@@ -587,6 +701,57 @@ def test_object_setting_comparison_routes_typed_light_values(
     assert client.light_values[property_name] == baseline
     assert [item["requested_value"] for item in result["candidates"]] == list(values)
     assert result["target_restored"] is True
+
+
+@pytest.mark.parametrize(
+    ("property_name", "values"),
+    [
+        ("width", (0.2, 0.3)),
+        ("segments", (3, 4)),
+        ("clamp_overlap", (False,)),
+        ("width_mode", ("WIDTH", "DEPTH")),
+    ],
+)
+def test_modifier_setting_comparison_routes_typed_values_and_restores(
+    property_name: str,
+    values: tuple[Any, ...],
+) -> None:
+    client = FakeComparisonClient()
+    baseline = client.modifier_settings[property_name]
+
+    images, result = asyncio.run(
+        run_lookdev_comparison(client, modifier_setting_request(property_name, values))
+    )
+
+    assert len(images) == len(values) + 1
+    assert client.modifier_settings[property_name] == baseline
+    assert client.commands.count("modifier.set") == len(values)
+    assert [item["requested_value"] for item in result["candidates"]] == list(values)
+    assert result["target_restored"] is True
+
+
+def test_modifier_setting_comparison_rechecks_enum_and_stack_fingerprint() -> None:
+    invalid = FakeComparisonClient()
+    with pytest.raises(BridgeError) as enum_error:
+        asyncio.run(
+            run_lookdev_comparison(
+                invalid,
+                modifier_setting_request("width_mode", ("NOT_A_MODE",)),
+            )
+        )
+    assert enum_error.value.error.code == "CANDIDATE_OUT_OF_RANGE"
+    assert "transaction.begin" not in invalid.commands
+
+    drifted = FakeComparisonClient()
+    drifted.modifier_stack_fingerprint = "0" * 64
+    with pytest.raises(BridgeError) as drift_error:
+        asyncio.run(
+            run_lookdev_comparison(
+                drifted,
+                modifier_setting_request("width", (0.2,)),
+            )
+        )
+    assert drift_error.value.error.code == "MODIFIER_STACK_CONFLICT"
 
 
 def test_object_setting_comparison_normalizes_color_and_requires_shared_authorization() -> None:
@@ -686,7 +851,7 @@ def test_context_or_identity_drift_after_rollback_is_a_restore_failure(drift: st
         del label, details
         if phase == "after_rollback":
             if drift == "context":
-                client.context_marker = "user-edit"
+                client.mode = "EDIT_MESH"
             else:
                 client.object_identity = "replacement"
 
@@ -700,6 +865,58 @@ def test_context_or_identity_drift_after_rollback_is_a_restore_failure(drift: st
         )
 
     assert exc_info.value.error.code == "COMPARISON_RESTORE_FAILED"
+
+
+def test_selection_or_view_drift_does_not_invalidate_comparison() -> None:
+    client = FakeComparisonClient()
+
+    async def drift_after_rollback(
+        phase: str,
+        label: str | None,
+        details: dict[str, Any],
+    ) -> None:
+        del label, details
+        if phase == "after_rollback":
+            client.context_marker = "user-navigation"
+
+    images, result = asyncio.run(
+        run_lookdev_comparison(
+            client,
+            request("shape_key_value", (0.1,)),
+            _phase_hook=drift_after_rollback,
+        )
+    )
+
+    assert len(images) == 2
+    assert result["target_restored"] is True
+
+
+def test_native_save_accepts_current_candidate_and_stops_without_cleanup_rollback() -> None:
+    client = FakeComparisonClient()
+
+    async def save_after_write(
+        phase: str,
+        label: str | None,
+        details: dict[str, Any],
+    ) -> None:
+        del details
+        if phase == "after_write" and label == "A":
+            client.native_save()
+
+    with pytest.raises(BridgeError) as accepted:
+        asyncio.run(
+            run_lookdev_comparison(
+                client,
+                request("shape_key_value", (0.1, 0.2)),
+                _phase_hook=save_after_write,
+            )
+        )
+
+    assert accepted.value.error.code == "COMPARISON_ACCEPTED_BY_USER_SAVE"
+    assert accepted.value.error.details["candidate_label"] == "A"
+    assert client.shape_key_value == 0.1
+    assert client.commands.count("transaction.rollback") == 0
+    assert client.commands.count("shape_key.set_value") == 1
 
 
 def test_live_range_and_material_scope_are_rechecked_before_mutation() -> None:

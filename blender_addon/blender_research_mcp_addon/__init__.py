@@ -13,7 +13,7 @@ from .state import AddonState
 bl_info = {
     "name": "Blender Research MCP",
     "author": "Blender Research MCP contributors",
-    "version": (0, 9, 0),
+    "version": (0, 11, 1),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Research MCP",
     "description": "Local semantic, observable, and reversible MCP bridge",
@@ -199,6 +199,27 @@ def _load_post(_unused: object) -> None:
         STATE.on_file_loaded()
 
 
+@persistent
+def _save_pre(filepath: str) -> None:
+    if STATE is not None:
+        try:
+            STATE.on_native_save_pre(filepath)
+        except Exception as exc:  # noqa: BLE001 - never prevent the user's native save
+            STATE.last_error = f"NATIVE_SAVE_PRE_FAILED: {type(exc).__name__}: {exc}"
+
+
+@persistent
+def _save_post(filepath: str) -> None:
+    if STATE is not None:
+        STATE.on_native_save_post(filepath)
+
+
+@persistent
+def _save_post_fail(filepath: str) -> None:
+    if STATE is not None:
+        STATE.on_native_save_failed(filepath)
+
+
 def register() -> None:
     global STATE
     for cls in CLASSES:
@@ -208,6 +229,9 @@ def register() -> None:
     STATE.start()
     bpy.app.handlers.depsgraph_update_post.append(_depsgraph_update)
     bpy.app.handlers.load_post.append(_load_post)
+    bpy.app.handlers.save_pre.append(_save_pre)
+    bpy.app.handlers.save_post.append(_save_post)
+    bpy.app.handlers.save_post_fail.append(_save_post_fail)
     bpy.app.timers.register(_timer, first_interval=0.1, persistent=True)
 
 
@@ -222,5 +246,11 @@ def unregister() -> None:
         bpy.app.handlers.depsgraph_update_post.remove(_depsgraph_update)
     if _load_post in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_load_post)
+    if _save_pre in bpy.app.handlers.save_pre:
+        bpy.app.handlers.save_pre.remove(_save_pre)
+    if _save_post in bpy.app.handlers.save_post:
+        bpy.app.handlers.save_post.remove(_save_post)
+    if _save_post_fail in bpy.app.handlers.save_post_fail:
+        bpy.app.handlers.save_post_fail.remove(_save_post_fail)
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

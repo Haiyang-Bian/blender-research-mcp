@@ -23,7 +23,18 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 再以 Eevee Next 预览/导出的语义场景创作闭环；自动化门禁和真实月光水面验收
 均已通过。0.9.0 新增统一且封闭类型的 `object.set`，可在一次原子调用中设置同一
 对象的 TRS、可见性与 Light/Camera 数据；自动化门禁和真实 Blender 4.2.23 验收
-均已通过。既有验收记录见
+均已通过。0.10.0 新增四类有界 Modifier 的完整栈创作：精确检查、创建、类型化
+设置、排序、延迟删除和候选比较；自动化门禁和真实 Blender 4.2.23 验收均已通过。
+0.10.1 修复同一事务内 linked-data 副本导致 Mesh users guard 自我失效的问题，
+并保证复制选中源对象后保存/reload 不会让副本意外进入选择集。
+0.10.2 进一步按 Blender RNA 的 float32 实际存储精度比较事务属性，避免
+`6.2` 回读为 `6.199999809...` 时误报事务外冲突，同时仍能识别相邻 ULP 修改。
+0.11.0 新增基础 Mesh 的分页检查、双指纹和事务 v4 快照，以及统一且封闭的
+`mesh.edit` 组件编辑入口；自动化门禁和 Blender 4.2.23 发布验收均已通过。
+0.11.1 将事务升级为协作语义 v5：用户可在 Agent 工作期间自由导航视图、切换
+Shading/Overlay、选择和活动对象；Blender 原生保存则作为用户接受眼前状态的最终
+意图屏障，停止后续写入和回退。
+既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
 [0.4.0 空间诊断](docs/validation/2026-08-29-spatial-diagnosis.md) 和
@@ -33,6 +44,16 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 独立比较预览回归见
 [0.6.0 比较预览](docs/validation/2026-08-30-comparative-previews.md)，统一对象设置见
 [0.9.0 对象设置](docs/validation/2026-08-30-unified-object-settings.md)。
+0.10 Modifier 创作见
+[0.10.0 验收记录](docs/validation/2026-08-30-modifier-authoring.md)。
+linked-data 事务修复见
+[0.10.1 验收记录](docs/validation/2026-08-30-linked-data-guard-hotfix.md)。
+float32 guard 与独立月光水面实作见
+[0.10.2 验收记录](docs/validation/2026-08-30-float32-guard-and-moon-water.md)，语义
+Mesh 编辑见
+[0.11.0 验收记录](docs/validation/2026-08-30-semantic-mesh-editing.md)。
+0.11.1 协作上下文与用户保存优先见
+[0.11.1 验收记录](docs/validation/2026-08-30-collaborative-ui-native-save.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -99,6 +120,49 @@ World、Modifier 和渲染继续使用各自工具。`lookdev.compare` 同时增
 详细契约见
 [0.9.0 路线图](docs/roadmap/0.9.0-unified-object-settings.md)。
 
+## 0.10.0 Modifier 创作
+
+`modifier.inspect` 返回精确对象身份、完整有序栈、每项身份与类型化设置，以及
+SHA-256 `stack_fingerprint`。`modifier.create/set/move/delete` 只支持 Mesh 上的
+Bevel、Subdivision、Solidify 和 Boolean，并在事务中守护完整栈；外部改名、增删、
+重排或受保护参数漂移都会停止回退而保留用户状态。
+
+删除在事务内先禁用并标记 `pending_delete`，commit 后才真正移除；rollback 和断线
+回退保持原 Modifier identity。Boolean 使用精确 Mesh operand identity，并拒绝
+直接/传递环；Subdivision 与 Boolean 具有确定性几何预算。`lookdev.compare` 增加
+`modifier_setting` target，但不比较 operand、创建、排序或删除。详细契约见
+[0.10.0 路线图](docs/roadmap/0.10.0-modifier-authoring.md)。
+
+## 0.11.0 语义 Mesh 编辑
+
+`mesh.inspect` 分页返回基础 Mesh 的顶点、边或面，外加对象/Mesh identity、完整
+对象用户集、预算、`topology_fingerprint` 与包含坐标、材质、平滑、UV/颜色/受支持
+属性的 `mesh_fingerprint`。组件索引只在该完整指纹下有效；拓扑修改后必须重新检查。
+
+`mesh.edit` 每次接受一个封闭语义操作：局部组件变换、面挤出/内插、边倒角、
+删除/溶解、顶点合并、面材质/平滑或法线处理。`OBJECT` scope 会在共享数据时事务性
+单用户化；`SHARED_DATA` 则修改检查所得全部共享对象。事务首次编辑保存完整 Mesh
+快照，commit 清理快照，rollback/断线回退在完整 guard 通过后恢复；用户改动返回
+冲突并保持原状。
+
+水波等视觉表面细节应优先由材质表达，Modifier 用于非破坏性整体效果，只有真实
+轮廓、结构或组件变化才使用 Mesh 编辑。0.11 不开放 UV 修改、任意数组/BMesh、
+Modifier Apply、Shape Key 拓扑或任意 Python。详细契约见
+[0.11.0 路线图](docs/roadmap/0.11.0-semantic-mesh-editing.md)。
+
+## 0.11.1 人机协作上下文与用户保存优先
+
+事务硬上下文只守护 Scene、View Layer、模式、当前帧和活动 Camera；视图矩阵、
+缩放、透视、Viewport lens、Shading、Overlay、选择和活动对象属于用户可协作的 UI
+状态。rollback 只恢复事务数据，保留用户最新 UI。比较候选固定使用基线证据矩阵，
+因此用户导航不会污染像素差异。
+
+Blender 原生 Ctrl+S、Save As 和 Save Copy 在 `save_pre` 阶段接管活动事务，保留
+保存时可见状态并取消断线回退。后续事务或比较请求收到稳定的“已由用户保存接受”
+结果后必须停止，不重复保存。MCP `project.save/open/quit` 使用 managed-save 标记，
+继续遵循既有先提交再写盘流程。架构依据见
+[decision 0011](docs/decisions/0011-collaborative-ui-and-native-save-authority.md)。
+
 ## 目录
 
 ~~~text
@@ -129,7 +193,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.9.0
+uv run --no-sync python scripts/build_addon.py --version 0.11.1
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认
@@ -168,7 +232,8 @@ Store Blender 仍可作为普通现有会话被发现和复用。
 `x/y` 传给 `viewport.raycast`，即可获得 evaluated 场景中的几何命中对象、
 世界坐标、法线和面索引。场景变化后旧 ID 返回 `CAPTURE_STALE`，调用方必须
 重新捕获。`object.geometry.inspect` 提供网格计数、bounds、材质使用、modifier
-和有界拓扑摘要，不返回原始网格数组。
+和有界求值后拓扑摘要。`mesh.inspect` 则分页返回受完整指纹约束的基础 Mesh
+组件；两者不能互换。
 
 ## 受限 LookDev 写入
 
@@ -182,6 +247,8 @@ socket，并标明类型、范围、链接、驱动和可写原因。
 - `object.set` 统一设置同一对象的 TRS、可见性与有类型的 Light/Camera 数据；
 - `object.visibility.set` 只设置 `hide_viewport` / `hide_render`；
 - `modifier.set_state` 只设置 `show_viewport` / `show_render`；
+- `modifier.create/set/move/delete` 管理四类受支持 Modifier 的类型化有序栈；
+- `mesh.edit` 在事务 v4 中修改精确基础 Mesh 组件，并显式选择对象或共享数据范围；
 - `shape_key.set_value` 只设置非 Basis、无驱动且位于现有 slider 范围内的值；
 - `material.set_input` 只设置未链接、无驱动的 Float、Int、Boolean、Vector 或
   Color `default_value`。
@@ -199,6 +266,10 @@ commit 仅保留 Blender 内存状态，仍不会保存 `.blend`。
 0.9 的 `object_setting` 比较 locator 复用 `object.set`，支持单个 transform axis、
 visibility、Light 或 Camera 字段。十六进制灯光颜色会在线性 RGB 中验证恢复，
 但报告保留调用者提交的原始 JSON 值。
+
+0.10 的 `modifier_setting` locator 携带完整对象、Modifier、类型、索引和栈指纹，
+复用 `modifier.set` 比较一个数值、整数、布尔或枚举字段。创建、删除、排序和
+Boolean operand 仍只通过显式事务操作，不进入候选比较。
 
 ## Blender 控制区域
 

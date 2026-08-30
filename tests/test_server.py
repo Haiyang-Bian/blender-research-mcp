@@ -8,7 +8,7 @@ from blender_research_mcp.server import MaterialInputValue, create_server
 
 def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     server = create_server()
-    assert server._mcp_server.version == "0.9.0"
+    assert server._mcp_server.version == "0.11.1"
     tools = asyncio.run(server.list_tools())
     assert [tool.name for tool in tools] == [
         "application.status",
@@ -25,7 +25,9 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "scene.inspect",
         "object.inspect",
         "object.geometry.inspect",
+        "mesh.inspect",
         "object.lookdev.inspect",
+        "modifier.inspect",
         "material.inspect",
         "image.inspect",
         "viewport.capture",
@@ -40,6 +42,11 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "object.transform",
         "object.visibility.set",
         "modifier.set_state",
+        "modifier.create",
+        "modifier.set",
+        "modifier.move",
+        "modifier.delete",
+        "mesh.edit",
         "shape_key.set_value",
         "material.set_input",
         "material.create",
@@ -101,9 +108,22 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     geometry = tools_by_name["object.geometry.inspect"]
     assert geometry.annotations is not None
     assert geometry.annotations.readOnlyHint is True
+    mesh_inspect = tools_by_name["mesh.inspect"]
+    assert mesh_inspect.annotations is not None
+    assert mesh_inspect.annotations.readOnlyHint is True
+    assert mesh_inspect.inputSchema["properties"]["component"]["enum"] == [
+        "summary",
+        "vertices",
+        "edges",
+        "faces",
+    ]
+    assert mesh_inspect.inputSchema["properties"]["limit"]["maximum"] == 512
     lookdev = tools_by_name["object.lookdev.inspect"]
     assert lookdev.annotations is not None
     assert lookdev.annotations.readOnlyHint is True
+    modifier_inspect = tools_by_name["modifier.inspect"]
+    assert modifier_inspect.annotations is not None
+    assert modifier_inspect.annotations.readOnlyHint is True
     material_inspect = tools_by_name["material.inspect"]
     assert material_inspect.annotations is not None
     assert material_inspect.annotations.readOnlyHint is True
@@ -134,7 +154,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     ] == 1000
     target_schema = comparison.inputSchema["properties"]["target"]
     assert target_schema["discriminator"]["propertyName"] == "type"
-    assert len(target_schema["oneOf"]) == 6
+    assert len(target_schema["oneOf"]) == 7
     scene_inspect = tools_by_name["scene.inspect"]
     assert scene_inspect.annotations is not None
     assert scene_inspect.annotations.readOnlyHint is True
@@ -182,6 +202,36 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert modifier.annotations is not None
     assert modifier.annotations.idempotentHint is True
     assert modifier.inputSchema["properties"]["expected_modifier_identity"]["maxLength"] == 128
+    modifier_create = tools_by_name["modifier.create"]
+    assert modifier_create.annotations is not None
+    assert modifier_create.annotations.destructiveHint is True
+    modifier_definition = modifier_create.inputSchema["properties"]["definition"]
+    assert modifier_definition["discriminator"]["propertyName"] == "type"
+    assert len(modifier_definition["oneOf"]) == 4
+    modifier_set = tools_by_name["modifier.set"]
+    modifier_settings = modifier_set.inputSchema["properties"]["settings"]
+    assert modifier_settings["discriminator"]["propertyName"] == "type"
+    assert len(modifier_settings["oneOf"]) == 4
+    for name in ("modifier.set", "modifier.move", "modifier.delete"):
+        tool = tools_by_name[name]
+        assert tool.annotations is not None
+        assert tool.annotations.readOnlyHint is False
+        assert tool.annotations.destructiveHint is True
+        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.openWorldHint is False
+    mesh_edit = tools_by_name["mesh.edit"]
+    assert mesh_edit.annotations is not None
+    assert mesh_edit.annotations.readOnlyHint is False
+    assert mesh_edit.annotations.destructiveHint is True
+    assert mesh_edit.annotations.idempotentHint is True
+    assert mesh_edit.annotations.openWorldHint is False
+    assert mesh_edit.inputSchema["properties"]["data_scope"]["enum"] == [
+        "OBJECT",
+        "SHARED_DATA",
+    ]
+    operation_schema = mesh_edit.inputSchema["properties"]["operation"]
+    assert operation_schema["discriminator"]["propertyName"] == "type"
+    assert len(operation_schema["oneOf"]) == 9
     shape_key = tools_by_name["shape_key.set_value"]
     assert shape_key.annotations is not None
     assert shape_key.annotations.destructiveHint is True

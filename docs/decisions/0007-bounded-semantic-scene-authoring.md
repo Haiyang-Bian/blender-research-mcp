@@ -21,6 +21,15 @@ fixed semantic node links, image color space, World state, and active Camera are
 reversible. Commit validates every guard before finalizing destructive object removal;
 rollback never overwrites a user conflict.
 
+When a later Agent-owned operation legitimately changes an already guarded resource's
+user count, it must refresh that exact guard only after the operation succeeds. This
+advances the expected Agent state without removing user-count conflict detection.
+Version 0.10.1 applies this rule to linked object-data duplication and keeps any typed
+Light/Camera data-user guard in sync as well.
+Version 0.10.2 applies the same evidence principle to Blender RNA floats: guards compare
+the float32 value Blender can actually store, while distinct float32 values remain
+conflicts.
+
 Expose a closed semantic authoring surface:
 
 - a fixed set of primitives, Empty, Camera, and four light types;

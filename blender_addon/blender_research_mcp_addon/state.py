@@ -25,13 +25,14 @@ from .capture_model import CaptureBook, CaptureEvidence
 from .context_ops import (
     ContextOperationError,
     capture_context,
+    capture_transaction_context,
     capture_viewport,
     context_summary,
     inspect_geometry,
     inspect_object,
     raycast_capture,
+    resolve_viewport,
     restore_context,
-    validate_context_snapshot,
 )
 from .generation import has_persistent_scene_update
 from .lookdev_model import LookdevModelError, normalize_material_value
@@ -64,6 +65,31 @@ from .material_authoring_ops import (
     load_image,
     material_result,
 )
+from .mesh_ops import (
+    MeshOperationError,
+    adopt_mesh_snapshots_for_native_save,
+    edit_mesh,
+    finalize_mesh_snapshots,
+    inspect_mesh,
+    restore_mesh_snapshots,
+    touch_mesh_for_test,
+    validate_mesh_snapshot_guards,
+)
+from .modifier_ops import (
+    adopt_modifier_delta_for_native_save,
+    clear_modifier_pending_deletes,
+    create_modifier,
+    delete_modifier,
+    finalize_modifier_delta,
+    inspect_modifiers,
+    move_modifier,
+    restore_modifier_delta,
+    set_modifier,
+    set_modifier_state_compat,
+    touch_modifier_for_test,
+    validate_modifier_stack_guards,
+    validate_restored_modifier_stacks,
+)
 from .object_settings_ops import apply_object_settings
 from .project_ops import (
     ProjectOperationError,
@@ -78,6 +104,7 @@ from .project_ops import (
 )
 from .runtime import ADDON_VERSION, ListenerRuntime
 from .structural_ops import (
+    adopt_structural_delta_for_native_save,
     finalize_structural_delta,
     refresh_structure_guard_if_present,
     restore_structural_delta,
@@ -86,14 +113,22 @@ from .structural_ops import (
 from .transaction_model import (
     IdempotencyCache,
     MaterialInputDelta,
+    MeshEditDelta,
+    ModifierCreateDelta,
+    ModifierDeleteDelta,
+    ModifierMoveDelta,
+    ModifierSettingsDelta,
     ModifierStateDelta,
     ShapeKeyDelta,
     StructuralDelta,
     Transaction,
     TransactionBook,
     TransactionModelError,
+    changed_context_paths,
     context_fingerprint,
     request_fingerprint,
+    transaction_context_state,
+    user_ui_context_state,
     values_equal,
 )
 from .wire import PROTOCOL_VERSION
@@ -107,7 +142,9 @@ CAPABILITIES = [
     "object.inspect",
     "scene.inspect",
     "object.geometry.inspect",
+    "mesh.inspect",
     "object.lookdev.inspect",
+    "modifier.inspect",
     "material.inspect",
     "image.inspect",
     "viewport.capture",
@@ -122,6 +159,11 @@ CAPABILITIES = [
     "object.delete",
     "object.visibility.set",
     "modifier.set_state",
+    "modifier.create",
+    "modifier.set",
+    "modifier.move",
+    "modifier.delete",
+    "mesh.edit",
     "shape_key.set_value",
     "material.set_input",
     "material.create",
@@ -146,7 +188,7 @@ CAPABILITY_VERSIONS = {
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 3,
+    "transactions": 5,
     "object_transform_scale": 1,
     "object_transform": 1,
     "object_settings": 1,
@@ -159,6 +201,8 @@ CAPABILITY_VERSIONS = {
     "render_export": 1,
     "object_visibility": 1,
     "modifier_state": 1,
+    "modifier_authoring": 1,
+    "mesh_topology": 1,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -175,6 +219,11 @@ MUTATION_COMMANDS = {
     "object.delete",
     "object.visibility.set",
     "modifier.set_state",
+    "modifier.create",
+    "modifier.set",
+    "modifier.move",
+    "modifier.delete",
+    "mesh.edit",
     "shape_key.set_value",
     "material.set_input",
     "material.create",
@@ -211,6 +260,10 @@ class AddonState:
         self._disconnect_rollback_deadline: float | None = None
         self.pending_lifecycle_operation: dict[str, Any] | None = None
         self.last_lifecycle_operation: dict[str, Any] | None = None
+        self.user_intent_revision = 0
+        self.last_user_action: dict[str, Any] | None = None
+        self._native_save_operation: dict[str, Any] | None = None
+        self._managed_save_depth = 0
 
     def start(self) -> None:
         self.runtime.start()
@@ -225,6 +278,7 @@ class AddonState:
             self.runtime.stop()
             self.snapshots.clear()
             self.captures.clear()
+            clear_modifier_pending_deletes()
 
     def restart(self) -> None:
         self.stop()
@@ -259,12 +313,53 @@ class AddonState:
     def on_file_loaded(self) -> None:
         self.snapshots.clear()
         self.captures.clear()
+        clear_modifier_pending_deletes()
         if self.transactions.active is not None:
             self.transactions.abandon("abandoned_file_load")
             self.last_error = "TRANSACTION_ABANDONED: a different blend file was loaded"
         self.idempotency = IdempotencyCache()
         self._disconnect_rollback_deadline = None
         self.scene_generation += 1
+
+    def on_native_save_pre(self, filepath: str) -> None:
+        """Accept the current visible state before Blender serializes a native save."""
+
+        if self._managed_save_depth > 0:
+            return
+        self.user_intent_revision += 1
+        operation = {
+            "operation_id": str(uuid.uuid4()),
+            "kind": "native_save",
+            "status": "accepted",
+            "path": str(filepath or bpy.data.filepath),
+            "user_intent_revision": self.user_intent_revision,
+        }
+        transaction = self._adopt_active_transaction_for_native_save(operation)
+        operation["transaction"] = transaction
+        self._native_save_operation = operation
+        self.last_user_action = operation
+        self.last_lifecycle_operation = operation
+
+    def on_native_save_post(self, filepath: str) -> None:
+        if self._managed_save_depth > 0:
+            return
+        operation = self._native_save_operation
+        if operation is None:
+            return
+        operation["status"] = "succeeded"
+        operation["path"] = str(filepath or bpy.data.filepath)
+        self._native_save_operation = None
+
+    def on_native_save_failed(self, filepath: str) -> None:
+        if self._managed_save_depth > 0:
+            return
+        operation = self._native_save_operation
+        if operation is None:
+            return
+        operation["status"] = "failed"
+        operation["path"] = str(filepath or bpy.data.filepath)
+        self.last_error = "NATIVE_SAVE_FAILED: Blender did not write the requested file"
+        self._native_save_operation = None
 
     def on_depsgraph_update(self, depsgraph: Any) -> None:
         if self._suppress_generation == 0 and has_persistent_scene_update(depsgraph):
@@ -365,6 +460,15 @@ class AddonState:
                 str(exc),
                 details=exc.details,
             )
+        except MeshOperationError as exc:
+            self.last_error = f"{exc.code}: {exc}"
+            return self._error(
+                request_id,
+                exc.kind,
+                exc.code,
+                str(exc),
+                details=exc.details,
+            )
         except Exception as exc:  # noqa: BLE001 - dispatch boundary
             self.last_error = f"{type(exc).__name__}: {exc}"
             return self._error(
@@ -372,6 +476,7 @@ class AddonState:
                 "blender_api",
                 "BLENDER_COMMAND_FAILED",
                 f"Blender command failed: {type(exc).__name__}",
+                details={"error_type": type(exc).__name__, "message": str(exc)},
             )
         finally:
             self.last_command_ms = (time.perf_counter() - started) * 1000
@@ -419,6 +524,8 @@ class AddonState:
                 "capture_focus_requirement": "none_when_window_exists",
                 "heartbeat": self.heartbeat,
                 "last_command_ms": self.last_command_ms,
+                "user_intent_revision": self.user_intent_revision,
+                "last_user_action": self.last_user_action,
             }
         if command == "_test.structure.touch":
             if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":
@@ -435,14 +542,53 @@ class AddonState:
                     f"Object does not exist: {object_name}",
                     kind="not_found",
                 )
+            action = params.get("action", "object_location")
             with self.suppress_generation():
-                obj.location.x = float(obj.location.x) + 0.25
+                if action == "object_location":
+                    obj.location.x = float(obj.location.x) + 0.25
+                    result = {
+                        "location": list(obj.location),
+                    }
+                elif action == "linked_duplicate":
+                    name = params.get("name")
+                    if not isinstance(name, str) or not name:
+                        raise ContextOperationError(
+                            "TEST_STRUCTURE_TOUCH_INVALID",
+                            "linked_duplicate requires a non-empty name",
+                            kind="validation",
+                        )
+                    if bpy.data.objects.get(name) is not None:
+                        raise ContextOperationError(
+                            "OBJECT_NAME_CONFLICT",
+                            f"An object already uses the exact name: {name}",
+                            kind="conflict",
+                        )
+                    duplicate = obj.copy()
+                    duplicate.name = name
+                    collection = (
+                        obj.users_collection[0]
+                        if obj.users_collection
+                        else bpy.context.scene.collection
+                    )
+                    collection.objects.link(duplicate)
+                    result = {
+                        "linked_duplicate": duplicate.name,
+                        "linked_duplicate_identity": session_identity("object", duplicate),
+                        "data_users": int(obj.data.users) if obj.data is not None else None,
+                    }
+                else:
+                    raise ContextOperationError(
+                        "TEST_STRUCTURE_TOUCH_INVALID",
+                        f"Unsupported structure touch action: {action}",
+                        kind="validation",
+                    )
                 bpy.context.view_layer.update()
             return {
                 "test_hook": "structure_touch",
+                "action": action,
                 "object_name": obj.name,
                 "object_identity": session_identity("object", obj),
-                "location": list(obj.location),
+                **result,
             }
         if command == "_test.property.touch":
             if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":
@@ -505,6 +651,108 @@ class AddonState:
                 "test_hook": "property_touch",
                 "target_type": target_type,
                 "value": value,
+            }
+        if command == "_test.modifier.touch":
+            if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":
+                raise ContextOperationError(
+                    "COMMAND_NOT_FOUND",
+                    f"Unsupported command: {command}",
+                    kind="not_found",
+                )
+            with self.suppress_generation():
+                return touch_modifier_for_test(params)
+        if command == "_test.mesh.touch":
+            if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":
+                raise ContextOperationError(
+                    "COMMAND_NOT_FOUND",
+                    f"Unsupported command: {command}",
+                    kind="not_found",
+                )
+            with self.suppress_generation():
+                return touch_mesh_for_test(params)
+        if command == "_test.context.touch":
+            if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":
+                raise ContextOperationError(
+                    "COMMAND_NOT_FOUND",
+                    f"Unsupported command: {command}",
+                    kind="not_found",
+                )
+            viewport = resolve_viewport(
+                str(params["viewport_id"]) if params.get("viewport_id") else None
+            )
+            region_3d = viewport.space.region_3d
+            active_name = params.get("active_object")
+            active = None
+            if active_name is not None:
+                active = bpy.data.objects.get(str(active_name))
+                if active is None or active.name not in viewport.window.view_layer.objects:
+                    raise ContextOperationError(
+                        "OBJECT_NOT_FOUND",
+                        f"Test UI object does not exist in the active View Layer: {active_name}",
+                        kind="not_found",
+                    )
+            shading = str(params.get("shading", "WIREFRAME"))
+            if shading not in {"WIREFRAME", "SOLID", "MATERIAL", "RENDERED"}:
+                raise ContextOperationError(
+                    "TEST_CONTEXT_TOUCH_INVALID",
+                    f"Unsupported test shading: {shading}",
+                    kind="validation",
+                )
+            with self.suppress_generation():
+                region_3d.view_location = tuple(
+                    float(value) + offset
+                    for value, offset in zip(
+                        region_3d.view_location,
+                        (0.75, -0.5, 0.25),
+                        strict=True,
+                    )
+                )
+                region_3d.view_rotation = (0.9659258, 0.0, 0.0, 0.258819)
+                region_3d.view_distance = max(0.1, float(region_3d.view_distance) * 0.72)
+                region_3d.view_perspective = (
+                    "ORTHO" if region_3d.view_perspective != "ORTHO" else "PERSP"
+                )
+                viewport.space.lens = min(250.0, float(viewport.space.lens) + 7.0)
+                viewport.space.shading.type = shading
+                viewport.space.overlay.show_overlays = bool(
+                    params.get("show_overlays", False)
+                )
+                if active_name is not None:
+                    for obj in viewport.window.view_layer.objects:
+                        obj.select_set(False)
+                    assert active is not None
+                    active.select_set(True)
+                    viewport.window.view_layer.objects.active = active
+                region_3d.update()
+            return {
+                "test_hook": "context_touch",
+                "context": capture_context(viewport.viewport_id),
+            }
+        if command == "_test.native_save":
+            if os.environ.get("BLENDER_RESEARCH_MCP_TEST_HOOKS") != "1":
+                raise ContextOperationError(
+                    "COMMAND_NOT_FOUND",
+                    f"Unsupported command: {command}",
+                    kind="not_found",
+                )
+            path = params.get("path")
+            if path is None:
+                result = bpy.ops.wm.save_mainfile()
+            else:
+                result = bpy.ops.wm.save_as_mainfile(
+                    filepath=str(path),
+                    check_existing=False,
+                )
+            if "FINISHED" not in result:
+                raise ContextOperationError(
+                    "TEST_NATIVE_SAVE_FAILED",
+                    f"Blender native save returned: {sorted(result)}",
+                    kind="blender_api",
+                )
+            return {
+                "test_hook": "native_save",
+                "operator_result": sorted(result),
+                "last_user_action": self.last_user_action,
             }
         if command == "context.get":
             with self.suppress_generation():
@@ -599,6 +847,26 @@ class AddonState:
                 )
             with self.suppress_generation():
                 return inspect_geometry(object_name)
+        if command == "mesh.inspect":
+            object_name = params.get("object_name")
+            component = params.get("component", "summary")
+            offset = params.get("offset", 0)
+            limit = params.get("limit", 256)
+            if not isinstance(object_name, str) or not object_name:
+                raise MeshOperationError(
+                    "OBJECT_NAME_INVALID",
+                    "object_name must be a non-empty string",
+                )
+            if not isinstance(component, str):
+                raise MeshOperationError("MESH_COMPONENT_INVALID", "component must be a string")
+            if isinstance(offset, bool) or not isinstance(offset, int):
+                raise MeshOperationError("MESH_PAGINATION_INVALID", "offset must be an integer")
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise MeshOperationError("MESH_PAGINATION_INVALID", "limit must be an integer")
+            with self.suppress_generation():
+                result = inspect_mesh(object_name, component, offset, limit)
+            result["scene_generation"] = self.scene_generation
+            return result
         if command == "object.lookdev.inspect":
             object_name = params.get("object_name")
             if not isinstance(object_name, str) or not object_name:
@@ -609,6 +877,16 @@ class AddonState:
                 )
             with self.suppress_generation():
                 return inspect_object_lookdev(object_name)
+        if command == "modifier.inspect":
+            object_name = params.get("object_name")
+            if not isinstance(object_name, str) or not object_name:
+                raise AuthoringOperationError(
+                    "OBJECT_NAME_INVALID",
+                    "object_name must be a non-empty string",
+                    kind="validation",
+                )
+            with self.suppress_generation():
+                return inspect_modifiers(object_name, self.scene_generation)
         if command == "material.inspect":
             object_name = params.get("object_name")
             material_slot_index = params.get("material_slot_index")
@@ -655,6 +933,22 @@ class AddonState:
                     "object_name must be a non-empty string",
                     kind="validation",
                 )
+            view_reference: CaptureEvidence | None = None
+            view_reference_capture_id = params.get("_view_reference_capture_id")
+            if view_reference_capture_id is not None:
+                if not isinstance(view_reference_capture_id, str) or not view_reference_capture_id:
+                    raise ContextOperationError(
+                        "CAPTURE_REFERENCE_INVALID",
+                        "_view_reference_capture_id must be a non-empty string",
+                        kind="validation",
+                    )
+                view_reference = self.captures.get(view_reference_capture_id)
+                if view_reference is None:
+                    raise ContextOperationError(
+                        "CAPTURE_REFERENCE_NOT_FOUND",
+                        f"Capture view reference does not exist: {view_reference_capture_id}",
+                        kind="not_found",
+                    )
             with self.suppress_generation():
                 result, evidence_data = capture_viewport(
                     object_name,
@@ -664,6 +958,7 @@ class AddonState:
                     str(params.get("display_mode", "CURRENT")),
                     str(params.get("overlays", "CURRENT")),
                     params.get("orbit"),
+                    view_reference,
                 )
             capture_id = str(uuid.uuid4())
             evidence = CaptureEvidence(
@@ -741,7 +1036,7 @@ class AddonState:
             transaction = self.transactions.begin(
                 label=label,
                 context_snapshot=snapshot,
-                context_fingerprint=context_fingerprint(snapshot),
+                context_fingerprint=context_fingerprint(transaction_context_state(snapshot)),
                 scene_generation=self.scene_generation,
             )
             return self._transaction_result(transaction)
@@ -819,12 +1114,34 @@ class AddonState:
                 "delta_count": len(transaction.deltas),
                 "delta_kinds": transaction.delta_kinds(),
             }
+        if command == "mesh.edit":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            with self.suppress_generation():
+                result = edit_mesh(transaction, params)
+                bpy.context.view_layer.update()
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
         if command == "object.visibility.set":
             transaction = self._require_transaction(params, request)
             return self._set_object_visibility(transaction, params)
         if command == "modifier.set_state":
             transaction = self._require_transaction(params, request)
             return self._set_modifier_state(transaction, params)
+        if command in {"modifier.create", "modifier.set", "modifier.move", "modifier.delete"}:
+            transaction = self._require_transaction(params, request)
+            return self._run_modifier_write(transaction, command, params)
         if command == "shape_key.set_value":
             transaction = self._require_transaction(params, request)
             return self._set_shape_key_value(transaction, params)
@@ -950,6 +1267,11 @@ class AddonState:
             result = self._transaction_result(transaction)
             finalized: list[dict[str, Any]] = []
             with self.suppress_generation():
+                for delta in transaction.deltas:
+                    item = finalize_modifier_delta(delta)
+                    if item is not None:
+                        finalized.append(item)
+                finalized.extend(finalize_mesh_snapshots(transaction))
                 for delta in transaction.structural_deltas():
                     item = finalize_structural_delta(delta)
                     if item is not None:
@@ -988,6 +1310,11 @@ class AddonState:
         result = self._transaction_result(transaction)
         finalized: list[dict[str, Any]] = []
         with self.suppress_generation():
+            for delta in transaction.deltas:
+                item = finalize_modifier_delta(delta)
+                if item is not None:
+                    finalized.append(item)
+            finalized.extend(finalize_mesh_snapshots(transaction))
             for delta in transaction.structural_deltas():
                 item = finalize_structural_delta(delta)
                 if item is not None:
@@ -998,6 +1325,88 @@ class AddonState:
         result["finalized"] = finalized
         self.transactions.finish(transaction, "committed")
         return result
+
+    def _adopt_active_transaction_for_native_save(
+        self,
+        operation: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        transaction = self.transactions.active
+        if transaction is None:
+            return None
+        adopted: list[dict[str, Any]] = []
+        warnings: list[dict[str, Any]] = []
+        scene_changed = False
+        try:
+            with self.suppress_generation():
+                for delta in transaction.deltas:
+                    item = adopt_modifier_delta_for_native_save(
+                        delta,
+                        transaction.transaction_id,
+                    )
+                    if item is not None:
+                        adopted.append(item)
+                        scene_changed = scene_changed or item.get("action") == (
+                            "finalized_native_save"
+                        )
+                adopted.extend(adopt_mesh_snapshots_for_native_save(transaction))
+                for delta in transaction.structural_deltas():
+                    item = adopt_structural_delta_for_native_save(delta)
+                    if item is not None:
+                        adopted.append(item)
+                        scene_changed = scene_changed or item.get("action") not in {
+                            "preserved_user_state",
+                        }
+        except Exception as exc:  # noqa: BLE001 - native saving must remain authoritative
+            code = getattr(exc, "code", type(exc).__name__)
+            warnings.append(
+                {
+                    "code": "NATIVE_SAVE_ADOPTION_PARTIAL",
+                    "cause": str(code),
+                    "message": str(exc),
+                }
+            )
+            self.last_error = f"NATIVE_SAVE_ADOPTION_PARTIAL: {code}: {exc}"
+        finally:
+            clear_modifier_pending_deletes()
+        if scene_changed:
+            self.scene_generation += 1
+        result = self._transaction_result(transaction)
+        result.update(
+            {
+                "status": "accepted_user_save",
+                "adopted": adopted,
+                "warnings": warnings,
+            }
+        )
+        terminal_details = {
+            "save_operation": {
+                "operation_id": operation["operation_id"],
+                "kind": operation["kind"],
+                "path": operation["path"],
+                "user_intent_revision": operation["user_intent_revision"],
+            }
+        }
+        transaction_id = transaction.transaction_id
+        self.transactions.finish(
+            transaction,
+            "accepted_user_save",
+            details=terminal_details,
+        )
+        self.idempotency.remove_transaction(transaction_id)
+        self._disconnect_rollback_deadline = None
+        return result
+
+    @contextlib.contextmanager
+    def _managed_save(self) -> Iterator[None]:
+        self._managed_save_depth += 1
+        try:
+            yield
+        finally:
+            self._managed_save_depth -= 1
+
+    def _run_managed_save(self, path: str | None) -> dict[str, Any]:
+        with self._managed_save():
+            return save_project(path)
 
     @staticmethod
     def _optional_save_path(params: dict[str, Any], name: str) -> str | None:
@@ -1021,7 +1430,7 @@ class AddonState:
         path = self._optional_save_path(params, "path")
         before = self._project_status()
         transaction = self._commit_active_transaction_for_lifecycle()
-        saved = save_project(path)
+        saved = self._run_managed_save(path)
         self.scene_generation += 1
         operation = {
             "operation_id": str(uuid.uuid4()),
@@ -1056,7 +1465,7 @@ class AddonState:
                 "CURRENT_PROJECT_UNTITLED",
                 "The dirty current project is untitled; provide save_current_as",
             )
-        saved = save_project(save_current_as)
+        saved = self._run_managed_save(save_current_as)
         self.scene_generation += 1
         return transaction, saved
 
@@ -1255,21 +1664,56 @@ class AddonState:
                 "transaction_id must be a non-empty string",
                 kind="validation",
             )
+        terminal = self.transactions.terminal(transaction_id)
+        if terminal is not None and terminal.get("status") == "accepted_user_save":
+            raise ContextOperationError(
+                "TRANSACTION_ACCEPTED_BY_USER_SAVE",
+                "The user saved and accepted the transaction's current visible state",
+                kind="conflict",
+                details=terminal,
+            )
         return self.transactions.require(transaction_id)
 
     def _current_context_fingerprint(self, transaction: Transaction) -> str:
+        del transaction
         with self.suppress_generation():
-            current = capture_context(transaction.context_snapshot["viewport_id"])
-        return context_fingerprint(current)
+            current = capture_transaction_context()
+        return context_fingerprint(transaction_context_state(current))
+
+    def _current_transaction_context(self) -> dict[str, Any]:
+        with self.suppress_generation():
+            return transaction_context_state(capture_transaction_context())
+
+    def _preserved_user_ui_changes(self, transaction: Transaction) -> list[str]:
+        try:
+            with self.suppress_generation():
+                current = capture_context(transaction.context_snapshot.get("viewport_id"))
+        except ContextOperationError:
+            try:
+                with self.suppress_generation():
+                    current = capture_context()
+            except ContextOperationError:
+                return ["viewport.unavailable"]
+        return changed_context_paths(
+            user_ui_context_state(transaction.context_snapshot),
+            user_ui_context_state(current),
+        )
 
     def _validate_transaction_guards(self, transaction: Transaction) -> None:
-        if self._current_context_fingerprint(transaction) != transaction.context_fingerprint:
+        current_context = self._current_transaction_context()
+        expected_context = transaction_context_state(transaction.context_snapshot)
+        if context_fingerprint(current_context) != transaction.context_fingerprint:
             transaction.status = "conflicted"
             self.transactions.last_status = "conflicted"
             raise ContextOperationError(
                 "CONTEXT_CONFLICT",
-                "User context changed while the transaction was active",
+                "A write-relevant Blender context changed while the transaction was active",
                 kind="conflict",
+                details={
+                    "changed_fields": changed_context_paths(expected_context, current_context),
+                    "expected": expected_context,
+                    "actual": current_context,
+                },
             )
         for reference, expected in transaction.expected_properties().items():
             current = read_property(reference)
@@ -1288,6 +1732,8 @@ class AddonState:
                         "actual": current,
                     },
                 )
+        validate_modifier_stack_guards(transaction)
+        validate_mesh_snapshot_guards(transaction)
         validate_structural_transaction(transaction)
 
     def _set_object_settings(
@@ -1470,13 +1916,41 @@ class AddonState:
             "delta_kinds": result["delta_kinds"],
         }
 
+    def _run_modifier_write(
+        self,
+        transaction: Transaction,
+        command: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._validate_transaction_guards(transaction)
+        handlers = {
+            "modifier.create": create_modifier,
+            "modifier.set": set_modifier,
+            "modifier.move": move_modifier,
+            "modifier.delete": delete_modifier,
+        }
+        previous_count = len(transaction.deltas)
+        with self.suppress_generation():
+            result = handlers[command](transaction, params)
+        if len(transaction.deltas) > previous_count:
+            self.scene_generation += 1
+            transaction.status = "active"
+            transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+        result.update(
+            {
+                "status": transaction.status,
+                "delta_count": len(transaction.deltas),
+                "delta_kinds": transaction.delta_kinds(),
+            }
+        )
+        return result
+
     def _set_modifier_state(
         self,
         transaction: Transaction,
         params: dict[str, Any],
     ) -> dict[str, Any]:
         self._validate_transaction_guards(transaction)
-        transaction.ensure_capacity()
         object_name = params.get("object_name")
         modifier_name = params.get("modifier_name")
         if not isinstance(object_name, str) or not object_name:
@@ -1514,25 +1988,18 @@ class AddonState:
             modifier_identity,
         )
         self._require_mutable_object(obj)
-        before = {attribute: bool(getattr(modifier, attribute)) for attribute in patch}
-        after = {attribute: bool(value) for attribute, value in patch.items()}
-        changed = sorted(attribute for attribute in after if before[attribute] != after[attribute])
-        if changed:
-            with self.suppress_generation():
-                for attribute in changed:
-                    setattr(modifier, attribute, after[attribute])
-                bpy.context.view_layer.update()
-            self._record_delta(
+        previous_count = len(transaction.deltas)
+        with self.suppress_generation():
+            before, after, changed = set_modifier_state_compat(
                 transaction,
-                ModifierStateDelta(
-                    object_name=object_name,
-                    object_identity=object_identity,
-                    modifier_name=modifier_name,
-                    modifier_identity=modifier_identity,
-                    before={attribute: before[attribute] for attribute in changed},
-                    after={attribute: after[attribute] for attribute in changed},
-                ),
+                obj,
+                modifier,
+                {attribute: bool(value) for attribute, value in patch.items()},
             )
+        if len(transaction.deltas) > previous_count:
+            self.scene_generation += 1
+            transaction.status = "active"
+            transaction.context_fingerprint = self._current_context_fingerprint(transaction)
         return {
             "transaction_id": transaction.transaction_id,
             "object_name": object_name,
@@ -1845,16 +2312,32 @@ class AddonState:
 
     def _rollback_transaction(self, transaction: Transaction) -> dict[str, Any]:
         self._validate_transaction_guards(transaction)
-        validate_context_snapshot(transaction.context_snapshot)
+        preserved_ui_changes = self._preserved_user_ui_changes(transaction)
         restored: list[dict[str, Any]] = []
+        modifier_delta_types = (
+            ModifierStateDelta,
+            ModifierSettingsDelta,
+            ModifierCreateDelta,
+            ModifierMoveDelta,
+            ModifierDeleteDelta,
+        )
         with self.suppress_generation():
             for delta in reversed(transaction.deltas):
+                if isinstance(delta, modifier_delta_types):
+                    restored.append(restore_modifier_delta(delta))
+            bpy.context.view_layer.update()
+            validate_restored_modifier_stacks(transaction)
+            restored.extend(restore_mesh_snapshots(transaction))
+            for delta in reversed(transaction.deltas):
+                if isinstance(delta, modifier_delta_types):
+                    continue
+                if isinstance(delta, MeshEditDelta):
+                    continue
                 if isinstance(delta, StructuralDelta):
                     restored.append(restore_structural_delta(delta))
                 else:
                     restored.append(restore_delta(delta))
             bpy.context.view_layer.update()
-            restore_context(transaction.context_snapshot)
         if transaction.deltas:
             self.scene_generation += 1
         result = {
@@ -1862,6 +2345,8 @@ class AddonState:
             "status": "rolled_back",
             "restored": restored,
             "context_restored": True,
+            "user_ui_preserved": True,
+            "preserved_ui_changes": preserved_ui_changes,
         }
         self.transactions.finish(transaction, "rolled_back")
         return result
