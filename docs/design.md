@@ -1,7 +1,7 @@
 # Blender Research MCP — design and handoff
 
 - Status: 0.12 SelectionSet and surface fitting validated in Blender 4.2.23
-- Next milestone: 0.13 topology revision and ComponentMap design
+- Next milestone: 0.13 topology revision and ComponentMap implementation
 - Primary Blender target: 4.2.23 LTS
 - Package and add-on version: 0.12.0
 - Protocol version: 1
@@ -398,6 +398,14 @@ to 0.14 after topology maps. The recorded 0.12 Blender gate is complete; the rea
 target correctly returned unreliable signed penetration rather than inventing a depth.
 See `docs/roadmap/0.12.0-selection-surface-fitting.md`, decision 0012, and
 `docs/validation/2026-08-31-selection-surface-fitting.md`.
+
+Version 0.13 adds exact one-revision ComponentMap resources and SelectionSet remapping
+for topology changes. Typed handlers record surviving, split, merged, derived, created,
+and deleted components without persistent Mesh attributes or coordinate guessing. The
+closed Mesh union gains subdivide, edge-ring loop cut, plane bisect, in-Mesh split,
+bridge, fill, and grid fill. Transaction capability 7 binds map validity to commit,
+rollback, disconnect, native save, and file-load lifecycle. See
+`docs/roadmap/0.13.0-topology-component-maps.md` and decision 0013.
 
 Tool count is not a success metric. A small composable surface with precise
 preconditions is preferable to dozens of overlapping convenience tools.

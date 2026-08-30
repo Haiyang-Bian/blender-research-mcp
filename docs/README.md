@@ -5,31 +5,35 @@ in this order when starting a new implementation task:
 
 1. [Design and handoff](design.md) — architecture, safety boundaries, implemented
    phases, and open decisions.
-2. [0.12.0 SelectionSet and surface-fitting roadmap](roadmap/0.12.0-selection-surface-fitting.md)
-   — current implementation target, public resource model, and acceptance gate.
-3. [General Mesh authoring requirements](requirements/general-mesh-authoring.md) —
+2. [0.13.0 topology and ComponentMap roadmap](roadmap/0.13.0-topology-component-maps.md)
+   — current implementation target, topology lineage, and acceptance gate.
+3. [0.12.0 SelectionSet and surface-fitting roadmap](roadmap/0.12.0-selection-surface-fitting.md)
+   — validated selection, surface resource, and deformation baseline.
+4. [General Mesh authoring requirements](requirements/general-mesh-authoring.md) —
    long-term selection, topology, attribute, Shape-Key, and validation direction.
-4. [Using Blender Research MCP](usage.md) — current 0.12 operator workflow and error
+5. [Using Blender Research MCP](usage.md) — current 0.12 operator workflow and error
    recovery.
-5. [Selection and evaluated-surface decision](decisions/0012-revision-bound-selection-and-surface-resources.md)
+6. [Topology lineage decision](decisions/0013-revision-aware-topology-lineage.md) —
+   one-revision ComponentMap and transaction-v7 boundary.
+7. [Selection and evaluated-surface decision](decisions/0012-revision-bound-selection-and-surface-resources.md)
    — revision resource and transaction-v6 boundary.
-6. [Collaborative UI and native-save authority](decisions/0011-collaborative-ui-and-native-save-authority.md)
+8. [Collaborative UI and native-save authority](decisions/0011-collaborative-ui-and-native-save-authority.md)
    — transaction-v5 user intent and main-thread ordering.
-7. [0.11.0 semantic Mesh editing roadmap](roadmap/0.11.0-semantic-mesh-editing.md) —
+9. [0.11.0 semantic Mesh editing roadmap](roadmap/0.11.0-semantic-mesh-editing.md) —
    exact base-Mesh pages, snapshot guards, shared scopes, and bounded topology edits.
-8. [0.10.0 Modifier authoring roadmap](roadmap/0.10.0-modifier-authoring.md) — typed
+10. [0.10.0 Modifier authoring roadmap](roadmap/0.10.0-modifier-authoring.md) — typed
    inspection, stack guards, four Modifier families, and comparison.
-9. [0.9.0 unified object settings roadmap](roadmap/0.9.0-unified-object-settings.md) —
+11. [0.9.0 unified object settings roadmap](roadmap/0.9.0-unified-object-settings.md) —
    typed object, Light, Camera, and comparison settings.
-10. [0.8.0 semantic scene authoring roadmap](roadmap/0.8.0-semantic-scene-authoring.md) —
+12. [0.8.0 semantic scene authoring roadmap](roadmap/0.8.0-semantic-scene-authoring.md) —
    structural transactions, objects, materials, local images, World/Camera, and renders.
-11. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
+13. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
    launch, project switching, implementation, and completed live evidence.
-12. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
+14. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
    implemented and live-validated comparison contract.
-13. [Architecture decisions](decisions/README.md) — accepted protocol and authority
+15. [Architecture decisions](decisions/README.md) — accepted protocol and authority
    decisions.
-14. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
+16. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
 
 ## Current release
 
