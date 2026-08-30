@@ -63,6 +63,7 @@ from blender_research_mcp.mesh_authoring import (
     MeshOperation,
     MeshUserObject,
 )
+from blender_research_mcp.mesh_batch import BatchInputs, BatchSteps, BatchTargets
 from blender_research_mcp.mesh_resources import (
     MeshDomain,
     MeshRevisionId,
@@ -1521,6 +1522,44 @@ def create_server(
                 "new_object_name": new_object_name,
                 "collection_name": collection_name,
                 "expected_collection_identity": expected_collection_identity,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="mesh.batch.execute",
+        description=(
+            "Execute one closed, declarative Mesh workflow with invocation-local aliases, "
+            "automatic SelectionSet remapping, branch maps, validation assertions, and "
+            "whole-transaction rollback on runtime failure."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def mesh_batch_execute(
+        transaction_id: TransactionId,
+        targets: BatchTargets,
+        inputs: BatchInputs,
+        steps: BatchSteps,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        on_error: Literal["ROLLBACK_TRANSACTION"] = "ROLLBACK_TRANSACTION",
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_batch")
+        client.require_capability("mesh_separation", 1)
+        client.require_capability("mesh_component_map", 2)
+        client.require_capability("mesh_topology", 3)
+        client.require_capability("transactions", 8)
+        return await client.call(
+            "mesh.batch.execute",
+            {
+                "transaction_id": transaction_id,
+                "targets": [item.model_dump() for item in targets],
+                "inputs": [item.model_dump() for item in inputs],
+                "steps": [item.model_dump(exclude_none=True) for item in steps],
+                "on_error": on_error,
             },
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,

@@ -59,6 +59,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "modifier.delete",
         "mesh.edit",
         "mesh.separate",
+        "mesh.batch.execute",
         "shape_key.set_value",
         "material.set_input",
         "material.create",
@@ -138,6 +139,19 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert mesh_separate.annotations.openWorldHint is False
     assert "data_scope" not in mesh_separate.inputSchema["properties"]
     assert mesh_separate.inputSchema["properties"]["new_object_name"]["maxLength"] == 255
+    mesh_batch = tools_by_name["mesh.batch.execute"]
+    assert mesh_batch.annotations is not None
+    assert mesh_batch.annotations.readOnlyHint is False
+    assert mesh_batch.annotations.destructiveHint is True
+    assert mesh_batch.annotations.idempotentHint is True
+    assert mesh_batch.annotations.openWorldHint is False
+    assert mesh_batch.inputSchema["properties"]["targets"]["minItems"] == 1
+    assert mesh_batch.inputSchema["properties"]["targets"]["maxItems"] == 8
+    assert mesh_batch.inputSchema["properties"]["steps"]["minItems"] == 1
+    assert mesh_batch.inputSchema["properties"]["steps"]["maxItems"] == 32
+    step_schema = mesh_batch.inputSchema["properties"]["steps"]["items"]
+    assert step_schema["discriminator"]["propertyName"] == "type"
+    assert len(step_schema["oneOf"]) == 5
     selection_query = tools_by_name["mesh.selection.query"]
     assert selection_query.annotations is not None
     assert selection_query.annotations.readOnlyHint is True

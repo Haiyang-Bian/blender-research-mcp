@@ -65,6 +65,7 @@ from .material_authoring_ops import (
     load_image,
     material_result,
 )
+from .mesh_batch_ops import MeshBatchExecutionError, execute_mesh_batch
 from .mesh_component_map import (
     compose_component_map,
     inspect_component_map,
@@ -193,6 +194,7 @@ CAPABILITIES = [
     "modifier.delete",
     "mesh.edit",
     "mesh.separate",
+    "mesh.batch.execute",
     "shape_key.set_value",
     "material.set_input",
     "material.create",
@@ -238,6 +240,7 @@ CAPABILITY_VERSIONS = {
     "mesh_validation": 1,
     "mesh_component_map": 2,
     "mesh_separation": 1,
+    "mesh_batch": 1,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -260,6 +263,7 @@ MUTATION_COMMANDS = {
     "modifier.delete",
     "mesh.edit",
     "mesh.separate",
+    "mesh.batch.execute",
     "shape_key.set_value",
     "material.set_input",
     "material.create",
@@ -1255,6 +1259,61 @@ class AddonState:
                 transaction.context_fingerprint = self._current_context_fingerprint(transaction)
             result.update(
                 {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
+        if command == "mesh.batch.execute":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            try:
+                with self.suppress_generation():
+                    result = execute_mesh_batch(
+                        transaction, self.mesh_resources, self.captures, params
+                    )
+                    bpy.context.view_layer.update()
+            except MeshBatchExecutionError as exc:
+                cause = exc.cause
+                error_code = getattr(cause, "code", "MESH_BATCH_INVALID")
+                error_kind = getattr(cause, "kind", "validation")
+                batch_details = {
+                    "batch_id": exc.batch_id,
+                    "step_index": exc.step_index,
+                    "step_type": exc.step_type,
+                    "aliases": list(exc.aliases),
+                    "underlying_code": error_code,
+                    "underlying_details": dict(getattr(cause, "details", {})),
+                }
+                try:
+                    rollback = self._rollback_transaction(transaction)
+                except Exception as restore_error:
+                    raise MeshOperationError(
+                        "MESH_BATCH_RESTORE_FAILED",
+                        "Mesh batch failed and the complete transaction could not be restored",
+                        kind="conflict",
+                        details={
+                            **batch_details,
+                            "failure": str(cause),
+                            "restore_error_type": type(restore_error).__name__,
+                            "restore_error": str(restore_error),
+                        },
+                    ) from restore_error
+                raise MeshOperationError(
+                    error_code,
+                    str(cause),
+                    kind=error_kind,
+                    details={**batch_details, "rollback": rollback},
+                ) from cause
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "scene_generation": self.scene_generation,
                     "status": transaction.status,
                     "delta_count": len(transaction.deltas),
                     "delta_kinds": transaction.delta_kinds(),
