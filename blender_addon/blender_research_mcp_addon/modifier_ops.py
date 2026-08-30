@@ -1412,14 +1412,12 @@ def adopt_modifier_delta_for_native_save(
 
     if not isinstance(delta, ModifierDeleteDelta):
         return None
-    obj = delta.payload.get("object")
-    modifier = delta.payload.get("modifier")
+    obj = bpy.data.objects.get(delta.object_name)
+    modifier = obj.modifiers.get(delta.modifier_name) if obj is not None else None
     token_matches = _PENDING_DELETE_TOKENS.get(delta.modifier_identity) == transaction_id
     identity_matches = (
         obj is not None
         and modifier is not None
-        and bpy.data.objects.get(delta.object_name) is obj
-        and obj.modifiers.get(delta.modifier_name) is modifier
         and session_identity("object", obj) == delta.object_identity
         and session_identity("modifier", modifier) == delta.modifier_identity
     )

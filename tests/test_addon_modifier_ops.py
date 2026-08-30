@@ -588,6 +588,32 @@ def test_native_save_finalizes_only_an_untouched_pending_delete() -> None:
     assert ops.modifier_pending_delete(user_modifier) is False
 
 
+def test_native_save_modifier_adoption_uses_rna_identity_not_python_wrapper_identity() -> None:
+    modifier = FakeModifier("Shell", "SOLIDIFY")
+    obj = FakeObject([modifier])
+    ops, model = _load_modules(obj)
+    transaction = _transaction(model)
+    ops.delete_modifier(transaction, _target_params(ops, obj, modifier))
+
+    wrapper = SimpleNamespace(
+        name=obj.name,
+        type=obj.type,
+        data=obj.data,
+        modifiers=obj.modifiers,
+        as_pointer=obj.as_pointer,
+    )
+    sys.modules["bpy"].data.objects = {obj.name: wrapper}
+
+    finalized = ops.adopt_modifier_delta_for_native_save(
+        transaction.deltas[-1],
+        transaction.transaction_id,
+    )
+
+    assert finalized is not None
+    assert finalized["action"] == "finalized_native_save"
+    assert obj.modifiers.get("Shell") is None
+
+
 def test_subdivision_budget_and_boolean_cycles_are_rejected_before_writes() -> None:
     subsurf = FakeModifier("Smooth", "SUBSURF")
     source = FakeObject([subsurf], name="Source")
