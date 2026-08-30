@@ -5,7 +5,7 @@ in this order when starting a new implementation task:
 
 1. [Design and handoff](design.md) — architecture, safety boundaries, implemented
    phases, and open decisions.
-2. [Using Blender Research MCP](usage.md) — current 0.10.1 operator workflow and error
+2. [Using Blender Research MCP](usage.md) — current 0.10.2 operator workflow and error
    recovery.
 3. [0.10.0 Modifier authoring roadmap](roadmap/0.10.0-modifier-authoring.md) — typed
    inspection, stack guards, four Modifier families, and comparison.
@@ -23,8 +23,9 @@ in this order when starting a new implementation task:
 
 ## Current release
 
-Version 0.10.1 retains the 0.10.0 exact ordered Modifier-stack surface and fixes
-transaction-owned linked-data user-count guards plus duplicate selection persistence.
+Version 0.10.2 retains the 0.10.0 exact ordered Modifier-stack surface, the 0.10.1
+linked-data guard repair, and compares numeric transaction evidence at Blender's
+actual float32 RNA storage precision.
 Version 0.10.0 added exact ordered Modifier-stack inspection plus create, typed set,
 reorder, deferred delete, and candidate comparison for Bevel, Subdivision, Solidify,
 and Boolean. It builds on the live-validated 0.9 unified object-setting surface.
@@ -40,6 +41,8 @@ The 0.10 automated and real Blender gates have both passed; see
 [the 0.10 validation record](validation/2026-08-30-modifier-authoring.md).
 The linked-data guard hotfix and full 0.10.1 regression are recorded in
 [the 0.10.1 validation record](validation/2026-08-30-linked-data-guard-hotfix.md).
+The float32 guard repair and independent material-wave moon-water scene are recorded in
+[the 0.10.2 validation record](validation/2026-08-30-float32-guard-and-moon-water.md).
 
 The public repository is
 [Haiyang-Bian/blender-research-mcp](https://github.com/Haiyang-Bian/blender-research-mcp).

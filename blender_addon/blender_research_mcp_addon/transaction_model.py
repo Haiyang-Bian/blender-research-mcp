@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import struct
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -347,7 +348,11 @@ def values_equal(left: PropertyValue, right: PropertyValue) -> bool:
         return type(left) is type(right) and left == right
     if isinstance(left, str) or isinstance(right, str):
         return type(left) is type(right) and left == right
-    return abs(float(left) - float(right)) <= 1e-7
+    # Blender RNA numeric properties are stored as IEEE-754 single-precision
+    # values. Compare at that storage precision so a submitted decimal such as
+    # 6.2 matches the 6.199999809... value read back from Blender, while a
+    # genuine one-ULP user edit still remains a conflict.
+    return struct.pack("<f", float(left)) == struct.pack("<f", float(right))
 
 
 @dataclass

@@ -1,4 +1,5 @@
 import importlib.util
+import struct
 import sys
 from pathlib import Path
 
@@ -130,6 +131,11 @@ def test_property_values_compare_without_bool_or_vector_coercion() -> None:
     model = load_transaction_model()
 
     assert model.values_equal(0.5, 0.50000001)
+    blender_roundtrip = struct.unpack("<f", struct.pack("<f", 6.2))[0]
+    assert model.values_equal(6.2, blender_roundtrip)
+    bits = struct.unpack("<I", struct.pack("<f", blender_roundtrip))[0]
+    next_float32 = struct.unpack("<f", struct.pack("<I", bits + 1))[0]
+    assert not model.values_equal(blender_roundtrip, next_float32)
     assert model.values_equal((0.1, 0.2, 0.3), (0.1, 0.2, 0.30000001))
     assert model.values_equal(True, True)
     assert not model.values_equal(True, 1)

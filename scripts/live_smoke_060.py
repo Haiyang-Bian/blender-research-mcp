@@ -604,6 +604,7 @@ async def run_connected(
                 "0.9.0",
                 "0.10.0",
                 "0.10.1",
+                "0.10.2",
             }:
                 raise RuntimeError(
                     f"unexpected compatible add-on version: {ping_before['addon_version']}"
@@ -615,6 +616,7 @@ async def run_connected(
                 "0.9.0",
                 "0.10.0",
                 "0.10.1",
+                "0.10.2",
             }:
                 raise RuntimeError("UI verification requires the 0.6.0+ add-on")
             baseline_context, _ = await call_structured(session, "context.get")

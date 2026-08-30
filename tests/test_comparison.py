@@ -1,4 +1,5 @@
 import io
+import struct
 
 import pytest
 from PIL import Image
@@ -9,8 +10,17 @@ from blender_research_mcp.comparison import (
     ComparisonTarget,
     image_difference_statistics,
     images_are_visually_indistinguishable,
+    property_values_equal,
     validate_evidence_image,
 )
+
+
+def test_property_values_use_blender_float32_roundtrip_semantics() -> None:
+    blender_roundtrip = struct.unpack("<f", struct.pack("<f", 6.2))[0]
+    assert property_values_equal(6.2, blender_roundtrip)
+    bits = struct.unpack("<I", struct.pack("<f", blender_roundtrip))[0]
+    next_float32 = struct.unpack("<f", struct.pack("<I", bits + 1))[0]
+    assert not property_values_equal(blender_roundtrip, next_float32)
 
 
 def target(target_type: str) -> dict[str, object]:
@@ -116,7 +126,7 @@ def test_request_bounds_labels_values_and_capture() -> None:
         ComparisonRequest.model_validate(duplicate_labels)
 
     with pytest.raises(ValidationError, match="values must be unique"):
-        ComparisonRequest.model_validate(request(values=(0.1, 0.10000001)))
+        ComparisonRequest.model_validate(request(values=(0.1, 0.100000001)))
     with pytest.raises(ValidationError):
         ComparisonRequest.model_validate(request(values=(float("nan"),)))
     with pytest.raises(ValidationError):

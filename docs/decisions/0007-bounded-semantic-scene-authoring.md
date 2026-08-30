@@ -26,6 +26,9 @@ user count, it must refresh that exact guard only after the operation succeeds. 
 advances the expected Agent state without removing user-count conflict detection.
 Version 0.10.1 applies this rule to linked object-data duplication and keeps any typed
 Light/Camera data-user guard in sync as well.
+Version 0.10.2 applies the same evidence principle to Blender RNA floats: guards compare
+the float32 value Blender can actually store, while distinct float32 values remain
+conflicts.
 
 Expose a closed semantic authoring surface:
 

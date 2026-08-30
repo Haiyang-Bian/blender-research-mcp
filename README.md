@@ -27,6 +27,8 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 设置、排序、延迟删除和候选比较；自动化门禁和真实 Blender 4.2.23 验收均已通过。
 0.10.1 修复同一事务内 linked-data 副本导致 Mesh users guard 自我失效的问题，
 并保证复制选中源对象后保存/reload 不会让副本意外进入选择集。
+0.10.2 进一步按 Blender RNA 的 float32 实际存储精度比较事务属性，避免
+`6.2` 回读为 `6.199999809...` 时误报事务外冲突，同时仍能识别相邻 ULP 修改。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -41,6 +43,8 @@ Modifier 状态、Shape Key 值和材质输入预览，包括属性冲突保护�
 [0.10.0 验收记录](docs/validation/2026-08-30-modifier-authoring.md)。
 linked-data 事务修复见
 [0.10.1 验收记录](docs/validation/2026-08-30-linked-data-guard-hotfix.md)。
+float32 guard 与独立月光水面实作见
+[0.10.2 验收记录](docs/validation/2026-08-30-float32-guard-and-moon-water.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -150,7 +154,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.10.1
+uv run --no-sync python scripts/build_addon.py --version 0.10.2
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认

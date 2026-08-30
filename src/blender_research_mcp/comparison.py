@@ -6,6 +6,7 @@ import asyncio
 import io
 import math
 import re
+import struct
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -407,7 +408,7 @@ def property_values_equal(left: Any, right: Any) -> bool:
     if isinstance(left, int) or isinstance(right, int):
         return type(left) is type(right) and left == right
     if isinstance(left, float) and isinstance(right, float):
-        return abs(left - right) <= 1e-7
+        return struct.pack("<f", left) == struct.pack("<f", right)
     if isinstance(left, str) or isinstance(right, str):
         return type(left) is type(right) and left == right
     return False
