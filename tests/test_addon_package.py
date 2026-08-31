@@ -143,7 +143,7 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
         '"mesh_topology": 4',
         '"mesh_component_map": 2',
         '"mesh_separation": 2',
-        '"mesh_batch": 1',
+        '"mesh_batch": 2',
         '"mesh_uv": 1',
         '"mesh_weights": 1',
         '"mesh_attribute_transfer": 1',

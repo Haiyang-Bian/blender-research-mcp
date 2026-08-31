@@ -174,7 +174,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert mesh_batch.inputSchema["properties"]["steps"]["maxItems"] == 32
     step_schema = mesh_batch.inputSchema["properties"]["steps"]["items"]
     assert step_schema["discriminator"]["propertyName"] == "type"
-    assert len(step_schema["oneOf"]) == 5
+    assert len(step_schema["oneOf"]) == 8
     selection_query = tools_by_name["mesh.selection.query"]
     assert selection_query.annotations is not None
     assert selection_query.annotations.readOnlyHint is True

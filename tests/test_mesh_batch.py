@@ -104,6 +104,118 @@ def test_batch_steps_cover_query_derive_edit_separate_and_validation() -> None:
     ]
 
 
+def test_batch_steps_cover_uv_weights_transfer_and_attribute_validation() -> None:
+    steps = TypeAdapter(BatchSteps).validate_python(
+        [
+            {
+                "type": "uv_edit",
+                "target_alias": "source",
+                "data_scope": "OBJECT",
+                "operation": {
+                    "type": "unwrap",
+                    "layer": {"layer_name": "UVMap", "expected_layer_identity": "uv:1"},
+                    "selection_alias": "faces",
+                },
+            },
+            {
+                "type": "weights_edit",
+                "target_alias": "source",
+                "data_scope": "OBJECT",
+                "operation": {
+                    "type": "set",
+                    "group": {
+                        "group_name": "Bone",
+                        "expected_group_identity": "group:1",
+                    },
+                    "selection_alias": "vertices",
+                    "value": 0.5,
+                },
+            },
+            {
+                "type": "attribute_transfer",
+                "source_target_alias": "source",
+                "target_alias": "patch",
+                "transfer": {
+                    "type": "WEIGHTS",
+                    "groups": [
+                        {
+                            "source": {
+                                "group_name": "Bone",
+                                "expected_group_identity": "group:1",
+                            },
+                            "target_group_name": "Bone",
+                        }
+                    ],
+                    "target_selection_alias": "patch_vertices",
+                    "mapping": "NEAREST_SURFACE",
+                    "maximum_distance": 1.0,
+                },
+            },
+            {
+                "type": "mesh_validate",
+                "selection_alias": "patch_vertices",
+                "check": "WEIGHT_SUM",
+                "output_alias": "weight_sum",
+                "group_names": ["Bone"],
+                "target_total": 1.0,
+            },
+        ]
+    )
+    assert [step.type for step in steps] == [
+        "uv_edit",
+        "weights_edit",
+        "attribute_transfer",
+        "mesh_validate",
+    ]
+
+
+def test_topology_and_separation_attribute_policies_are_closed() -> None:
+    steps = TypeAdapter(BatchSteps).validate_python(
+        [
+            {
+                "type": "mesh_edit",
+                "target_alias": "source",
+                "data_scope": "OBJECT",
+                "operation": {
+                    "type": "subdivide",
+                    "selection_alias": "edges",
+                    "attribute_policy": {"uv": "DISCARD"},
+                },
+            },
+            {
+                "type": "mesh_separate",
+                "target_alias": "source",
+                "selection_alias": "faces",
+                "new_target_alias": "patch",
+                "new_selection_alias": "patch_faces",
+                "source_map_alias": "source_map",
+                "separated_map_alias": "patch_map",
+                "new_object_name": "Patch",
+                "source_attribute_policy": {"uv": "PRESERVE_INTERPOLATE"},
+                "separated_attribute_policy": {"weights": "DISCARD"},
+            },
+        ]
+    )
+    assert steps[0].operation.attribute_policy.uv == "DISCARD"
+    assert steps[1].separated_attribute_policy.weights == "DISCARD"
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(BatchSteps).validate_python(
+            [
+                {
+                    "type": "mesh_edit",
+                    "target_alias": "source",
+                    "data_scope": "OBJECT",
+                    "operation": {
+                        "type": "subdivide",
+                        "selection_alias": "edges",
+                        "attribute_policy": {"uv": "GUESS"},
+                    },
+                }
+            ]
+        )
+
+
 @pytest.mark.parametrize(
     "operation",
     [
@@ -131,6 +243,7 @@ def test_batch_edit_operations_reject_invalid_closed_settings(
                 }
             ]
         )
+
 
 def test_batch_validation_surface_contract_is_closed() -> None:
     with pytest.raises(ValidationError):

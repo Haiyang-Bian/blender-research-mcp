@@ -1809,13 +1809,61 @@ def create_server(
         client.require_capability("mesh_component_map", 2)
         client.require_capability("mesh_topology", 3)
         client.require_capability("transactions", 8)
+        step_payloads = [item.model_dump(exclude_none=True) for item in steps]
+        requires_batch_v2 = False
+        for payload in step_payloads:
+            step_type = payload["type"]
+            if step_type == "uv_edit":
+                await require_capability(client, "mesh_uv")
+                requires_batch_v2 = True
+            elif step_type == "weights_edit":
+                await require_capability(client, "mesh_weights")
+                requires_batch_v2 = True
+            elif step_type == "attribute_transfer":
+                await require_capability(client, "mesh_attribute_transfer")
+                requires_batch_v2 = True
+            elif step_type == "mesh_validate" and payload.get("check") in {
+                "UV_BOUNDS",
+                "UV_DEGENERATE",
+                "UV_OVERLAP",
+                "UV_STRETCH",
+                "WEIGHT_SUM",
+                "WEIGHT_INFLUENCE_LIMIT",
+                "WEIGHT_UNASSIGNED",
+                "DEFORM_GROUP_MISMATCH",
+            }:
+                client.require_capability("mesh_validation", 2)
+                requires_batch_v2 = True
+            elif step_type == "mesh_edit":
+                operation_payload = payload.get("operation", {})
+                policy = operation_payload.get("attribute_policy")
+                if policy == MeshAttributePolicy().model_dump():
+                    operation_payload.pop("attribute_policy", None)
+                elif policy is not None:
+                    requires_batch_v2 = True
+            elif step_type == "mesh_separate":
+                source_policy = payload.get("source_attribute_policy")
+                separated_policy = payload.get("separated_attribute_policy")
+                default_policy = MeshAttributePolicy().model_dump()
+                if source_policy == default_policy:
+                    payload.pop("source_attribute_policy", None)
+                else:
+                    requires_batch_v2 = True
+                if separated_policy == default_policy:
+                    payload.pop("separated_attribute_policy", None)
+                else:
+                    requires_batch_v2 = True
+        if requires_batch_v2:
+            client.require_capability("mesh_batch", 2)
+            client.require_capability("mesh_topology", 4)
+            client.require_capability("transactions", 9)
         return await client.call(
             "mesh.batch.execute",
             {
                 "transaction_id": transaction_id,
                 "targets": [item.model_dump() for item in targets],
                 "inputs": [item.model_dump() for item in inputs],
-                "steps": [item.model_dump(exclude_none=True) for item in steps],
+                "steps": step_payloads,
                 "on_error": on_error,
             },
             expected_scene_generation=expected_scene_generation,

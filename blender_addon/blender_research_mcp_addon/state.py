@@ -256,7 +256,7 @@ CAPABILITY_VERSIONS = {
     "mesh_validation": 2,
     "mesh_component_map": 2,
     "mesh_separation": 2,
-    "mesh_batch": 1,
+    "mesh_batch": 2,
     "mesh_uv": 1,
     "mesh_weights": 1,
     "mesh_attribute_transfer": 1,
