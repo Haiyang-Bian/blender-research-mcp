@@ -240,7 +240,7 @@ CAPABILITY_VERSIONS = {
     "mesh_selection": 1,
     "mesh_surface_query": 1,
     "mesh_deformation": 1,
-    "mesh_validation": 1,
+    "mesh_validation": 2,
     "mesh_component_map": 2,
     "mesh_separation": 1,
     "mesh_batch": 1,

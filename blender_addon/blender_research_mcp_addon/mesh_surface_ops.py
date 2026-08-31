@@ -12,6 +12,7 @@ from typing import Any
 import bpy
 from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
+from mathutils.geometry import intersect_tri_tri_2d
 
 from .lookdev_ops import session_identity
 from .mesh_ops import mesh_revision_id
@@ -22,6 +23,7 @@ from .mesh_resource_model import (
     SelectionRecord,
     SurfaceRecord,
 )
+from .mesh_uv_ops import uv_fingerprint
 
 
 def _matrix_rows(matrix: Matrix) -> tuple[tuple[float, float, float, float], ...]:
@@ -79,14 +81,11 @@ def _geometry_from_object(
         mesh.calc_loop_triangles()
         world = obj.matrix_world
         vertices = tuple(
-            tuple(float(value) for value in (world @ vertex.co))
-            for vertex in mesh.vertices
+            tuple(float(value) for value in (world @ vertex.co)) for vertex in mesh.vertices
         )
         triangles = tuple(tuple(map(int, triangle.vertices)) for triangle in mesh.loop_triangles)
         if not vertices or not triangles:
-            raise MeshResourceError(
-                "MESH_SURFACE_EMPTY", f"Surface geometry is empty: {obj.name}"
-            )
+            raise MeshResourceError("MESH_SURFACE_EMPTY", f"Surface geometry is empty: {obj.name}")
         if len(triangles) > 2_000_000:
             raise MeshResourceError(
                 "MESH_RESOURCE_BUDGET_EXCEEDED", "Surface exceeds 2000000 triangles"
@@ -127,9 +126,7 @@ def prepare_surface(book: MeshResourceBook, params: dict[str, Any]) -> dict[str,
     obj = _surface_object(params)
     geometry = params.get("geometry", "EVALUATED")
     if geometry not in {"BASE", "EVALUATED"}:
-        raise MeshResourceError(
-            "MESH_SURFACE_QUERY_INVALID", "geometry must be BASE or EVALUATED"
-        )
+        raise MeshResourceError("MESH_SURFACE_QUERY_INVALID", "geometry must be BASE or EVALUATED")
     vertices, triangles = _geometry_from_object(obj, geometry)
     closed, oriented = _closed_and_oriented(triangles)
     surface = SurfaceRecord(
@@ -304,13 +301,9 @@ def query_surface(book: MeshResourceBook, params: dict[str, Any]) -> dict[str, A
             raise MeshResourceError(
                 "MESH_SURFACE_QUERY_INVALID", "RAYCAST requires a world-space direction"
             )
-        direction = Vector(
-            tuple(float(direction_raw[name]) for name in ("x", "y", "z"))
-        )
+        direction = Vector(tuple(float(direction_raw[name]) for name in ("x", "y", "z")))
         if direction.length_squared == 0:
-            raise MeshResourceError(
-                "MESH_SURFACE_QUERY_INVALID", "Ray direction must be non-zero"
-            )
+            raise MeshResourceError("MESH_SURFACE_QUERY_INVALID", "Ray direction must be non-zero")
         direction.normalize()
     values: list[float] = []
     signed_values: list[float] = []
@@ -405,16 +398,201 @@ def _selection_from_indices(
     return record.summary()
 
 
+def _uv_validation_layer(
+    selection: SelectionRecord,
+    mesh: Any,
+    params: dict[str, Any],
+) -> Any:
+    if selection.domain != "FACE":
+        raise MeshResourceError(
+            "MESH_VALIDATION_INVALID", "UV validation requires a FACE SelectionSet"
+        )
+    layer_name = params.get("layer_name")
+    layer = mesh.uv_layers.get(layer_name) if isinstance(layer_name, str) else mesh.uv_layers.active
+    if layer is None:
+        raise MeshResourceError(
+            "MESH_UV_LAYER_NOT_FOUND", "UV validation requires an existing UV layer"
+        )
+    expected = params.get("expected_uv_fingerprint")
+    actual = uv_fingerprint(mesh)
+    if expected is not None and expected != actual:
+        raise MeshResourceError(
+            "MESH_UV_FINGERPRINT_MISMATCH",
+            "UV validation evidence changed",
+            kind="conflict",
+            details={"expected": expected, "actual": actual},
+        )
+    return layer
+
+
+def _uv_face_points(mesh: Any, layer: Any, face_index: int) -> list[tuple[float, float]]:
+    face = mesh.polygons[face_index]
+    return [
+        tuple(float(value) for value in layer.data[loop_index].uv)
+        for loop_index in range(int(face.loop_start), int(face.loop_start + face.loop_total))
+    ]
+
+
+def _uv_polygon_area(points: list[tuple[float, float]]) -> float:
+    return abs(
+        sum(
+            points[index][0] * points[(index + 1) % len(points)][1]
+            - points[(index + 1) % len(points)][0] * points[index][1]
+            for index in range(len(points))
+        )
+        * 0.5
+    )
+
+
+def _uv_triangles(
+    mesh: Any,
+    layer: Any,
+    face_indices: tuple[int, ...],
+) -> list[tuple[int, tuple[Vector, Vector, Vector], tuple[float, float, float, float]]]:
+    triangles = []
+    for face_index in face_indices:
+        points = _uv_face_points(mesh, layer, face_index)
+        for offset in range(1, len(points) - 1):
+            triangle = (Vector(points[0]), Vector(points[offset]), Vector(points[offset + 1]))
+            xs = [point.x for point in triangle]
+            ys = [point.y for point in triangle]
+            triangles.append((face_index, triangle, (min(xs), min(ys), max(xs), max(ys))))
+    return triangles
+
+
+def _uv_overlap_faces(mesh: Any, layer: Any, face_indices: tuple[int, ...]) -> tuple[int, ...]:
+    triangles = sorted(_uv_triangles(mesh, layer, face_indices), key=lambda item: item[2][0])
+    active: list[tuple[int, tuple[Vector, Vector, Vector], tuple[float, float, float, float]]] = []
+    overlap: set[int] = set()
+    candidate_count = 0
+    for current in triangles:
+        current_face, current_points, current_bounds = current
+        active = [item for item in active if item[2][2] >= current_bounds[0]]
+        for other_face, other_points, other_bounds in active:
+            if other_face == current_face:
+                continue
+            if other_bounds[3] <= current_bounds[1] or current_bounds[3] <= other_bounds[1]:
+                continue
+            candidate_count += 1
+            if candidate_count > 2_000_000:
+                raise MeshResourceError(
+                    "MESH_VALIDATION_BUDGET_EXCEEDED",
+                    "UV overlap broad-phase exceeded the bounded candidate budget",
+                )
+            if intersect_tri_tri_2d(*current_points, *other_points):
+                overlap.update((current_face, other_face))
+        active.append(current)
+    return tuple(sorted(overlap))
+
+
+def _uv_statistics(values: list[float]) -> dict[str, Any]:
+    if not values:
+        return {
+            "minimum": None,
+            "maximum": None,
+            "mean": None,
+            "rms": None,
+            "p50": None,
+            "p95": None,
+        }
+    return {
+        "minimum": min(values),
+        "maximum": max(values),
+        "mean": fmean(values),
+        "rms": math.sqrt(fmean(value * value for value in values)),
+        "p50": _percentile(values, 0.5),
+        "p95": _percentile(values, 0.95),
+    }
+
+
+def _validate_uv(
+    book: MeshResourceBook,
+    selection: SelectionRecord,
+    mesh: Any,
+    check: str,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    layer = _uv_validation_layer(selection, mesh, params)
+    tolerance = float(params.get("tolerance", 1e-6))
+    threshold_raw = params.get("threshold")
+    threshold = float(threshold_raw) if threshold_raw is not None else tolerance
+    faces = tuple(selection.indices)
+    if check == "UV_BOUNDS":
+        violations = tuple(
+            face_index
+            for face_index in faces
+            if any(
+                value < -tolerance or value > 1.0 + tolerance
+                for point in _uv_face_points(mesh, layer, face_index)
+                for value in point
+            )
+        )
+        return {
+            "check": check,
+            "count": len(violations),
+            "selection": _selection_from_indices(book, selection, "FACE", violations, check),
+            "bounds": [0.0, 1.0],
+            "tolerance": tolerance,
+        }
+    if check == "UV_DEGENERATE":
+        areas = [_uv_polygon_area(_uv_face_points(mesh, layer, face_index)) for face_index in faces]
+        violations = tuple(
+            face_index for face_index, area in zip(faces, areas, strict=True) if area <= tolerance
+        )
+        return {
+            "check": check,
+            "count": len(violations),
+            "selection": _selection_from_indices(book, selection, "FACE", violations, check),
+            "uv_area": _uv_statistics(areas),
+            "tolerance": tolerance,
+        }
+    if check == "UV_OVERLAP":
+        violations = _uv_overlap_faces(mesh, layer, faces)
+        return {
+            "check": check,
+            "count": len(violations),
+            "selection": _selection_from_indices(book, selection, "FACE", violations, check),
+        }
+    if check == "UV_STRETCH":
+        ratios: list[float] = []
+        valid_faces: list[int] = []
+        for face_index in faces:
+            uv_area = _uv_polygon_area(_uv_face_points(mesh, layer, face_index))
+            mesh_area = float(mesh.polygons[face_index].area)
+            if uv_area > tolerance and mesh_area > tolerance:
+                ratios.append(uv_area / mesh_area)
+                valid_faces.append(face_index)
+        median = _percentile(ratios, 0.5) if ratios else 0.0
+        stretch = [
+            max(value / median, median / value) - 1.0 if median > 0 and value > 0 else 0.0
+            for value in ratios
+        ]
+        violations = tuple(
+            face_index
+            for face_index, value in zip(valid_faces, stretch, strict=True)
+            if value > threshold
+        )
+        return {
+            "check": check,
+            "count": len(violations),
+            "selection": _selection_from_indices(book, selection, "FACE", violations, check),
+            "stretch": _uv_statistics(stretch),
+            "threshold": threshold,
+            "reference_area_ratio": median,
+        }
+    raise MeshResourceError("MESH_VALIDATION_INVALID", f"Unsupported UV validation: {check}")
+
+
 def validate_mesh(book: MeshResourceBook, params: dict[str, Any]) -> dict[str, Any]:
     selection_id = params.get("selection_id")
     check = params.get("check")
     if not isinstance(selection_id, str) or not isinstance(check, str):
-        raise MeshResourceError(
-            "MESH_VALIDATION_INVALID", "selection_id and check are required"
-        )
+        raise MeshResourceError("MESH_VALIDATION_INVALID", "selection_id and check are required")
     selection = book.selection(selection_id)
     obj, mesh = validate_selection(selection)
     tolerance = float(params.get("tolerance", 1e-6))
+    if check in {"UV_BOUNDS", "UV_DEGENERATE", "UV_OVERLAP", "UV_STRETCH"}:
+        return _validate_uv(book, selection, mesh, check, params)
     if check == "NON_MANIFOLD":
         counts = _mesh_edge_face_counts(mesh)
         indices = tuple(index for index, count in enumerate(counts) if count != 2)
@@ -434,9 +612,7 @@ def validate_mesh(book: MeshResourceBook, params: dict[str, Any]) -> dict[str, A
     if check in {"DISTANCE", "PENETRATION"}:
         surface_id = params.get("surface_id")
         if not isinstance(surface_id, str):
-            raise MeshResourceError(
-                "MESH_VALIDATION_INVALID", f"{check} requires surface_id"
-            )
+            raise MeshResourceError("MESH_VALIDATION_INVALID", f"{check} requires surface_id")
         query_params = {
             "selection_id": selection_id,
             "surface_id": surface_id,
@@ -479,8 +655,6 @@ def validate_mesh(book: MeshResourceBook, params: dict[str, Any]) -> dict[str, A
         polygon_indices = tuple(
             sorted({int(mesh.loop_triangles[index].polygon_index) for index in intersecting})
         )
-        result_selection = _selection_from_indices(
-            book, selection, "FACE", polygon_indices, check
-        )
+        result_selection = _selection_from_indices(book, selection, "FACE", polygon_indices, check)
         return {"check": check, "count": len(polygon_indices), "selection": result_selection}
     raise MeshResourceError("MESH_VALIDATION_INVALID", f"Unsupported validation: {check}")

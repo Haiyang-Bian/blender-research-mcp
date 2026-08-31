@@ -393,4 +393,8 @@ ValidationCheck = Literal[
     "TARGET_INTERSECTION",
     "DISTANCE",
     "PENETRATION",
+    "UV_BOUNDS",
+    "UV_DEGENERATE",
+    "UV_OVERLAP",
+    "UV_STRETCH",
 ]

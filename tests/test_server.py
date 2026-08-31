@@ -24,21 +24,21 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "context.restore",
         "scene.inspect",
         "object.inspect",
-            "object.geometry.inspect",
-            "mesh.inspect",
-            "mesh.uv.inspect",
-            "mesh.selection.query",
-            "mesh.selection.derive",
-            "mesh.selection.inspect",
-            "mesh.selection.release",
-            "mesh.component_map.inspect",
-            "mesh.component_map.release",
-            "mesh.component_map.compose",
-            "mesh.selection.remap",
-            "mesh.surface.prepare",
-            "mesh.surface.query",
-            "mesh.validate",
-            "object.lookdev.inspect",
+        "object.geometry.inspect",
+        "mesh.inspect",
+        "mesh.uv.inspect",
+        "mesh.selection.query",
+        "mesh.selection.derive",
+        "mesh.selection.inspect",
+        "mesh.selection.release",
+        "mesh.component_map.inspect",
+        "mesh.component_map.release",
+        "mesh.component_map.compose",
+        "mesh.selection.remap",
+        "mesh.surface.prepare",
+        "mesh.surface.query",
+        "mesh.validate",
+        "object.lookdev.inspect",
         "modifier.inspect",
         "material.inspect",
         "image.inspect",
@@ -201,7 +201,9 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "RAYCAST",
     ]
     validation = tools_by_name["mesh.validate"]
-    assert len(validation.inputSchema["properties"]["check"]["enum"]) == 7
+    assert len(validation.inputSchema["properties"]["check"]["enum"]) == 11
+    assert "layer_name" in validation.inputSchema["properties"]
+    assert "expected_uv_fingerprint" in validation.inputSchema["properties"]
     lookdev = tools_by_name["object.lookdev.inspect"]
     assert lookdev.annotations is not None
     assert lookdev.annotations.readOnlyHint is True
@@ -233,9 +235,10 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert comparison.annotations.openWorldHint is False
     assert comparison.inputSchema["properties"]["candidates"]["minItems"] == 1
     assert comparison.inputSchema["properties"]["candidates"]["maxItems"] == 3
-    assert comparison.inputSchema["$defs"]["ComparisonCapture"]["properties"]["max_size"][
-        "maximum"
-    ] == 1000
+    assert (
+        comparison.inputSchema["$defs"]["ComparisonCapture"]["properties"]["max_size"]["maximum"]
+        == 1000
+    )
     target_schema = comparison.inputSchema["properties"]["target"]
     assert target_schema["discriminator"]["propertyName"] == "type"
     assert len(target_schema["oneOf"]) == 7
@@ -254,9 +257,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     object_duplicate = tools_by_name["object.duplicate"]
     assert object_duplicate.inputSchema["properties"]["linked_data"]["default"] is False
     object_delete = tools_by_name["object.delete"]
-    assert object_delete.inputSchema["properties"]["expected_object_identity"][
-        "maxLength"
-    ] == 128
+    assert object_delete.inputSchema["properties"]["expected_object_identity"]["maxLength"] == 128
     object_set = tools_by_name["object.set"]
     assert object_set.annotations is not None
     assert object_set.annotations.readOnlyHint is False
@@ -279,9 +280,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     visibility = tools_by_name["object.visibility.set"]
     assert visibility.annotations is not None
     assert visibility.annotations.destructiveHint is True
-    assert visibility.inputSchema["properties"]["hide_viewport"]["anyOf"][0]["type"] == (
-        "boolean"
-    )
+    assert visibility.inputSchema["properties"]["hide_viewport"]["anyOf"][0]["type"] == ("boolean")
     modifier = tools_by_name["modifier.set_state"]
     assert modifier.annotations is not None
     assert modifier.annotations.idempotentHint is True
@@ -368,17 +367,13 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     ]
     assert texture_bind.inputSchema["properties"]["replace_existing"]["default"] is False
     texture_clear = tools_by_name["material.texture.clear"]
-    assert texture_clear.inputSchema["properties"]["expected_link_identities"][
-        "minItems"
-    ] == 1
+    assert texture_clear.inputSchema["properties"]["expected_link_identities"]["minItems"] == 1
     world_set = tools_by_name["world.set"]
     assert world_set.inputSchema["properties"]["allow_shared"]["default"] is False
     assert world_set.annotations is not None
     assert world_set.annotations.destructiveHint is True
     scene_camera = tools_by_name["scene.camera.set"]
-    assert scene_camera.inputSchema["properties"]["expected_camera_identity"][
-        "maxLength"
-    ] == 128
+    assert scene_camera.inputSchema["properties"]["expected_camera_identity"]["maxLength"] == 128
     render_preview = tools_by_name["render.preview"]
     assert render_preview.annotations is not None
     assert render_preview.annotations.readOnlyHint is False
