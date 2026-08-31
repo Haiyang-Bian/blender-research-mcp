@@ -26,6 +26,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "object.inspect",
             "object.geometry.inspect",
             "mesh.inspect",
+            "mesh.uv.inspect",
             "mesh.selection.query",
             "mesh.selection.derive",
             "mesh.selection.inspect",
@@ -58,6 +59,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "modifier.move",
         "modifier.delete",
         "mesh.edit",
+        "mesh.uv.edit",
         "mesh.separate",
         "mesh.batch.execute",
         "shape_key.set_value",
@@ -131,6 +133,16 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "faces",
     ]
     assert mesh_inspect.inputSchema["properties"]["limit"]["maximum"] == 512
+    mesh_uv_inspect = tools_by_name["mesh.uv.inspect"]
+    assert mesh_uv_inspect.annotations is not None
+    assert mesh_uv_inspect.annotations.readOnlyHint is True
+    assert mesh_uv_inspect.inputSchema["properties"]["component"]["enum"] == [
+        "SUMMARY",
+        "FACES",
+        "LOOPS",
+        "ISLANDS",
+        "SEAMS",
+    ]
     mesh_separate = tools_by_name["mesh.separate"]
     assert mesh_separate.annotations is not None
     assert mesh_separate.annotations.readOnlyHint is False
@@ -304,6 +316,15 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     operation_schema = mesh_edit.inputSchema["properties"]["operation"]
     assert operation_schema["discriminator"]["propertyName"] == "type"
     assert len(operation_schema["oneOf"]) == 23
+    mesh_uv_edit = tools_by_name["mesh.uv.edit"]
+    assert mesh_uv_edit.annotations is not None
+    assert mesh_uv_edit.annotations.readOnlyHint is False
+    assert mesh_uv_edit.annotations.destructiveHint is True
+    assert mesh_uv_edit.annotations.idempotentHint is True
+    assert mesh_uv_edit.annotations.openWorldHint is False
+    uv_operation = mesh_uv_edit.inputSchema["properties"]["operation"]
+    assert uv_operation["discriminator"]["propertyName"] == "type"
+    assert len(uv_operation["oneOf"]) == 9
     shape_key = tools_by_name["shape_key.set_value"]
     assert shape_key.annotations is not None
     assert shape_key.annotations.destructiveHint is True

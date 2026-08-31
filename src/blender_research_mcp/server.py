@@ -57,6 +57,7 @@ from blender_research_mcp.lifecycle import (
     DEFAULT_LAUNCH_TIMEOUT_SECONDS,
     ApplicationManager,
 )
+from blender_research_mcp.mesh_attributes import MeshUVComponent, UVOperation
 from blender_research_mcp.mesh_authoring import (
     MeshComponent,
     MeshDataScope,
@@ -458,6 +459,35 @@ def create_server(
             "mesh.inspect",
             {
                 "object_name": object_name,
+                "component": component,
+                "offset": offset,
+                "limit": limit,
+            },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.uv.inspect",
+        description=(
+            "Inspect exact UV layers, roles, seams, pins, loops, faces, and islands "
+            "without changing Blender or UV Editor selection."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_uv_inspect(
+        object_name: ObjectName,
+        layer_name: Annotated[str, Field(min_length=1, max_length=255)] | None = None,
+        component: MeshUVComponent = "SUMMARY",
+        offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=512)] = 256,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_uv")
+        return await client.call(
+            "mesh.uv.inspect",
+            {
+                "object_name": object_name,
+                "layer_name": layer_name,
                 "component": component,
                 "offset": offset,
                 "limit": limit,
@@ -1453,6 +1483,65 @@ def create_server(
                     item.model_dump() for item in expected_mesh_user_objects
                 ],
                 "expected_mesh_fingerprint": expected_mesh_fingerprint,
+                "data_scope": data_scope,
+                "operation": operation.model_dump(exclude_none=True),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="mesh.uv.edit",
+        description=(
+            "Edit exact UV layers, seams, pins, coordinates, islands, unwraps, or packs "
+            "inside an active transaction without changing user UI selection."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def mesh_uv_edit(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_mesh_identity: SessionIdentity,
+        expected_mesh_users: DataUsers,
+        expected_mesh_user_objects: Annotated[
+            tuple[MeshUserObject, ...], Field(min_length=1, max_length=256)
+        ],
+        expected_mesh_fingerprint: Annotated[str, Field(min_length=64, max_length=64)],
+        expected_uv_fingerprint: Annotated[str, Field(min_length=64, max_length=64)],
+        data_scope: MeshDataScope,
+        operation: UVOperation,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_uv")
+        client.require_capability("transactions", 9)
+        if len(
+            {
+                (item.object_name, item.expected_object_identity)
+                for item in expected_mesh_user_objects
+            }
+        ) != len(expected_mesh_user_objects):
+            raise ValueError("expected_mesh_user_objects must be unique")
+        if expected_mesh_users != len(expected_mesh_user_objects):
+            raise ValueError(
+                "expected_mesh_users must equal the number of expected_mesh_user_objects"
+            )
+        return await client.call(
+            "mesh.uv.edit",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "expected_mesh_identity": expected_mesh_identity,
+                "expected_mesh_users": expected_mesh_users,
+                "expected_mesh_user_objects": [
+                    item.model_dump() for item in expected_mesh_user_objects
+                ],
+                "expected_mesh_fingerprint": expected_mesh_fingerprint,
+                "expected_uv_fingerprint": expected_uv_fingerprint,
                 "data_scope": data_scope,
                 "operation": operation.model_dump(exclude_none=True),
             },

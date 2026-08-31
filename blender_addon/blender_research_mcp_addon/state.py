@@ -93,6 +93,7 @@ from .mesh_resource_model import MeshResourceBook, MeshResourceError
 from .mesh_separation_ops import separate_mesh
 from .mesh_surface_ops import prepare_surface, query_surface, validate_mesh
 from .mesh_topology_ops import TOPOLOGY_OPERATIONS, edit_mesh_topology
+from .mesh_uv_ops import edit_uv, inspect_uv
 from .modifier_ops import (
     adopt_modifier_delta_for_native_save,
     clear_modifier_pending_deletes,
@@ -161,6 +162,7 @@ CAPABILITIES = [
     "scene.inspect",
     "object.geometry.inspect",
     "mesh.inspect",
+    "mesh.uv.inspect",
     "mesh.selection.query",
     "mesh.selection.derive",
     "mesh.selection.inspect",
@@ -193,6 +195,7 @@ CAPABILITIES = [
     "modifier.move",
     "modifier.delete",
     "mesh.edit",
+    "mesh.uv.edit",
     "mesh.separate",
     "mesh.batch.execute",
     "shape_key.set_value",
@@ -219,7 +222,7 @@ CAPABILITY_VERSIONS = {
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 8,
+    "transactions": 9,
     "object_transform_scale": 1,
     "object_transform": 1,
     "object_settings": 1,
@@ -241,6 +244,7 @@ CAPABILITY_VERSIONS = {
     "mesh_component_map": 2,
     "mesh_separation": 1,
     "mesh_batch": 1,
+    "mesh_uv": 1,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -262,6 +266,7 @@ MUTATION_COMMANDS = {
     "modifier.move",
     "modifier.delete",
     "mesh.edit",
+    "mesh.uv.edit",
     "mesh.separate",
     "mesh.batch.execute",
     "shape_key.set_value",
@@ -766,9 +771,7 @@ class AddonState:
                 )
                 viewport.space.lens = min(250.0, float(viewport.space.lens) + 7.0)
                 viewport.space.shading.type = shading
-                viewport.space.overlay.show_overlays = bool(
-                    params.get("show_overlays", False)
-                )
+                viewport.space.overlay.show_overlays = bool(params.get("show_overlays", False))
                 if active_name is not None:
                     for obj in viewport.window.view_layer.objects:
                         obj.select_set(False)
@@ -917,6 +920,25 @@ class AddonState:
                 raise MeshOperationError("MESH_PAGINATION_INVALID", "limit must be an integer")
             with self.suppress_generation():
                 result = inspect_mesh(object_name, component, offset, limit)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.uv.inspect":
+            object_name = params.get("object_name")
+            if not isinstance(object_name, str) or not object_name:
+                raise MeshOperationError("OBJECT_NAME_INVALID", "object_name must be non-empty")
+            layer_name = params.get("layer_name")
+            if layer_name is not None and (not isinstance(layer_name, str) or not layer_name):
+                raise MeshOperationError(
+                    "MESH_UV_LAYER_NAME_INVALID", "layer_name must be non-empty or null"
+                )
+            with self.suppress_generation():
+                result = inspect_uv(
+                    object_name,
+                    layer_name,
+                    str(params.get("component", "SUMMARY")),
+                    int(params.get("offset", 0)),
+                    int(params.get("limit", 256)),
+                )
             result["scene_generation"] = self.scene_generation
             return result
         if command == "mesh.selection.query":
@@ -1233,6 +1255,25 @@ class AddonState:
                     result = edit_mesh_topology(transaction, self.mesh_resources, params)
                 else:
                     result = edit_mesh(transaction, params, self.mesh_resources)
+                bpy.context.view_layer.update()
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
+        if command == "mesh.uv.edit":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            with self.suppress_generation():
+                result = edit_uv(transaction, self.mesh_resources, params)
                 bpy.context.view_layer.update()
             if len(transaction.deltas) > previous_count:
                 self.scene_generation += 1

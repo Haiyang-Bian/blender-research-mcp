@@ -154,6 +154,7 @@ def mesh_fingerprint(mesh: Any) -> str:
     _hash_foreach(hasher, mesh.edges, "select", "b", 1)
     _hash_foreach(hasher, mesh.edges, "hide", "b", 1)
     _hash_foreach(hasher, mesh.edges, "use_edge_sharp", "b", 1)
+    _hash_foreach(hasher, mesh.edges, "use_seam", "b", 1)
     _hash_foreach(hasher, mesh.polygons, "material_index", "i", 1)
     _hash_foreach(hasher, mesh.polygons, "use_smooth", "b", 1)
     _hash_foreach(hasher, mesh.polygons, "select", "b", 1)
@@ -165,6 +166,14 @@ def mesh_fingerprint(mesh: Any) -> str:
             session_identity("material", material) if material is not None else None,
         )
     _hash_attributes(hasher, mesh)
+    _hash_text(hasher, int(getattr(mesh.uv_layers, "active_index", -1)))
+    for layer in mesh.uv_layers:
+        _hash_text(hasher, layer.name)
+        _hash_text(hasher, bool(getattr(layer, "active_render", False)))
+        _hash_text(hasher, bool(getattr(layer, "active_clone", False)))
+        for prop in ("pin_uv",):
+            if len(layer.data) and hasattr(layer.data[0], prop):
+                _hash_foreach(hasher, layer.data, prop, "b", 1)
     return hasher.hexdigest()
 
 
@@ -283,6 +292,25 @@ def _writable_reasons(obj: Any, mesh: Any) -> list[str]:
     return reasons
 
 
+def _attribute_writable_reasons(obj: Any, mesh: Any) -> list[str]:
+    """Return blockers for topology-stable UV and deform-weight authoring."""
+
+    reasons = []
+    if obj.library is not None and obj.override_library is None:
+        reasons.append("MESH_LINKED")
+    if mesh.library is not None and mesh.override_library is None:
+        reasons.append("MESH_LINKED")
+    if bool(getattr(mesh, "is_editmode", False)):
+        reasons.append("MESH_EDIT_MODE_CONFLICT")
+    if not obj.users_collection:
+        reasons.append("OBJECT_PENDING_DELETE")
+    if len(mesh_user_objects(mesh)) != int(mesh.users):
+        reasons.append("MESH_NON_OBJECT_USERS_UNSUPPORTED")
+    if not _budget_details(mesh)["within_budget"]:
+        reasons.append("MESH_BUDGET_EXCEEDED")
+    return reasons
+
+
 def inspect_mesh(
     object_name: str,
     component: str,
@@ -348,6 +376,16 @@ def inspect_mesh(
         "component": component,
         "writable": not _writable_reasons(obj, mesh),
         "write_blockers": _writable_reasons(obj, mesh),
+        "writable_domains": {
+            "geometry": not _writable_reasons(obj, mesh),
+            "uv": not _attribute_writable_reasons(obj, mesh),
+            "weights": not _attribute_writable_reasons(obj, mesh),
+        },
+        "domain_write_blockers": {
+            "geometry": _writable_reasons(obj, mesh),
+            "uv": _attribute_writable_reasons(obj, mesh),
+            "weights": _attribute_writable_reasons(obj, mesh),
+        },
         "warnings": [],
     }
     if component == "summary":
@@ -524,6 +562,67 @@ def _validate_mesh_target(
     return obj, mesh, data_scope, actual_refs
 
 
+def validate_mesh_attribute_target(
+    params: dict[str, Any],
+) -> tuple[Any, Any, str, tuple[tuple[str, str], ...]]:
+    """Validate exact Mesh evidence without rejecting topology-stable Shape Key writes."""
+
+    object_name = params.get("object_name")
+    if not isinstance(object_name, str) or not object_name:
+        raise MeshOperationError("OBJECT_NAME_INVALID", "object_name must be non-empty")
+    obj, mesh = _mesh_object(object_name)
+    if session_identity("object", obj) != params.get("expected_object_identity"):
+        raise MeshOperationError(
+            "OBJECT_IDENTITY_MISMATCH", f"Object identity changed: {object_name}", kind="conflict"
+        )
+    if session_identity("mesh", mesh) != params.get("expected_mesh_identity"):
+        raise MeshOperationError(
+            "MESH_IDENTITY_MISMATCH", f"Mesh identity changed: {mesh.name}", kind="conflict"
+        )
+    reasons = _attribute_writable_reasons(obj, mesh)
+    if reasons:
+        raise MeshOperationError(
+            reasons[0],
+            f"Mesh attributes are not writable: {mesh.name}",
+            details={"reasons": reasons},
+        )
+    expected_users = params.get("expected_mesh_users")
+    if (
+        isinstance(expected_users, bool)
+        or not isinstance(expected_users, int)
+        or expected_users < 1
+    ):
+        raise MeshOperationError("MESH_USER_SET_MISMATCH", "expected_mesh_users must be positive")
+    actual_refs = mesh_user_refs(mesh)
+    expected_refs = _expected_user_refs(params.get("expected_mesh_user_objects"))
+    if int(mesh.users) != expected_users or actual_refs != expected_refs:
+        raise MeshOperationError(
+            "MESH_USER_SET_MISMATCH",
+            f"Mesh users changed: {mesh.name}",
+            kind="conflict",
+            details={
+                "expected_users": expected_users,
+                "actual_users": int(mesh.users),
+                "expected_user_objects": list(expected_refs),
+                "actual_user_objects": list(actual_refs),
+            },
+        )
+    fingerprint = mesh_fingerprint(mesh)
+    if fingerprint != params.get("expected_mesh_fingerprint"):
+        raise MeshOperationError(
+            "MESH_FINGERPRINT_MISMATCH",
+            f"Mesh fingerprint changed: {mesh.name}",
+            kind="conflict",
+            details={"expected": params.get("expected_mesh_fingerprint"), "actual": fingerprint},
+        )
+    data_scope = params.get("data_scope")
+    if data_scope not in {"OBJECT", "SHARED_DATA"}:
+        raise MeshOperationError(
+            "MESH_OPERATION_INVALID", "data_scope must be OBJECT or SHARED_DATA"
+        )
+    return obj, mesh, data_scope, actual_refs
+
+
 def _validate_guard(guard: MeshSnapshotGuard) -> Any:
     mesh = bpy.data.meshes.get(guard.mesh_name)
     if mesh is None or session_identity("mesh", mesh) != guard.mesh_identity:
@@ -651,6 +750,46 @@ def _restore_attributes(mesh: Any, snapshot: Any) -> None:
             attribute.data.foreach_set(prop, spec["values"])
 
 
+def _restore_uv_layers(mesh: Any, snapshot: Any) -> None:
+    """Restore UV schema, coordinates, pins, and roles without touching other attributes."""
+
+    source_layers = tuple(snapshot.uv_layers)
+    source_names = tuple(layer.name for layer in source_layers)
+    target_names = tuple(layer.name for layer in mesh.uv_layers)
+    if source_names != target_names:
+        for layer in tuple(mesh.uv_layers):
+            mesh.uv_layers.remove(layer)
+        for source in source_layers:
+            mesh.uv_layers.new(name=source.name, do_init=False)
+    for index, source in enumerate(source_layers):
+        target = mesh.uv_layers[index]
+        for prop, typecode, width in (
+            ("uv", "f", 2),
+            ("pin_uv", "b", 1),
+            ("select", "b", 1),
+            ("select_edge", "b", 1),
+        ):
+            if len(source.data) and not hasattr(source.data[0], prop):
+                continue
+            values = _foreach_values(source.data, prop, typecode, width)
+            if values:
+                target.data.foreach_set(prop, values)
+        if hasattr(target, "active_render"):
+            target.active_render = bool(getattr(source, "active_render", False))
+        if hasattr(target, "active_clone"):
+            target.active_clone = bool(getattr(source, "active_clone", False))
+    if source_layers:
+        mesh.uv_layers.active_index = min(
+            int(getattr(snapshot.uv_layers, "active_index", 0)), len(source_layers) - 1
+        )
+
+
+def _restore_seams(mesh: Any, snapshot: Any) -> None:
+    values = _foreach_values(snapshot.edges, "use_seam", "b", 1)
+    if values:
+        mesh.edges.foreach_set("use_seam", values)
+
+
 def _copy_mesh_snapshot(mesh: Any, snapshot: Any) -> None:
     vertices = {
         prop: _foreach_values(snapshot.vertices, prop, typecode, width)
@@ -689,9 +828,8 @@ def _copy_mesh_snapshot(mesh: Any, snapshot: Any) -> None:
         mesh.materials.clear()
         for material in materials:
             mesh.materials.append(material)
-        # Same-topology edits never have authority to mutate protected custom data.
-        # Keeping the live layers avoids lossy remove/recreate cycles for UV and color
-        # storage while their values remain covered by the fingerprint guard.
+        _restore_uv_layers(mesh, snapshot)
+        _restore_seams(mesh, snapshot)
         mesh.update()
         for prop in ("select", "hide"):
             mesh.vertices.foreach_set(prop, vertices[prop])
@@ -719,6 +857,8 @@ def _copy_mesh_snapshot(mesh: Any, snapshot: Any) -> None:
     for material in materials:
         mesh.materials.append(material)
     _restore_attributes(mesh, snapshot)
+    _restore_uv_layers(mesh, snapshot)
+    _restore_seams(mesh, snapshot)
     mesh.update(calc_edges=True, calc_edges_loose=True)
     for prop in ("select", "hide"):
         mesh.vertices.foreach_set(prop, vertices[prop])
@@ -1764,9 +1904,7 @@ def edit_mesh(
             )
         relations = created = deleted = None
         if lineage is not None:
-            relations, created, deleted = _finish_lineage(
-                bm, lineage, str(operation_type)
-            )
+            relations, created, deleted = _finish_lineage(bm, lineage, str(operation_type))
             if operation_type == "merge_vertices":
                 from .mesh_component_map_model import ComponentRelation
 
@@ -1787,9 +1925,7 @@ def edit_mesh(
                     )
                 target_index = target_relation.target_indices[0]
                 unrelated = tuple(
-                    item
-                    for item in relations["VERTEX"]
-                    if item.source_index not in merged_sources
+                    item for item in relations["VERTEX"] if item.source_index not in merged_sources
                 )
                 relations["VERTEX"] = tuple(
                     sorted(
