@@ -61,9 +61,10 @@ see [the 0.13.1 validation record](validation/2026-08-31-mesh-separation-batches
 Version 0.14.0 is the current implementation milestone. It adds exact UV layers,
 isolated official unwrap/pack, Vertex Group weights, topology/nearest attribute
 transfer, attribute-aware topology migration, validation, and batch composition under
-transaction capability 9. See the
+transaction capability 9. Its automated and Blender 4.2.23 gates have passed. See the
 [0.14 roadmap](roadmap/0.14.0-uv-and-skin-weights.md) and
-[decision 0015](decisions/0015-uv-and-skin-weight-authority.md).
+[decision 0015](decisions/0015-uv-and-skin-weight-authority.md), plus the
+[0.14 validation record](validation/2026-08-31-uv-and-skin-weights.md).
 
 Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
 SurfaceRefs, topology-preserving surface deformation, and quantitative Mesh validation;

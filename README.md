@@ -75,7 +75,8 @@ SelectionSet 与求值曲面拟合见
 0.13.1 对象分离与声明式 batch 见
 [0.13.1 验收记录](docs/validation/2026-08-31-mesh-separation-batches.md)。
 0.14 UV 与蒙皮权重见
-[0.14.0 路线图](docs/roadmap/0.14.0-uv-and-skin-weights.md)。
+[0.14.0 路线图](docs/roadmap/0.14.0-uv-and-skin-weights.md)和
+[0.14.0 验收记录](docs/validation/2026-08-31-uv-and-skin-weights.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见

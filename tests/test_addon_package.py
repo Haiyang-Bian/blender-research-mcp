@@ -266,6 +266,23 @@ def test_mesh_authoring_uses_bounded_data_api_snapshots_without_operators() -> N
     assert "bpy.ops" not in deformation
 
 
+def test_uv_and_weight_restore_do_not_delete_through_stale_rna_wrappers() -> None:
+    mesh_source = (SOURCE / "mesh_ops.py").read_text(encoding="utf-8")
+    weight_source = (SOURCE / "mesh_weight_ops.py").read_text(encoding="utf-8")
+
+    assert "while mesh.uv_layers:" in mesh_source
+    assert "for layer in tuple(mesh.uv_layers)" not in mesh_source
+    restore_schemas = weight_source.split("def _restore_schemas", 1)[1].split(
+        "def _schema_fingerprints", 1
+    )[0]
+    write_weights = weight_source.split("def _write_weights", 1)[1].split(
+        "def _restore_schemas", 1
+    )[0]
+    assert "while obj.vertex_groups:" in restore_schemas
+    assert "for group in tuple(obj.vertex_groups)" not in restore_schemas
+    assert "if weight > 0" not in write_weights
+
+
 def test_addon_zip_has_an_installable_package_root(tmp_path: Path) -> None:
     output = build(tmp_path / "addon.zip")
     with zipfile.ZipFile(output) as archive:

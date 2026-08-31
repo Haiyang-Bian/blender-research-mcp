@@ -292,8 +292,7 @@ def _write_weights(obj: Any, weights: tuple[tuple[tuple[int, float], ...], ...])
     by_group: dict[int, list[tuple[int, float]]] = {}
     for vertex_index, assignments in enumerate(weights):
         for group_index, weight in assignments:
-            if weight > 0:
-                by_group.setdefault(group_index, []).append((vertex_index, weight))
+            by_group.setdefault(group_index, []).append((vertex_index, weight))
     for group_index, assignments in by_group.items():
         if group_index >= len(obj.vertex_groups):
             raise MeshWeightOperationError(
@@ -319,8 +318,8 @@ def _restore_schemas(
                 f"Weight user identity changed: {name}",
                 kind="conflict",
             )
-        for group in tuple(obj.vertex_groups):
-            obj.vertex_groups.remove(group)
+        while obj.vertex_groups:
+            obj.vertex_groups.remove(obj.vertex_groups[-1])
         for group_name, locked in schemas[name]:
             group = obj.vertex_groups.new(name=group_name)
             group.lock_weight = locked
@@ -429,8 +428,17 @@ def _create_weight_guard(
     obj: Any,
     mesh: Any,
     data_scope: str,
+    *,
+    baseline_weights: tuple[tuple[tuple[int, float], ...], ...] | None = None,
+    expected_weights_fingerprint: str | None = None,
 ) -> WeightSnapshotGuard:
     objects = _objects_for_scope(obj, mesh, data_scope)
+    captured = baseline_weights if baseline_weights is not None else _capture_weights(mesh)
+    fingerprint = (
+        expected_weights_fingerprint
+        if expected_weights_fingerprint is not None
+        else _json_fingerprint(captured)
+    )
     guard = WeightSnapshotGuard(
         object_name=obj.name,
         object_identity=session_identity("object", obj),
@@ -440,8 +448,8 @@ def _create_weight_guard(
         object_identities={item.name: session_identity("object", item) for item in objects},
         baseline_schemas={item.name: _group_schema(item, identities=False) for item in objects},
         expected_schema_fingerprints=_schema_fingerprints(objects),
-        baseline_weights=_capture_weights(mesh),
-        expected_weights_fingerprint=weights_fingerprint(mesh),
+        baseline_weights=captured,
+        expected_weights_fingerprint=fingerprint,
     )
     transaction.add_weight_snapshot_guard(guard)
     return guard
@@ -493,10 +501,12 @@ def _refs(obj: Any, raw: Any, allow_locked: bool) -> tuple[Any, ...]:
 
 
 def _apply_schema_operation(
-    objects: tuple[Any, ...], mesh: Any, operation: dict[str, Any]
+    objects: tuple[Any, ...],
+    mesh: Any,
+    operation: dict[str, Any],
+    before_weights: tuple[tuple[tuple[int, float], ...], ...],
 ) -> dict[str, Any]:
     operation_type = operation["type"]
-    before_weights = _capture_weights(mesh)
     if operation_type == "group_create":
         name = operation.get("group_name")
         if (
@@ -760,7 +770,9 @@ def edit_weights(
             "Vertex Group schema evidence changed",
             kind="conflict",
         )
-    if expected_weights != weights_fingerprint(initial_mesh):
+    initial_weight_values = _capture_weights(initial_mesh)
+    initial_weights_fingerprint = _json_fingerprint(initial_weight_values)
+    if expected_weights != initial_weights_fingerprint:
         raise MeshWeightOperationError(
             "MESH_WEIGHT_FINGERPRINT_MISMATCH", "Deform-weight evidence changed", kind="conflict"
         )
@@ -805,7 +817,14 @@ def edit_weights(
     weight_guard = transaction.weight_snapshot_guard(mesh.name, session_identity("mesh", mesh))
     new_weight_guard = weight_guard is None
     if weight_guard is None:
-        weight_guard = _create_weight_guard(transaction, obj, mesh, data_scope)
+        weight_guard = _create_weight_guard(
+            transaction,
+            obj,
+            mesh,
+            data_scope,
+            baseline_weights=initial_weight_values,
+            expected_weights_fingerprint=initial_weights_fingerprint,
+        )
     else:
         _validate_weight_guard(weight_guard)
         if weight_guard.data_scope != data_scope:
@@ -815,14 +834,14 @@ def edit_weights(
             )
     objects = tuple(bpy.data.objects[name] for name in weight_guard.object_identities)
     before_schema = group_schema_fingerprint(obj)
-    before_weights = weights_fingerprint(mesh)
+    before_weights = initial_weights_fingerprint
     before_mesh = mesh_fingerprint(mesh)
     call_schemas = {item.name: _group_schema(item, identities=False) for item in objects}
     call_identities = {item.name: session_identity("object", item) for item in objects}
-    call_weights = _capture_weights(mesh)
+    call_weights = initial_weight_values
     try:
         if operation_type.startswith("group_"):
-            evidence = _apply_schema_operation(objects, mesh, operation)
+            evidence = _apply_schema_operation(objects, mesh, operation, call_weights)
         else:
             if selection_record is None:
                 raise MeshWeightOperationError(
@@ -849,7 +868,11 @@ def edit_weights(
             details={"message": str(exc)},
         ) from exc
     after_schema = group_schema_fingerprint(obj)
-    after_weights = weights_fingerprint(mesh)
+    after_weights = (
+        before_weights
+        if operation_type in {"group_create", "group_rename"}
+        else weights_fingerprint(mesh)
+    )
     after_mesh = mesh_fingerprint(mesh)
     changed = before_schema != after_schema or before_weights != after_weights
     if not changed:

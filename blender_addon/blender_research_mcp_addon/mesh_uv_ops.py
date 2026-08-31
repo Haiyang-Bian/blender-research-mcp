@@ -442,11 +442,14 @@ def _apply_roles(mesh: Any, layer: Any, operation: dict[str, Any]) -> None:
         if field in operation:
             requested = bool(operation[field])
             if requested:
-                for current in mesh.uv_layers:
-                    if hasattr(current, prop):
-                        setattr(current, prop, current is layer)
+                if hasattr(layer, prop):
+                    setattr(layer, prop, True)
             elif hasattr(layer, prop):
-                setattr(layer, prop, False)
+                replacement = next((item for item in mesh.uv_layers if item is not layer), None)
+                if replacement is not None and hasattr(replacement, prop):
+                    setattr(replacement, prop, True)
+                else:
+                    setattr(layer, prop, False)
 
 
 def _operator_kwargs(operator: Any, values: dict[str, Any]) -> dict[str, Any]:
@@ -477,6 +480,28 @@ def _run_uv_operator(
         temporary_mesh.uv_layers.active = temporary_mesh.uv_layers.get(layer_name)
         for face in temporary_mesh.polygons:
             face.select = int(face.index) in faces
+        temporary_layer = temporary_mesh.uv_layers.get(layer_name)
+        if temporary_layer is None:
+            raise MeshUVOperationError(
+                "MESH_UV_LAYER_NOT_FOUND", "Temporary Mesh lost the active UV layer"
+            )
+        selected_loops = {
+            loop_index
+            for face_index in faces
+            for loop_index in range(
+                int(temporary_mesh.polygons[face_index].loop_start),
+                int(
+                    temporary_mesh.polygons[face_index].loop_start
+                    + temporary_mesh.polygons[face_index].loop_total
+                ),
+            )
+        }
+        for loop_index, item in enumerate(temporary_layer.data):
+            selected = loop_index in selected_loops
+            if hasattr(item, "select"):
+                item.select = selected
+            if hasattr(item, "select_edge"):
+                item.select_edge = selected
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_all(action="DESELECT")
         bpy.ops.object.mode_set(mode="OBJECT")

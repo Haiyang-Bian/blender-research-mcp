@@ -178,6 +178,43 @@ def mesh_fingerprint(mesh: Any) -> str:
     return hasher.hexdigest()
 
 
+def _mesh_fingerprint_sections(mesh: Any) -> dict[str, str]:
+    """Bounded diagnostic hashes used only when exact snapshot verification fails."""
+
+    sections: dict[str, str] = {}
+    specs = {
+        "vertices.co": ((mesh.vertices, "co", "f", 3),),
+        "vertices.select": ((mesh.vertices, "select", "b", 1),),
+        "vertices.hide": ((mesh.vertices, "hide", "b", 1),),
+        "edges.select": ((mesh.edges, "select", "b", 1),),
+        "edges.hide": ((mesh.edges, "hide", "b", 1),),
+        "edges.sharp": ((mesh.edges, "use_edge_sharp", "b", 1),),
+        "edges.seam": ((mesh.edges, "use_seam", "b", 1),),
+        "polygons.material": ((mesh.polygons, "material_index", "i", 1),),
+        "polygons.smooth": ((mesh.polygons, "use_smooth", "b", 1),),
+        "polygons.select": ((mesh.polygons, "select", "b", 1),),
+        "polygons.hide": ((mesh.polygons, "hide", "b", 1),),
+    }
+    for name, values in specs.items():
+        hasher = hashlib.sha256()
+        for collection, prop, typecode, width in values:
+            _hash_foreach(hasher, collection, prop, typecode, width)
+        sections[name] = hasher.hexdigest()
+    attributes = hashlib.sha256()
+    _hash_attributes(attributes, mesh)
+    sections["attributes"] = attributes.hexdigest()
+    roles = hashlib.sha256()
+    _hash_text(roles, int(getattr(mesh.uv_layers, "active_index", -1)))
+    for layer in mesh.uv_layers:
+        _hash_text(roles, layer.name)
+        _hash_text(roles, bool(getattr(layer, "active_render", False)))
+        _hash_text(roles, bool(getattr(layer, "active_clone", False)))
+        if len(layer.data) and hasattr(layer.data[0], "pin_uv"):
+            _hash_foreach(roles, layer.data, "pin_uv", "b", 1)
+    sections["uv_roles_pins"] = roles.hexdigest()
+    return sections
+
+
 def mesh_revision_id(mesh: Any) -> str:
     """Return session-scoped content evidence for one exact Mesh revision."""
 
@@ -686,8 +723,8 @@ def _foreach_values(collection: Any, prop: str, typecode: str, width: int) -> ar
 
 
 def _remove_protected_attributes(mesh: Any) -> None:
-    for layer in tuple(mesh.uv_layers):
-        mesh.uv_layers.remove(layer)
+    while mesh.uv_layers:
+        mesh.uv_layers.remove(mesh.uv_layers[-1])
     for color in tuple(mesh.color_attributes):
         mesh.color_attributes.remove(color)
     for attribute in tuple(mesh.attributes):
@@ -757,32 +794,72 @@ def _restore_uv_layers(mesh: Any, snapshot: Any) -> None:
     source_layers = tuple(snapshot.uv_layers)
     source_names = tuple(layer.name for layer in source_layers)
     target_names = tuple(layer.name for layer in mesh.uv_layers)
-    if source_names != target_names:
-        for layer in tuple(mesh.uv_layers):
-            mesh.uv_layers.remove(layer)
-        for source in source_layers:
-            mesh.uv_layers.new(name=source.name, do_init=False)
-    for index, source in enumerate(source_layers):
-        target = mesh.uv_layers[index]
-        for prop, typecode, width in (
-            ("uv", "f", 2),
-            ("pin_uv", "b", 1),
-            ("select", "b", 1),
-            ("select_edge", "b", 1),
-        ):
-            if len(source.data) and not hasattr(source.data[0], prop):
-                continue
-            values = _foreach_values(source.data, prop, typecode, width)
-            if values:
-                target.data.foreach_set(prop, values)
-        if hasattr(target, "active_render"):
-            target.active_render = bool(getattr(source, "active_render", False))
-        if hasattr(target, "active_clone"):
-            target.active_clone = bool(getattr(source, "active_clone", False))
-    if source_layers:
-        mesh.uv_layers.active_index = min(
-            int(getattr(snapshot.uv_layers, "active_index", 0)), len(source_layers) - 1
-        )
+    stage = "schema"
+    try:
+        if source_names != target_names:
+            while mesh.uv_layers:
+                mesh.uv_layers.remove(mesh.uv_layers[-1])
+            for source in source_layers:
+                mesh.uv_layers.new(name=source.name, do_init=False)
+        for index, source in enumerate(source_layers):
+            target = mesh.uv_layers[index]
+            for prop, typecode, width in (
+                ("uv", "f", 2),
+                ("pin_uv", "b", 1),
+                ("select", "b", 1),
+                ("select_edge", "b", 1),
+            ):
+                stage = f"data:{source.name}:{prop}"
+                if len(source.data) and not hasattr(source.data[0], prop):
+                    continue
+                values = _foreach_values(source.data, prop, typecode, width)
+                auxiliary_prefix = {
+                    "pin_uv": ".pn.",
+                    "select": ".vs.",
+                    "select_edge": ".es.",
+                }.get(prop)
+                if auxiliary_prefix is not None:
+                    auxiliary_name = f"{auxiliary_prefix}{target.name}"
+                    auxiliary = mesh.attributes.get(auxiliary_name)
+                    if auxiliary is None and any(values):
+                        first_true = next(
+                            item_index for item_index, value in enumerate(values) if value
+                        )
+                        setattr(target.data[first_true], prop, True)
+                        auxiliary = mesh.attributes.get(auxiliary_name)
+                    if auxiliary is None:
+                        continue
+                if values:
+                    target.data.foreach_set(prop, values)
+        for prop in ("active_render", "active_clone"):
+            stage = f"role:{prop}"
+            active_index = next(
+                (
+                    index
+                    for index, source in enumerate(source_layers)
+                    if bool(getattr(source, prop, False))
+                ),
+                None,
+            )
+            if active_index is not None and hasattr(mesh.uv_layers[active_index], prop):
+                setattr(mesh.uv_layers[active_index], prop, True)
+        if source_layers:
+            stage = "role:display"
+            mesh.uv_layers.active_index = min(
+                int(getattr(snapshot.uv_layers, "active_index", 0)), len(source_layers) - 1
+            )
+    except Exception as exc:
+        raise MeshOperationError(
+            "MESH_EDIT_RESTORE_FAILED",
+            f"Could not restore UV layer state at {stage}: {type(exc).__name__}",
+            kind="blender_api",
+            details={
+                "stage": stage,
+                "source_layers": list(source_names),
+                "target_layers": [layer.name for layer in mesh.uv_layers],
+                "error": str(exc),
+            },
+        ) from exc
 
 
 def _restore_seams(mesh: Any, snapshot: Any) -> None:
@@ -830,13 +907,13 @@ def _copy_mesh_snapshot(mesh: Any, snapshot: Any) -> None:
         for material in materials:
             mesh.materials.append(material)
         _restore_uv_layers(mesh, snapshot)
-        _restore_seams(mesh, snapshot)
         mesh.update()
         for prop in ("select", "hide"):
             mesh.vertices.foreach_set(prop, vertices[prop])
             mesh.edges.foreach_set(prop, edges[prop])
             mesh.polygons.foreach_set(prop, polygons[prop])
         mesh.edges.foreach_set("use_edge_sharp", edges["use_edge_sharp"])
+        _restore_seams(mesh, snapshot)
         for prop in ("material_index", "use_smooth"):
             mesh.polygons.foreach_set(prop, polygons[prop])
         return
@@ -859,13 +936,13 @@ def _copy_mesh_snapshot(mesh: Any, snapshot: Any) -> None:
         mesh.materials.append(material)
     _restore_attributes(mesh, snapshot)
     _restore_uv_layers(mesh, snapshot)
-    _restore_seams(mesh, snapshot)
     mesh.update(calc_edges=True, calc_edges_loose=True)
     for prop in ("select", "hide"):
         mesh.vertices.foreach_set(prop, vertices[prop])
         mesh.edges.foreach_set(prop, edges[prop])
         mesh.polygons.foreach_set(prop, polygons[prop])
     mesh.edges.foreach_set("use_edge_sharp", edges["use_edge_sharp"])
+    _restore_seams(mesh, snapshot)
     for prop in ("material_index", "use_smooth"):
         mesh.polygons.foreach_set(prop, polygons[prop])
 
@@ -878,7 +955,37 @@ def _restore_mesh_geometry(mesh: Any, snapshot: Any, expected: str) -> None:
             "MESH_EDIT_RESTORE_FAILED",
             f"Mesh snapshot verification failed: {mesh.name}",
             kind="blender_api",
-            details={"expected": expected, "actual": actual},
+            details={
+                "expected": expected,
+                "actual": actual,
+                "snapshot": mesh_fingerprint(snapshot),
+                "expected_topology": topology_fingerprint(snapshot),
+                "actual_topology": topology_fingerprint(mesh),
+                "expected_uv_layers": [layer.name for layer in snapshot.uv_layers],
+                "actual_uv_layers": [layer.name for layer in mesh.uv_layers],
+                "expected_active_uv": int(getattr(snapshot.uv_layers, "active_index", -1)),
+                "actual_active_uv": int(getattr(mesh.uv_layers, "active_index", -1)),
+                "expected_uv_roles": [
+                    {
+                        "name": layer.name,
+                        "render": bool(getattr(layer, "active_render", False)),
+                        "clone": bool(getattr(layer, "active_clone", False)),
+                        "pins": sum(bool(getattr(item, "pin_uv", False)) for item in layer.data),
+                    }
+                    for layer in snapshot.uv_layers
+                ],
+                "actual_uv_roles": [
+                    {
+                        "name": layer.name,
+                        "render": bool(getattr(layer, "active_render", False)),
+                        "clone": bool(getattr(layer, "active_clone", False)),
+                        "pins": sum(bool(getattr(item, "pin_uv", False)) for item in layer.data),
+                    }
+                    for layer in mesh.uv_layers
+                ],
+                "expected_sections": _mesh_fingerprint_sections(snapshot),
+                "actual_sections": _mesh_fingerprint_sections(mesh),
+            },
         )
 
 
@@ -1319,8 +1426,8 @@ def finish_topology_attributes(
 ) -> dict[str, Any]:
     policy = evidence["policy"]
     if policy["uv"] == "DISCARD":
-        for layer in tuple(mesh.uv_layers):
-            mesh.uv_layers.remove(layer)
+        while mesh.uv_layers:
+            mesh.uv_layers.remove(mesh.uv_layers[-1])
     elif evidence["uv_present"]:
         if tuple(layer.name for layer in mesh.uv_layers) != evidence["uv_layers"]:
             raise MeshOperationError(
