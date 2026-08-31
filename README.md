@@ -40,6 +40,10 @@ Shading/Overlay、选择和活动对象；Blender 原生保存则作为用户接
 0.13.0 新增单 revision `ComponentMap`、跨拓扑 revision 的 SelectionSet 精确重映射，
 以及 subdivide、loop cut、bisect、split、bridge、fill 和 grid fill；事务升级到 v7，
 所有 lineage 都来自同次 BMesh 操作和精确组件标记，不用空间距离猜测新索引。
+0.13.1 在此基础上新增严格连续 ComponentMap 的公开组合、连通 FACE 区域到独立
+对象的事务性分离，以及带命名资源、自动 remap 和验证断言的声明式 Mesh batch；
+事务升级到 v8，batch 运行期失败会回退整个活动事务，而成功调用只推进一次全局
+generation。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -64,6 +68,8 @@ SelectionSet 与求值曲面拟合见
 [0.12.0 验收记录](docs/validation/2026-08-31-selection-surface-fitting.md)，拓扑 revision
 与 ComponentMap 见
 [0.13.0 验收记录](docs/validation/2026-08-31-topology-component-maps.md)。
+0.13.1 对象分离与声明式 batch 见
+[0.13.1 验收记录](docs/validation/2026-08-31-mesh-separation-batches.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -199,6 +205,20 @@ smooth、relax、project、shrinkwrap、inflate 和 flatten；它们引用 Selec
 编辑必须逐步重映射，rollback/断线恢复会使 after-map 失效。详细契约见
 [0.13.0 路线图](docs/roadmap/0.13.0-topology-component-maps.md)。
 
+## 0.13.1 对象分离与声明式 Mesh 批处理
+
+`mesh.component_map.compose` 将 2–8 张严格连续 Map 合成为普通 lineage 资源，
+仍可分页检查、释放和重映射 SelectionSet。`mesh.separate` 只接受一个连通、非空、
+非全量 FACE SelectionSet，并返回 SOURCE/SEPARATED 两条精确分支 Map；共享 Mesh
+会先只为目标对象事务性单用户化，peer 不受影响。
+
+`mesh.batch.execute` 在一次 Blender 主线程调用中执行 1–32 个封闭步骤：选择查询/
+派生、0.12 变形、0.13 拓扑、对象分离和几何验证。调用内别名替代大规模中间 JSON，
+拓扑后自动 remap 当前 SelectionSet，分支链自动生成 composed Map。静态预检失败不
+改场景；任一运行期错误或断言失败则回退整个活动事务，包括 batch 前同一事务中的
+Agent 写入。详细边界见
+[0.13.1 路线图](docs/roadmap/0.13.1-mesh-separation-batches.md)。
+
 ## 目录
 
 ~~~text
@@ -229,7 +249,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.13.0
+uv run --no-sync python scripts/build_addon.py --version 0.13.1
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认

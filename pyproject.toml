@@ -1,6 +1,6 @@
 [project]
 name = "blender-research-mcp"
-version = "0.13.0"
+version = "0.13.1"
 description = "A local-first semantic MCP bridge for observable and reversible Blender research."
 readme = "README.md"
 requires-python = ">=3.11"

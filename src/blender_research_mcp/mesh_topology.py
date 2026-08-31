@@ -10,6 +10,7 @@ from blender_research_mcp.authoring import FiniteNumber, Vector3
 from blender_research_mcp.mesh_resources import CoordinateSpace, SelectionId
 
 ComponentMapId = Annotated[str, Field(min_length=1, max_length=128)]
+ComponentMapIds = Annotated[tuple[ComponentMapId, ...], Field(min_length=2, max_length=8)]
 ComponentMapDomain = Literal["SUMMARY", "VERTEX", "EDGE", "FACE"]
 ComponentMapDirection = Literal["FORWARD", "REVERSE", "CREATED", "DELETED"]
 SelectionRemapMode = Literal["ALL_MAPPED", "EXACT_SURVIVORS", "STRICT"]
@@ -104,4 +105,3 @@ TopologyOperation = (
     | FillOperation
     | GridFillOperation
 )
-

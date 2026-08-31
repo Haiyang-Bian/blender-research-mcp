@@ -63,6 +63,7 @@ from blender_research_mcp.mesh_authoring import (
     MeshOperation,
     MeshUserObject,
 )
+from blender_research_mcp.mesh_batch import BatchInputs, BatchSteps, BatchTargets
 from blender_research_mcp.mesh_resources import (
     MeshDomain,
     MeshRevisionId,
@@ -74,10 +75,12 @@ from blender_research_mcp.mesh_resources import (
     SurfaceQueryMode,
     ValidationCheck,
 )
+from blender_research_mcp.mesh_separation import MeshObjectName
 from blender_research_mcp.mesh_topology import (
     ComponentMapDirection,
     ComponentMapDomain,
     ComponentMapId,
+    ComponentMapIds,
     SelectionRemapMode,
     WeightMergeMode,
 )
@@ -582,6 +585,25 @@ def create_server(
         return await client.call(
             "mesh.component_map.release",
             {"component_map_id": component_map_id},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.component_map.compose",
+        description=(
+            "Compose two to eight exact continuous ComponentMaps into one ordinary "
+            "lineage resource without guessing spatial correspondence."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_component_map_compose(
+        component_map_ids: ComponentMapIds,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_component_map", 2)
+        return await client.call(
+            "mesh.component_map.compose",
+            {"component_map_ids": list(component_map_ids)},
             read_only=True,
         )
 
@@ -1433,6 +1455,111 @@ def create_server(
                 "expected_mesh_fingerprint": expected_mesh_fingerprint,
                 "data_scope": data_scope,
                 "operation": operation.model_dump(exclude_none=True),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="mesh.separate",
+        description=(
+            "Separate one connected proper-subset FACE SelectionSet into a new exact "
+            "object branch, returning source and separated ComponentMaps."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def mesh_separate(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_mesh_identity: SessionIdentity,
+        expected_mesh_users: DataUsers,
+        expected_mesh_user_objects: Annotated[
+            tuple[MeshUserObject, ...], Field(min_length=1, max_length=256)
+        ],
+        expected_mesh_fingerprint: Annotated[str, Field(min_length=64, max_length=64)],
+        selection_id: SelectionId,
+        new_object_name: MeshObjectName,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        collection_name: MeshObjectName | None = None,
+        expected_collection_identity: SessionIdentity | None = None,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_separation")
+        client.require_capability("mesh_component_map", 2)
+        client.require_capability("mesh_topology", 3)
+        client.require_capability("transactions", 8)
+        if (collection_name is None) != (expected_collection_identity is None):
+            raise ValueError(
+                "collection_name and expected_collection_identity must be supplied together"
+            )
+        if len(
+            {
+                (item.object_name, item.expected_object_identity)
+                for item in expected_mesh_user_objects
+            }
+        ) != len(expected_mesh_user_objects):
+            raise ValueError("expected_mesh_user_objects must be unique")
+        if expected_mesh_users != len(expected_mesh_user_objects):
+            raise ValueError(
+                "expected_mesh_users must equal the number of expected_mesh_user_objects"
+            )
+        return await client.call(
+            "mesh.separate",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "expected_mesh_identity": expected_mesh_identity,
+                "expected_mesh_users": expected_mesh_users,
+                "expected_mesh_user_objects": [
+                    item.model_dump() for item in expected_mesh_user_objects
+                ],
+                "expected_mesh_fingerprint": expected_mesh_fingerprint,
+                "selection_id": selection_id,
+                "new_object_name": new_object_name,
+                "collection_name": collection_name,
+                "expected_collection_identity": expected_collection_identity,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="mesh.batch.execute",
+        description=(
+            "Execute one closed, declarative Mesh workflow with invocation-local aliases, "
+            "automatic SelectionSet remapping, branch maps, validation assertions, and "
+            "whole-transaction rollback on runtime failure."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def mesh_batch_execute(
+        transaction_id: TransactionId,
+        targets: BatchTargets,
+        inputs: BatchInputs,
+        steps: BatchSteps,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        on_error: Literal["ROLLBACK_TRANSACTION"] = "ROLLBACK_TRANSACTION",
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_batch")
+        client.require_capability("mesh_separation", 1)
+        client.require_capability("mesh_component_map", 2)
+        client.require_capability("mesh_topology", 3)
+        client.require_capability("transactions", 8)
+        return await client.call(
+            "mesh.batch.execute",
+            {
+                "transaction_id": transaction_id,
+                "targets": [item.model_dump() for item in targets],
+                "inputs": [item.model_dump() for item in inputs],
+                "steps": [item.model_dump(exclude_none=True) for item in steps],
+                "on_error": on_error,
             },
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,

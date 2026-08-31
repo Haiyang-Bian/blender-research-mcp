@@ -5,43 +5,54 @@ in this order when starting a new implementation task:
 
 1. [Design and handoff](design.md) — architecture, safety boundaries, implemented
    phases, and open decisions.
-2. [0.13.0 topology and ComponentMap roadmap](roadmap/0.13.0-topology-component-maps.md)
-   — current implementation target, topology lineage, and acceptance gate.
-3. [0.12.0 SelectionSet and surface-fitting roadmap](roadmap/0.12.0-selection-surface-fitting.md)
+2. [0.13.1 separation and Mesh-batch roadmap](roadmap/0.13.1-mesh-separation-batches.md)
+   — current implementation target, branch lineage, and declarative execution boundary.
+3. [Separated-branch and batch decision](decisions/0014-separated-mesh-branches-and-declarative-batches.md)
+   — composed maps, transaction-v8 separation, and all-or-nothing batch semantics.
+4. [0.13.0 topology and ComponentMap roadmap](roadmap/0.13.0-topology-component-maps.md)
+   — validated one-revision topology lineage and acceptance gate.
+5. [0.12.0 SelectionSet and surface-fitting roadmap](roadmap/0.12.0-selection-surface-fitting.md)
    — validated selection, surface resource, and deformation baseline.
-4. [General Mesh authoring requirements](requirements/general-mesh-authoring.md) —
+6. [General Mesh authoring requirements](requirements/general-mesh-authoring.md) —
    long-term selection, topology, attribute, Shape-Key, and validation direction.
-5. [Using Blender Research MCP](usage.md) — current 0.13 operator workflow and error
+7. [Using Blender Research MCP](usage.md) — current 0.13 operator workflow and error
    recovery.
-6. [Topology lineage decision](decisions/0013-revision-aware-topology-lineage.md) —
+8. [Topology lineage decision](decisions/0013-revision-aware-topology-lineage.md) —
    one-revision ComponentMap and transaction-v7 boundary.
-7. [Selection and evaluated-surface decision](decisions/0012-revision-bound-selection-and-surface-resources.md)
+9. [Selection and evaluated-surface decision](decisions/0012-revision-bound-selection-and-surface-resources.md)
    — revision resource and transaction-v6 boundary.
-8. [Collaborative UI and native-save authority](decisions/0011-collaborative-ui-and-native-save-authority.md)
+10. [Collaborative UI and native-save authority](decisions/0011-collaborative-ui-and-native-save-authority.md)
    — transaction-v5 user intent and main-thread ordering.
-9. [0.11.0 semantic Mesh editing roadmap](roadmap/0.11.0-semantic-mesh-editing.md) —
+11. [0.11.0 semantic Mesh editing roadmap](roadmap/0.11.0-semantic-mesh-editing.md) —
    exact base-Mesh pages, snapshot guards, shared scopes, and bounded topology edits.
-10. [0.10.0 Modifier authoring roadmap](roadmap/0.10.0-modifier-authoring.md) — typed
+12. [0.10.0 Modifier authoring roadmap](roadmap/0.10.0-modifier-authoring.md) — typed
    inspection, stack guards, four Modifier families, and comparison.
-11. [0.9.0 unified object settings roadmap](roadmap/0.9.0-unified-object-settings.md) —
+13. [0.9.0 unified object settings roadmap](roadmap/0.9.0-unified-object-settings.md) —
    typed object, Light, Camera, and comparison settings.
-12. [0.8.0 semantic scene authoring roadmap](roadmap/0.8.0-semantic-scene-authoring.md) —
+14. [0.8.0 semantic scene authoring roadmap](roadmap/0.8.0-semantic-scene-authoring.md) —
    structural transactions, objects, materials, local images, World/Camera, and renders.
-13. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
+15. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
    launch, project switching, implementation, and completed live evidence.
-14. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
+16. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
    implemented and live-validated comparison contract.
-15. [Architecture decisions](decisions/README.md) — accepted protocol and authority
+17. [Architecture decisions](decisions/README.md) — accepted protocol and authority
    decisions.
-16. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
+18. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
 
 ## Current release
 
-Version 0.13.0 is the active validated milestone. It adds one-revision ComponentMaps,
+Version 0.13.0 is the previous validated milestone. It adds one-revision ComponentMaps,
 SelectionSet remapping, and bounded subdivide, loop-cut, bisect, split, bridge, fill,
 and grid-fill operations on top of the 0.12 selection/surface foundation. Its automated
 and Blender 4.2.23 gates have passed; see
 [the 0.13 validation record](validation/2026-08-31-topology-component-maps.md).
+
+Version 0.13.1 is the current implementation milestone. It composes exact map chains,
+separates one connected face region into a guarded object branch, and executes bounded
+Mesh-only declarative batches with named resources, automatic remapping, validation
+assertions, one-generation success semantics, and whole-transaction runtime recovery.
+Its automated, focused Blender, and full `test-model.blend` regression gates passed;
+see [the 0.13.1 validation record](validation/2026-08-31-mesh-separation-batches.md).
 
 Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
 SurfaceRefs, topology-preserving surface deformation, and quantitative Mesh validation;

@@ -65,7 +65,9 @@ from .material_authoring_ops import (
     load_image,
     material_result,
 )
+from .mesh_batch_ops import MeshBatchExecutionError, execute_mesh_batch
 from .mesh_component_map import (
+    compose_component_map,
     inspect_component_map,
     release_component_map,
     remap_selection,
@@ -88,6 +90,7 @@ from .mesh_query_ops import (
     release_selection,
 )
 from .mesh_resource_model import MeshResourceBook, MeshResourceError
+from .mesh_separation_ops import separate_mesh
 from .mesh_surface_ops import prepare_surface, query_surface, validate_mesh
 from .mesh_topology_ops import TOPOLOGY_OPERATIONS, edit_mesh_topology
 from .modifier_ops import (
@@ -164,6 +167,7 @@ CAPABILITIES = [
     "mesh.selection.release",
     "mesh.component_map.inspect",
     "mesh.component_map.release",
+    "mesh.component_map.compose",
     "mesh.selection.remap",
     "mesh.surface.prepare",
     "mesh.surface.query",
@@ -189,6 +193,8 @@ CAPABILITIES = [
     "modifier.move",
     "modifier.delete",
     "mesh.edit",
+    "mesh.separate",
+    "mesh.batch.execute",
     "shape_key.set_value",
     "material.set_input",
     "material.create",
@@ -213,7 +219,7 @@ CAPABILITY_VERSIONS = {
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 7,
+    "transactions": 8,
     "object_transform_scale": 1,
     "object_transform": 1,
     "object_settings": 1,
@@ -227,12 +233,14 @@ CAPABILITY_VERSIONS = {
     "object_visibility": 1,
     "modifier_state": 1,
     "modifier_authoring": 1,
-    "mesh_topology": 2,
+    "mesh_topology": 3,
     "mesh_selection": 1,
     "mesh_surface_query": 1,
     "mesh_deformation": 1,
     "mesh_validation": 1,
-    "mesh_component_map": 1,
+    "mesh_component_map": 2,
+    "mesh_separation": 1,
+    "mesh_batch": 1,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -254,6 +262,8 @@ MUTATION_COMMANDS = {
     "modifier.move",
     "modifier.delete",
     "mesh.edit",
+    "mesh.separate",
+    "mesh.batch.execute",
     "shape_key.set_value",
     "material.set_input",
     "material.create",
@@ -936,6 +946,11 @@ class AddonState:
             result = release_component_map(self.mesh_resources, params)
             result["scene_generation"] = self.scene_generation
             return result
+        if command == "mesh.component_map.compose":
+            with self.suppress_generation():
+                result = compose_component_map(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
         if command == "mesh.selection.remap":
             with self.suppress_generation():
                 result = remap_selection(self.mesh_resources, params)
@@ -1225,6 +1240,80 @@ class AddonState:
                 transaction.context_fingerprint = self._current_context_fingerprint(transaction)
             result.update(
                 {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
+        if command == "mesh.separate":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            with self.suppress_generation():
+                result = separate_mesh(transaction, self.mesh_resources, params)
+                bpy.context.view_layer.update()
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
+        if command == "mesh.batch.execute":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            try:
+                with self.suppress_generation():
+                    result = execute_mesh_batch(
+                        transaction, self.mesh_resources, self.captures, params
+                    )
+                    bpy.context.view_layer.update()
+            except MeshBatchExecutionError as exc:
+                cause = exc.cause
+                error_code = getattr(cause, "code", "MESH_BATCH_INVALID")
+                error_kind = getattr(cause, "kind", "validation")
+                batch_details = {
+                    "batch_id": exc.batch_id,
+                    "step_index": exc.step_index,
+                    "step_type": exc.step_type,
+                    "aliases": list(exc.aliases),
+                    "underlying_code": error_code,
+                    "underlying_details": dict(getattr(cause, "details", {})),
+                }
+                try:
+                    rollback = self._rollback_transaction(transaction)
+                except Exception as restore_error:
+                    raise MeshOperationError(
+                        "MESH_BATCH_RESTORE_FAILED",
+                        "Mesh batch failed and the complete transaction could not be restored",
+                        kind="conflict",
+                        details={
+                            **batch_details,
+                            "failure": str(cause),
+                            "restore_error_type": type(restore_error).__name__,
+                            "restore_error": str(restore_error),
+                        },
+                    ) from restore_error
+                raise MeshOperationError(
+                    error_code,
+                    str(cause),
+                    kind=error_kind,
+                    details={**batch_details, "rollback": rollback},
+                ) from cause
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "scene_generation": self.scene_generation,
                     "status": transaction.status,
                     "delta_count": len(transaction.deltas),
                     "delta_kinds": transaction.delta_kinds(),
