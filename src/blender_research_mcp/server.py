@@ -57,7 +57,12 @@ from blender_research_mcp.lifecycle import (
     DEFAULT_LAUNCH_TIMEOUT_SECONDS,
     ApplicationManager,
 )
-from blender_research_mcp.mesh_attributes import MeshUVComponent, UVOperation
+from blender_research_mcp.mesh_attributes import (
+    MeshUVComponent,
+    MeshWeightComponent,
+    UVOperation,
+    WeightOperation,
+)
 from blender_research_mcp.mesh_authoring import (
     MeshComponent,
     MeshDataScope,
@@ -488,6 +493,35 @@ def create_server(
             {
                 "object_name": object_name,
                 "layer_name": layer_name,
+                "component": component,
+                "offset": offset,
+                "limit": limit,
+            },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.weights.inspect",
+        description=(
+            "Inspect exact ordered Vertex Groups, Armature/Bone matches, sparse per-vertex "
+            "weights, and schema/value fingerprints without entering Weight Paint mode."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_weights_inspect(
+        object_name: ObjectName,
+        group_name: Annotated[str, Field(min_length=1, max_length=255)] | None = None,
+        component: MeshWeightComponent = "SUMMARY",
+        offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=512)] = 256,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_weights")
+        return await client.call(
+            "mesh.weights.inspect",
+            {
+                "object_name": object_name,
+                "group_name": group_name,
                 "component": component,
                 "offset": offset,
                 "limit": limit,
@@ -1546,6 +1580,67 @@ def create_server(
                 ],
                 "expected_mesh_fingerprint": expected_mesh_fingerprint,
                 "expected_uv_fingerprint": expected_uv_fingerprint,
+                "data_scope": data_scope,
+                "operation": operation.model_dump(exclude_none=True),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="mesh.weights.edit",
+        description=(
+            "Create or edit exact Vertex Groups and deform weights in an active transaction, "
+            "with explicit shared-data scope and locked-group handling."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def mesh_weights_edit(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_mesh_identity: SessionIdentity,
+        expected_mesh_users: DataUsers,
+        expected_mesh_user_objects: Annotated[
+            tuple[MeshUserObject, ...], Field(min_length=1, max_length=256)
+        ],
+        expected_mesh_fingerprint: Annotated[str, Field(min_length=64, max_length=64)],
+        expected_group_schema_fingerprint: Annotated[str, Field(min_length=64, max_length=64)],
+        expected_weights_fingerprint: Annotated[str, Field(min_length=64, max_length=64)],
+        data_scope: MeshDataScope,
+        operation: WeightOperation,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_weights")
+        client.require_capability("transactions", 9)
+        if len(
+            {
+                (item.object_name, item.expected_object_identity)
+                for item in expected_mesh_user_objects
+            }
+        ) != len(expected_mesh_user_objects):
+            raise ValueError("expected_mesh_user_objects must be unique")
+        if expected_mesh_users != len(expected_mesh_user_objects):
+            raise ValueError(
+                "expected_mesh_users must equal the number of expected_mesh_user_objects"
+            )
+        return await client.call(
+            "mesh.weights.edit",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "expected_mesh_identity": expected_mesh_identity,
+                "expected_mesh_users": expected_mesh_users,
+                "expected_mesh_user_objects": [
+                    item.model_dump() for item in expected_mesh_user_objects
+                ],
+                "expected_mesh_fingerprint": expected_mesh_fingerprint,
+                "expected_group_schema_fingerprint": expected_group_schema_fingerprint,
+                "expected_weights_fingerprint": expected_weights_fingerprint,
                 "data_scope": data_scope,
                 "operation": operation.model_dump(exclude_none=True),
             },

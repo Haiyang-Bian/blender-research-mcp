@@ -566,7 +566,11 @@ def _run_uv_operator(
 
 
 def _apply_operation(
-    mesh: Any, obj: Any, resources: MeshResourceBook, operation: dict[str, Any]
+    mesh: Any,
+    obj: Any,
+    resources: MeshResourceBook,
+    operation: dict[str, Any],
+    selection_record: SelectionRecord | None = None,
 ) -> dict[str, Any]:
     operation_type = operation.get("type")
     if operation_type == "layer_create":
@@ -600,7 +604,9 @@ def _apply_operation(
                 item.uv = (0.0, 0.0)
         return {"layer": _layer_summary(mesh, layer, list(mesh.uv_layers).index(layer))}
     if operation_type == "seam_set":
-        record = _selection(resources, operation.get("selection_id"), obj, mesh, "EDGE")
+        record = selection_record or _selection(
+            resources, operation.get("selection_id"), obj, mesh, "EDGE"
+        )
         seam = operation.get("seam")
         if type(seam) is not bool:
             raise MeshUVOperationError("MESH_UV_OPERATION_INVALID", "seam must be a boolean")
@@ -662,7 +668,9 @@ def _apply_operation(
             layer.data[index].pin_uv = pinned
         return {"affected_corners": len(indices)}
     if operation_type == "transform":
-        record = _selection(resources, operation.get("selection_id"), obj, mesh, "FACE")
+        record = selection_record or _selection(
+            resources, operation.get("selection_id"), obj, mesh, "FACE"
+        )
         scope = operation.get("scope", "ISLANDS")
         if scope not in {"FACES", "ISLANDS"}:
             raise MeshUVOperationError(
@@ -716,7 +724,9 @@ def _apply_operation(
             layer.data[index].uv = value
         return {"affected_faces": len(faces), "affected_corners": len(indices)}
     if operation_type in {"unwrap", "pack"}:
-        record = _selection(resources, operation.get("selection_id"), obj, mesh, "FACE")
+        record = selection_record or _selection(
+            resources, operation.get("selection_id"), obj, mesh, "FACE"
+        )
         faces = tuple(record.indices)
         pins = sum(
             bool(getattr(layer.data[index], "pin_uv", False))
@@ -756,10 +766,15 @@ def edit_uv(
         raise MeshUVOperationError("MESH_UV_OPERATION_INVALID", "operation must be a typed object")
     # Resolve every revision-bound input before OBJECT scope can create a private Mesh copy.
     operation_type = str(operation["type"])
+    selection_record = None
     if operation_type == "seam_set":
-        _selection(resources, operation.get("selection_id"), obj, initial_mesh, "EDGE")
+        selection_record = _selection(
+            resources, operation.get("selection_id"), obj, initial_mesh, "EDGE"
+        )
     elif operation_type in {"transform", "unwrap", "pack"}:
-        _selection(resources, operation.get("selection_id"), obj, initial_mesh, "FACE")
+        selection_record = _selection(
+            resources, operation.get("selection_id"), obj, initial_mesh, "FACE"
+        )
     if operation_type not in {"layer_create", "seam_set"}:
         _layer_ref(initial_mesh, operation.get("layer"))
     transaction.ensure_capacity()
@@ -798,7 +813,7 @@ def edit_uv(
     call_snapshot = mesh.copy()
     call_snapshot.name = f"{mesh.name}.MCP-UV-Call-Snapshot"
     try:
-        evidence = _apply_operation(mesh, obj, resources, working_operation)
+        evidence = _apply_operation(mesh, obj, resources, working_operation, selection_record)
         mesh.update()
         if topology_fingerprint(mesh) != before_topology:
             raise MeshUVOperationError(

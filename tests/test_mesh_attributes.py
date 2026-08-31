@@ -3,9 +3,10 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from blender_research_mcp.mesh_attributes import UVOperation
+from blender_research_mcp.mesh_attributes import UVOperation, WeightOperation
 
 ADAPTER = TypeAdapter(UVOperation)
+WEIGHT_ADAPTER = TypeAdapter(WeightOperation)
 LAYER = {"layer_name": "UVMap", "expected_layer_identity": "uv:1"}
 CORNER = {"loop_index": 0, "face_index": 0, "corner_index": 0, "vertex_index": 0}
 
@@ -112,3 +113,77 @@ def test_uv_coordinate_bounds_and_raw_corner_budget() -> None:
             }
         )
 
+
+GROUP = {"group_name": "Bone", "expected_group_identity": "vertex_group:1"}
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        {"type": "group_create", "group_name": "Bone"},
+        {"type": "group_rename", "group": GROUP, "new_name": "Bone.001"},
+        {"type": "group_delete", "group": GROUP},
+        {"type": "set", "group": GROUP, "selection_id": "selection", "value": 0.5},
+        {
+            "type": "clear",
+            "selection_id": "selection",
+            "groups": [GROUP],
+        },
+        {
+            "type": "normalize",
+            "selection_id": "selection",
+            "groups": [GROUP],
+        },
+        {
+            "type": "limit_total",
+            "selection_id": "selection",
+            "maximum_influences": 4,
+        },
+    ],
+)
+def test_weight_operations_are_closed_and_typed(operation: dict[str, object]) -> None:
+    parsed = WEIGHT_ADAPTER.validate_python(operation)
+    assert parsed.type == operation["type"]
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        {"type": "group_create", "group_name": "Bone", "lock_weight": 1},
+        {
+            "type": "set",
+            "group": GROUP,
+            "selection_id": "selection",
+            "value": 0.5,
+            "use_selection_weights": True,
+        },
+        {
+            "type": "set",
+            "group": GROUP,
+            "selection_id": "selection",
+            "value": 1.1,
+        },
+        {
+            "type": "clear",
+            "selection_id": "selection",
+            "groups": [GROUP],
+            "all_groups": True,
+        },
+        {
+            "type": "normalize",
+            "selection_id": "selection",
+            "groups": [GROUP],
+            "target_total": 0.0,
+        },
+        {
+            "type": "limit_total",
+            "selection_id": "selection",
+            "maximum_influences": 33,
+        },
+    ],
+)
+def test_weight_operations_reject_ambiguous_or_non_strict_payloads(
+    operation: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        WEIGHT_ADAPTER.validate_python(operation)

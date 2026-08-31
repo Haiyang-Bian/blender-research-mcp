@@ -27,6 +27,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "object.geometry.inspect",
         "mesh.inspect",
         "mesh.uv.inspect",
+        "mesh.weights.inspect",
         "mesh.selection.query",
         "mesh.selection.derive",
         "mesh.selection.inspect",
@@ -60,6 +61,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "modifier.delete",
         "mesh.edit",
         "mesh.uv.edit",
+        "mesh.weights.edit",
         "mesh.separate",
         "mesh.batch.execute",
         "shape_key.set_value",
@@ -142,6 +144,14 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "LOOPS",
         "ISLANDS",
         "SEAMS",
+    ]
+    mesh_weights_inspect = tools_by_name["mesh.weights.inspect"]
+    assert mesh_weights_inspect.annotations is not None
+    assert mesh_weights_inspect.annotations.readOnlyHint is True
+    assert mesh_weights_inspect.inputSchema["properties"]["component"]["enum"] == [
+        "SUMMARY",
+        "GROUPS",
+        "VERTICES",
     ]
     mesh_separate = tools_by_name["mesh.separate"]
     assert mesh_separate.annotations is not None
@@ -324,6 +334,12 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     uv_operation = mesh_uv_edit.inputSchema["properties"]["operation"]
     assert uv_operation["discriminator"]["propertyName"] == "type"
     assert len(uv_operation["oneOf"]) == 9
+    mesh_weights_edit = tools_by_name["mesh.weights.edit"]
+    assert mesh_weights_edit.annotations is not None
+    assert mesh_weights_edit.annotations.destructiveHint is True
+    weight_operation = mesh_weights_edit.inputSchema["properties"]["operation"]
+    assert weight_operation["discriminator"]["propertyName"] == "type"
+    assert len(weight_operation["oneOf"]) == 7
     shape_key = tools_by_name["shape_key.set_value"]
     assert shape_key.annotations is not None
     assert shape_key.annotations.destructiveHint is True
