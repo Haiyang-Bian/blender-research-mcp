@@ -26,10 +26,12 @@ from .mesh_ops import (
     _restore_failed_edit,
     _validate_guard,
     _validate_mesh_target,
+    finish_topology_attributes,
     mesh_counts,
     mesh_fingerprint,
     mesh_revision_id,
     mesh_user_refs,
+    prepare_topology_attributes,
     topology_fingerprint,
     unsupported_attributes,
 )
@@ -102,12 +104,6 @@ def _validate_connected(mesh: Any, indices: tuple[int, ...]) -> None:
 
 
 def _validate_separation_attributes(obj: Any, mesh: Any) -> None:
-    if len(obj.vertex_groups) > 0:
-        raise MeshOperationError(
-            "MESH_SEPARATION_ATTRIBUTE_UNSUPPORTED",
-            "Mesh separation does not yet migrate vertex groups or skin weights",
-            details={"vertex_group_count": len(obj.vertex_groups)},
-        )
     if bool(getattr(mesh, "has_custom_normals", False)):
         raise MeshOperationError(
             "MESH_SEPARATION_ATTRIBUTE_UNSUPPORTED",
@@ -140,11 +136,7 @@ def _branch_mesh(
         lineage = _start_lineage(bm)
         bm.faces.ensure_lookup_table()
         selected = {bm.faces[index] for index in selected_indices}
-        remove = [
-            face
-            for face in bm.faces
-            if (face in selected) is not keep_selected
-        ]
+        remove = [face for face in bm.faces if (face in selected) is not keep_selected]
         bmesh.ops.delete(bm, geom=remove, context="FACES")
         bm.normal_update()
         if (
@@ -314,6 +306,15 @@ def separate_mesh(
     before_topology = topology_fingerprint(initial_mesh)
     before_counts = mesh_counts(initial_mesh)
     before_attributes = _attribute_signature(initial_mesh)
+    source_policy = {
+        "type": "separate_source",
+        "attribute_policy": params.get("source_attribute_policy", {}),
+    }
+    separated_policy = {
+        "type": "separate_branch",
+        "attribute_policy": params.get("separated_attribute_policy", {}),
+    }
+    source_attribute_evidence = prepare_topology_attributes(obj, initial_mesh, source_policy)
     source_collections = tuple(obj.users_collection)
 
     source_guard = transaction.mesh_snapshot_guard(
@@ -332,6 +333,33 @@ def separate_mesh(
     source_mesh = bpy.data.meshes.get(source_guard.mesh_name)
     if source_mesh is None:
         raise MeshOperationError("MESH_DATA_CONFLICT", "Guarded source Mesh no longer exists")
+    source_weight_guard = None
+    source_weight_guard_new = False
+    source_weight_call_state = None
+    if source_attribute_evidence["weight_present"]:
+        from .mesh_weight_ops import (
+            _capture_weights,
+            _create_weight_guard,
+            _group_schema,
+            _validate_weight_guard,
+        )
+
+        source_weight_guard = transaction.weight_snapshot_guard(
+            source_mesh.name, session_identity("mesh", source_mesh)
+        )
+        source_weight_guard_new = source_weight_guard is None
+        if source_weight_guard is None:
+            source_weight_guard = _create_weight_guard(transaction, obj, source_mesh, "OBJECT")
+        else:
+            _validate_weight_guard(source_weight_guard)
+        weight_objects = tuple(
+            bpy.data.objects[name] for name in source_weight_guard.object_identities
+        )
+        source_weight_call_state = (
+            {item.name: session_identity("object", item) for item in weight_objects},
+            {item.name: _group_schema(item, identities=False) for item in weight_objects},
+            _capture_weights(source_mesh),
+        )
     call_snapshot = source_mesh.copy()
     call_snapshot.name = f"{source_mesh.name}.MCP-Separate-Call"
 
@@ -356,6 +384,9 @@ def separate_mesh(
             transform=None,
         )
         duplicate_mesh = duplicate.data
+        separated_attribute_evidence = prepare_topology_attributes(
+            duplicate, duplicate_mesh, separated_policy
+        )
         if collection_name is None:
             for collection in source_collections:
                 if duplicate.name not in collection.objects:
@@ -369,19 +400,20 @@ def separate_mesh(
         separated_relations, separated_created, separated_deleted = _branch_mesh(
             duplicate_mesh, selection.indices, keep_selected=True
         )
+        source_migration = finish_topology_attributes(obj, source_mesh, source_attribute_evidence)
+        separated_migration = finish_topology_attributes(
+            duplicate, duplicate_mesh, separated_attribute_evidence
+        )
         if len(source_mesh.polygons) == 0:
             raise MeshOperationError(
                 "MESH_SEPARATION_EMPTY_SOURCE", "Separation left the source Mesh empty"
             )
         if len(duplicate_mesh.polygons) == 0:
-            raise MeshOperationError(
-                "MESH_SEPARATION_FAILED", "Separated branch contains no faces"
-            )
+            raise MeshOperationError("MESH_SEPARATION_FAILED", "Separated branch contains no faces")
         after_source_attributes = _attribute_signature(source_mesh)
         after_separated_attributes = _attribute_signature(duplicate_mesh)
-        if (
+        if source_attribute_evidence["policy"]["uv"] != "DISCARD" and (
             before_attributes != after_source_attributes
-            or before_attributes != after_separated_attributes
         ):
             raise MeshOperationError(
                 "MESH_SEPARATION_ATTRIBUTE_UNSUPPORTED",
@@ -391,6 +423,13 @@ def separate_mesh(
                     "source": after_source_attributes,
                     "separated": after_separated_attributes,
                 },
+            )
+        if separated_attribute_evidence["policy"]["uv"] != "DISCARD" and (
+            before_attributes != after_separated_attributes
+        ):
+            raise MeshOperationError(
+                "MESH_SEPARATION_ATTRIBUTE_UNSUPPORTED",
+                "Separated branch did not preserve the supported attribute schema",
             )
 
         phase = "branch_maps"
@@ -452,6 +491,14 @@ def separate_mesh(
         source_guard.expected_fingerprint = source_after
         source_guard.expected_users = int(source_mesh.users)
         source_guard.expected_user_objects = mesh_user_refs(source_mesh)
+        if source_weight_guard is not None:
+            from .mesh_weight_ops import _schema_fingerprints, weights_fingerprint
+
+            weight_objects = tuple(
+                bpy.data.objects[name] for name in source_weight_guard.object_identities
+            )
+            source_weight_guard.expected_schema_fingerprints = _schema_fingerprints(weight_objects)
+            source_weight_guard.expected_weights_fingerprint = weights_fingerprint(source_mesh)
         duplicate_delta.after = (make_structure_guard("object", duplicate),)
         transaction.record(
             MeshEditDelta(
@@ -473,6 +520,10 @@ def separate_mesh(
             book.release_selection(selection_id)
         for record in maps:
             book.release_component_map(record.component_map_id)
+        if source_weight_call_state is not None:
+            from .mesh_weight_ops import _restore_call_state
+
+            _restore_call_state(source_mesh, *source_weight_call_state, exc)
         _restore_separation_call(
             transaction=transaction,
             separated_guard=separated_guard,
@@ -485,6 +536,8 @@ def separate_mesh(
             source_guard_new=source_guard_new,
             failure=exc,
         )
+        if source_weight_guard_new and source_weight_guard is not None:
+            transaction.remove_weight_snapshot_guard(source_weight_guard)
         if isinstance(exc, AuthoringOperationError):
             raise MeshOperationError(
                 "MESH_SEPARATION_FAILED",
@@ -498,6 +551,10 @@ def separate_mesh(
             book.release_selection(selection_id)
         for record in maps:
             book.release_component_map(record.component_map_id)
+        if source_weight_call_state is not None:
+            from .mesh_weight_ops import _restore_call_state
+
+            _restore_call_state(source_mesh, *source_weight_call_state, exc)
         _restore_separation_call(
             transaction=transaction,
             separated_guard=separated_guard,
@@ -510,6 +567,8 @@ def separate_mesh(
             source_guard_new=source_guard_new,
             failure=exc,
         )
+        if source_weight_guard_new and source_weight_guard is not None:
+            transaction.remove_weight_snapshot_guard(source_weight_guard)
         raise MeshOperationError(
             "MESH_SEPARATION_FAILED",
             f"Mesh separation failed: {type(exc).__name__}",
@@ -552,9 +611,7 @@ def separate_mesh(
         "separated_selection": separated_selection,
         "component_effects": {
             "duplicated_boundary": _duplicated_boundary_counts(maps[0], maps[1]),
-            "source_deleted": {
-                domain: len(maps[0].deleted.get(domain, ())) for domain in DOMAINS
-            },
+            "source_deleted": {domain: len(maps[0].deleted.get(domain, ())) for domain in DOMAINS},
             "separated_deleted": {
                 domain: len(maps[1].deleted.get(domain, ())) for domain in DOMAINS
             },
@@ -563,6 +620,8 @@ def separate_mesh(
             "schema_preserved": True,
             "attributes": before_attributes,
             "interpolation": "BLENDER_BMESH",
+            "source_migration": source_migration,
+            "separated_migration": separated_migration,
         },
         "delta": {"types": ["mesh_edit", "object_duplicate"], "recorded": True},
     }

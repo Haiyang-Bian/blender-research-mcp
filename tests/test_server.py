@@ -62,6 +62,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "mesh.edit",
         "mesh.uv.edit",
         "mesh.weights.edit",
+        "mesh.attribute.transfer",
         "mesh.separate",
         "mesh.batch.execute",
         "shape_key.set_value",
@@ -211,9 +212,10 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "RAYCAST",
     ]
     validation = tools_by_name["mesh.validate"]
-    assert len(validation.inputSchema["properties"]["check"]["enum"]) == 11
+    assert len(validation.inputSchema["properties"]["check"]["enum"]) == 15
     assert "layer_name" in validation.inputSchema["properties"]
     assert "expected_uv_fingerprint" in validation.inputSchema["properties"]
+    assert "expected_weights_fingerprint" in validation.inputSchema["properties"]
     lookdev = tools_by_name["object.lookdev.inspect"]
     assert lookdev.annotations is not None
     assert lookdev.annotations.readOnlyHint is True
@@ -340,6 +342,12 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     weight_operation = mesh_weights_edit.inputSchema["properties"]["operation"]
     assert weight_operation["discriminator"]["propertyName"] == "type"
     assert len(weight_operation["oneOf"]) == 7
+    attribute_transfer = tools_by_name["mesh.attribute.transfer"]
+    assert attribute_transfer.annotations is not None
+    assert attribute_transfer.annotations.destructiveHint is True
+    transfer_schema = attribute_transfer.inputSchema["properties"]["transfer"]
+    assert transfer_schema["discriminator"]["propertyName"] == "type"
+    assert len(transfer_schema["oneOf"]) == 2
     shape_key = tools_by_name["shape_key.set_value"]
     assert shape_key.annotations is not None
     assert shape_key.annotations.destructiveHint is True

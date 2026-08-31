@@ -397,4 +397,8 @@ ValidationCheck = Literal[
     "UV_DEGENERATE",
     "UV_OVERLAP",
     "UV_STRETCH",
+    "WEIGHT_SUM",
+    "WEIGHT_INFLUENCE_LIMIT",
+    "WEIGHT_UNASSIGNED",
+    "DEFORM_GROUP_MISMATCH",
 ]

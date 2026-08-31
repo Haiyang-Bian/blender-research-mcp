@@ -24,6 +24,12 @@ from .mesh_resource_model import (
     SurfaceRecord,
 )
 from .mesh_uv_ops import uv_fingerprint
+from .mesh_weight_ops import (
+    _capture_weights,
+    _group_bone_matches,
+    group_schema_fingerprint,
+    weights_fingerprint,
+)
 
 
 def _matrix_rows(matrix: Matrix) -> tuple[tuple[float, float, float, float], ...]:
@@ -583,6 +589,119 @@ def _validate_uv(
     raise MeshResourceError("MESH_VALIDATION_INVALID", f"Unsupported UV validation: {check}")
 
 
+def _validate_weights(
+    book: MeshResourceBook,
+    selection: SelectionRecord,
+    obj: Any,
+    mesh: Any,
+    check: str,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    if selection.domain != "VERTEX":
+        raise MeshResourceError(
+            "MESH_VALIDATION_INVALID", "Weight validation requires a VERTEX SelectionSet"
+        )
+    expected_schema = params.get("expected_group_schema_fingerprint")
+    expected_weights = params.get("expected_weights_fingerprint")
+    actual_schema = group_schema_fingerprint(obj)
+    actual_weights = weights_fingerprint(mesh)
+    if expected_schema is not None and expected_schema != actual_schema:
+        raise MeshResourceError(
+            "MESH_WEIGHT_SCHEMA_FINGERPRINT_MISMATCH",
+            "Vertex Group schema evidence changed",
+            kind="conflict",
+        )
+    if expected_weights is not None and expected_weights != actual_weights:
+        raise MeshResourceError(
+            "MESH_WEIGHT_FINGERPRINT_MISMATCH",
+            "Deform-weight evidence changed",
+            kind="conflict",
+        )
+    group_names = params.get("group_names")
+    if group_names is None:
+        group_indices = tuple(range(len(obj.vertex_groups)))
+    else:
+        if not isinstance(group_names, list) or not group_names:
+            raise MeshResourceError(
+                "MESH_VALIDATION_INVALID", "group_names must be a non-empty list"
+            )
+        groups = [obj.vertex_groups.get(str(name)) for name in group_names]
+        if any(group is None for group in groups):
+            raise MeshResourceError(
+                "MESH_WEIGHT_GROUP_NOT_FOUND", "A requested Vertex Group does not exist"
+            )
+        group_indices = tuple(int(group.index) for group in groups if group is not None)
+    weights = [dict(items) for items in _capture_weights(mesh)]
+    vertices = tuple(selection.indices)
+    tolerance = float(params.get("tolerance", 1e-6))
+    if check == "WEIGHT_SUM":
+        target = float(params.get("target_weight_total", 1.0))
+        totals = [
+            sum(weights[index].get(group, 0.0) for group in group_indices) for index in vertices
+        ]
+        violations = tuple(
+            index
+            for index, total in zip(vertices, totals, strict=True)
+            if abs(total - target) > tolerance
+        )
+        return {
+            "check": check,
+            "count": len(violations),
+            "selection": _selection_from_indices(book, selection, "VERTEX", violations, check),
+            "totals": _uv_statistics(totals),
+            "target_total": target,
+            "tolerance": tolerance,
+        }
+    if check == "WEIGHT_INFLUENCE_LIMIT":
+        maximum = int(params.get("maximum_influences", 4))
+        counts = [
+            sum(weights[index].get(group, 0.0) > tolerance for group in group_indices)
+            for index in vertices
+        ]
+        violations = tuple(
+            index for index, count in zip(vertices, counts, strict=True) if count > maximum
+        )
+        return {
+            "check": check,
+            "count": len(violations),
+            "selection": _selection_from_indices(book, selection, "VERTEX", violations, check),
+            "maximum_influences": maximum,
+            "observed_maximum": max(counts, default=0),
+        }
+    if check == "WEIGHT_UNASSIGNED":
+        violations = tuple(
+            index
+            for index in vertices
+            if not any(weights[index].get(group, 0.0) > tolerance for group in group_indices)
+        )
+        return {
+            "check": check,
+            "count": len(violations),
+            "selection": _selection_from_indices(book, selection, "VERTEX", violations, check),
+        }
+    if check == "DEFORM_GROUP_MISMATCH":
+        mismatched = {
+            int(group.index)
+            for group in obj.vertex_groups
+            if int(group.index) in group_indices and not _group_bone_matches(obj, group.name)
+        }
+        violations = tuple(
+            index
+            for index in vertices
+            if any(
+                group in mismatched and weight > tolerance
+                for group, weight in weights[index].items()
+            )
+        )
+        return {
+            "check": check,
+            "count": len(violations),
+            "selection": _selection_from_indices(book, selection, "VERTEX", violations, check),
+            "mismatched_groups": [obj.vertex_groups[index].name for index in sorted(mismatched)],
+        }
+    raise MeshResourceError("MESH_VALIDATION_INVALID", f"Unsupported weight validation: {check}")
+
+
 def validate_mesh(book: MeshResourceBook, params: dict[str, Any]) -> dict[str, Any]:
     selection_id = params.get("selection_id")
     check = params.get("check")
@@ -593,6 +712,13 @@ def validate_mesh(book: MeshResourceBook, params: dict[str, Any]) -> dict[str, A
     tolerance = float(params.get("tolerance", 1e-6))
     if check in {"UV_BOUNDS", "UV_DEGENERATE", "UV_OVERLAP", "UV_STRETCH"}:
         return _validate_uv(book, selection, mesh, check, params)
+    if check in {
+        "WEIGHT_SUM",
+        "WEIGHT_INFLUENCE_LIMIT",
+        "WEIGHT_UNASSIGNED",
+        "DEFORM_GROUP_MISMATCH",
+    }:
+        return _validate_weights(book, selection, obj, mesh, check, params)
     if check == "NON_MANIFOLD":
         counts = _mesh_edge_face_counts(mesh)
         indices = tuple(index for index, count in enumerate(counts) if count != 2)

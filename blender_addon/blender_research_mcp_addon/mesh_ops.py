@@ -23,6 +23,7 @@ MAX_EDGES = 1_000_000
 MAX_FACES = 500_000
 MAX_LOOPS = 2_000_000
 MAX_COMPONENT_TARGETS = 4096
+ATTRIBUTE_MIGRATION_MODES = {"PRESERVE_INTERPOLATE", "ERROR_IF_PRESENT", "DISCARD"}
 SUPPORTED_ATTRIBUTE_TYPES = {
     "FLOAT",
     "INT",
@@ -1271,6 +1272,101 @@ def _strict_bool(value: Any, field: str) -> bool:
     return value
 
 
+def validate_attribute_policy(operation: dict[str, Any]) -> dict[str, str]:
+    raw = operation.get("attribute_policy", {})
+    if not isinstance(raw, dict) or set(raw) - {"uv", "weights"}:
+        raise MeshOperationError(
+            "MESH_OPERATION_INVALID", "attribute_policy may contain only uv and weights"
+        )
+    result = {
+        "uv": raw.get("uv", "PRESERVE_INTERPOLATE"),
+        "weights": raw.get("weights", "PRESERVE_INTERPOLATE"),
+    }
+    for name, value in result.items():
+        if value not in ATTRIBUTE_MIGRATION_MODES:
+            raise MeshOperationError(
+                "MESH_OPERATION_INVALID",
+                f"attribute_policy.{name} must be one of {sorted(ATTRIBUTE_MIGRATION_MODES)}",
+            )
+    return result
+
+
+def prepare_topology_attributes(obj: Any, mesh: Any, operation: dict[str, Any]) -> dict[str, Any]:
+    policy = validate_attribute_policy(operation)
+    uv_present = bool(mesh.uv_layers)
+    weight_present = any(vertex.groups for vertex in mesh.vertices)
+    if policy["uv"] == "ERROR_IF_PRESENT" and uv_present:
+        raise MeshOperationError(
+            "MESH_ATTRIBUTE_MIGRATION_REJECTED", "Topology operation rejects existing UV layers"
+        )
+    if policy["weights"] == "ERROR_IF_PRESENT" and weight_present:
+        raise MeshOperationError(
+            "MESH_ATTRIBUTE_MIGRATION_REJECTED", "Topology operation rejects existing weights"
+        )
+    return {
+        "policy": policy,
+        "uv_present": uv_present,
+        "weight_present": weight_present,
+        "uv_layers": tuple(layer.name for layer in mesh.uv_layers),
+        "group_schema": tuple((group.name, bool(group.lock_weight)) for group in obj.vertex_groups),
+    }
+
+
+def finish_topology_attributes(
+    obj: Any,
+    mesh: Any,
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    policy = evidence["policy"]
+    if policy["uv"] == "DISCARD":
+        for layer in tuple(mesh.uv_layers):
+            mesh.uv_layers.remove(layer)
+    elif evidence["uv_present"]:
+        if tuple(layer.name for layer in mesh.uv_layers) != evidence["uv_layers"]:
+            raise MeshOperationError(
+                "MESH_ATTRIBUTE_MIGRATION_FAILED",
+                "UV layer schema changed during topology migration",
+            )
+        if any(
+            not math.isfinite(float(value))
+            for layer in mesh.uv_layers
+            for item in layer.data
+            for value in item.uv
+        ):
+            raise MeshOperationError(
+                "MESH_ATTRIBUTE_MIGRATION_FAILED", "UV migration produced non-finite coordinates"
+            )
+    if policy["weights"] == "DISCARD":
+        indices = list(range(len(mesh.vertices)))
+        for group in obj.vertex_groups:
+            if indices:
+                group.remove(indices)
+    elif evidence["weight_present"]:
+        if (
+            tuple((group.name, bool(group.lock_weight)) for group in obj.vertex_groups)
+            != evidence["group_schema"]
+        ):
+            raise MeshOperationError(
+                "MESH_ATTRIBUTE_MIGRATION_FAILED", "Vertex Group schema changed during migration"
+            )
+        if any(
+            not 0.0 <= float(item.weight) <= 1.0
+            for vertex in mesh.vertices
+            for item in vertex.groups
+        ):
+            raise MeshOperationError(
+                "MESH_ATTRIBUTE_MIGRATION_FAILED", "Weight migration produced invalid values"
+            )
+    return {
+        "uv": policy["uv"],
+        "weights": policy["weights"],
+        "uv_layers_before": len(evidence["uv_layers"]),
+        "uv_layers_after": len(mesh.uv_layers),
+        "weights_present_before": evidence["weight_present"],
+        "weights_present_after": any(vertex.groups for vertex in mesh.vertices),
+    }
+
+
 def _validate_target_payload(value: Any, field: str) -> dict[str, Any]:
     target = _closed_payload(value, field, required={"type", "indices"})
     if target["type"] not in {"vertices", "edges", "faces"}:
@@ -1301,6 +1397,15 @@ def _validate_operation(operation: Any) -> dict[str, Any]:
     if not isinstance(operation, dict):
         raise MeshOperationError("MESH_OPERATION_INVALID", "operation must be an object")
     operation_type = operation.get("type")
+    if operation_type in {
+        "extrude_faces",
+        "inset_faces",
+        "bevel_edges",
+        "delete",
+        "dissolve",
+        "merge_vertices",
+    }:
+        validate_attribute_policy(operation)
     if operation_type == "transform":
         payload = _closed_payload(
             operation,
@@ -1347,6 +1452,7 @@ def _validate_operation(operation: Any) -> dict[str, Any]:
             operation,
             "operation",
             required={"type", "face_indices", "offset"},
+            optional={"attribute_policy"},
         )
         _indices(payload["face_indices"], "face_indices")
         offset = _validate_vector_range(
@@ -1360,7 +1466,7 @@ def _validate_operation(operation: Any) -> dict[str, Any]:
             operation,
             "operation",
             required={"type", "face_indices", "thickness"},
-            optional={"depth", "individual", "even_offset"},
+            optional={"depth", "individual", "even_offset", "attribute_policy"},
         )
         _indices(payload["face_indices"], "face_indices")
         thickness = _number(payload["thickness"], "thickness", minimum=0, maximum=100_000)
@@ -1377,7 +1483,7 @@ def _validate_operation(operation: Any) -> dict[str, Any]:
             operation,
             "operation",
             required={"type", "edge_indices", "width"},
-            optional={"segments", "profile", "clamp_overlap"},
+            optional={"segments", "profile", "clamp_overlap", "attribute_policy"},
         )
         _indices(payload["edge_indices"], "edge_indices")
         _number(payload["width"], "width", minimum=0, maximum=100_000, minimum_exclusive=True)
@@ -1390,7 +1496,12 @@ def _validate_operation(operation: Any) -> dict[str, Any]:
         _strict_bool(payload.get("clamp_overlap", True), "clamp_overlap")
         return payload
     if operation_type == "delete":
-        payload = _closed_payload(operation, "operation", required={"type", "target"})
+        payload = _closed_payload(
+            operation,
+            "operation",
+            required={"type", "target"},
+            optional={"attribute_policy"},
+        )
         _validate_target_payload(payload["target"], "operation.target")
         return payload
     if operation_type == "dissolve":
@@ -1398,7 +1509,12 @@ def _validate_operation(operation: Any) -> dict[str, Any]:
             operation,
             "operation",
             required={"type", "target"},
-            optional={"use_face_split", "use_boundary_tear", "use_verts"},
+            optional={
+                "use_face_split",
+                "use_boundary_tear",
+                "use_verts",
+                "attribute_policy",
+            },
         )
         target = _validate_target_payload(payload["target"], "operation.target")
         flags = {
@@ -1421,7 +1537,7 @@ def _validate_operation(operation: Any) -> dict[str, Any]:
             operation,
             "operation",
             required={"type", "vertex_indices"},
-            optional={"destination", "target_index"},
+            optional={"destination", "target_index", "attribute_policy"},
         )
         indices = _indices(payload["vertex_indices"], "vertex_indices")
         if len(indices) < 2:
@@ -1831,6 +1947,19 @@ def edit_mesh(
     before_map_evidence = _map_evidence(obj, initial_mesh)
     operation = _validate_operation(params.get("operation"))
     operation_type = operation.get("type")
+    topology_attribute_evidence = (
+        prepare_topology_attributes(obj, initial_mesh, operation)
+        if operation_type
+        in {
+            "extrude_faces",
+            "inset_faces",
+            "bevel_edges",
+            "delete",
+            "dissolve",
+            "merge_vertices",
+        }
+        else None
+    )
     if _identity_transform(operation):
         return _identity_transform_result(
             transaction,
@@ -1858,6 +1987,26 @@ def edit_mesh(
     if mesh is None:
         raise MeshOperationError(
             "MESH_DATA_CONFLICT", "Guarded Mesh no longer exists", kind="conflict"
+        )
+    weight_guard = None
+    new_weight_guard = False
+    weight_call_state = None
+    if topology_attribute_evidence is not None and topology_attribute_evidence["weight_present"]:
+        from .mesh_weight_ops import _create_weight_guard, _validate_weight_guard
+
+        weight_guard = transaction.weight_snapshot_guard(mesh.name, session_identity("mesh", mesh))
+        new_weight_guard = weight_guard is None
+        if weight_guard is None:
+            weight_guard = _create_weight_guard(transaction, obj, mesh, data_scope)
+        else:
+            _validate_weight_guard(weight_guard)
+        from .mesh_weight_ops import _capture_weights, _group_schema
+
+        weight_objects = tuple(bpy.data.objects[name] for name in weight_guard.object_identities)
+        weight_call_state = (
+            {item.name: session_identity("object", item) for item in weight_objects},
+            {item.name: _group_schema(item, identities=False) for item in weight_objects},
+            _capture_weights(mesh),
         )
     before_fingerprint = mesh_fingerprint(mesh)
     before_topology = topology_fingerprint(mesh)
@@ -1945,6 +2094,11 @@ def edit_mesh(
             lineage = None
         bm.to_mesh(mesh)
         mesh.update(calc_edges=True, calc_edges_loose=True)
+        attribute_effects = (
+            finish_topology_attributes(obj, mesh, topology_attribute_evidence)
+            if topology_attribute_evidence is not None
+            else None
+        )
         after_topology_candidate = topology_fingerprint(mesh)
         if (
             resources is not None
@@ -1977,8 +2131,14 @@ def edit_mesh(
             for selection_id in created_selection_ids:
                 resources.release_selection(selection_id)
         _restore_failed_edit(mesh, call_snapshot, before_fingerprint, exc)
+        if weight_call_state is not None:
+            from .mesh_weight_ops import _restore_call_state
+
+            _restore_call_state(mesh, *weight_call_state, exc)
         if new_guard:
             _remove_new_guard(transaction, guard)
+        if new_weight_guard and weight_guard is not None:
+            transaction.remove_weight_snapshot_guard(weight_guard)
         raise
     except Exception as exc:
         if component_map is not None and resources is not None:
@@ -1987,8 +2147,14 @@ def edit_mesh(
             for selection_id in created_selection_ids:
                 resources.release_selection(selection_id)
         _restore_failed_edit(mesh, call_snapshot, before_fingerprint, exc)
+        if weight_call_state is not None:
+            from .mesh_weight_ops import _restore_call_state
+
+            _restore_call_state(mesh, *weight_call_state, exc)
         if new_guard:
             _remove_new_guard(transaction, guard)
+        if new_weight_guard and weight_guard is not None:
+            transaction.remove_weight_snapshot_guard(weight_guard)
         raise MeshOperationError(
             "MESH_EDIT_FAILED",
             f"Mesh operation failed: {type(exc).__name__}",
@@ -2005,6 +2171,8 @@ def edit_mesh(
     after_fingerprint = mesh_fingerprint(mesh)
     after_topology = topology_fingerprint(mesh)
     if after_fingerprint == before_fingerprint:
+        if new_weight_guard and weight_guard is not None:
+            transaction.remove_weight_snapshot_guard(weight_guard)
         if new_guard:
             _remove_new_guard(transaction, guard)
         return {
@@ -2043,6 +2211,12 @@ def edit_mesh(
     guard.expected_fingerprint = after_fingerprint
     guard.expected_users = int(mesh.users)
     guard.expected_user_objects = mesh_user_refs(mesh)
+    if weight_guard is not None:
+        from .mesh_weight_ops import _schema_fingerprints, weights_fingerprint
+
+        weight_objects = tuple(bpy.data.objects[name] for name in weight_guard.object_identities)
+        weight_guard.expected_schema_fingerprints = _schema_fingerprints(weight_objects)
+        weight_guard.expected_weights_fingerprint = weights_fingerprint(mesh)
     transaction.record(
         MeshEditDelta(
             object_name=obj.name,
@@ -2085,6 +2259,7 @@ def edit_mesh(
         "after_counts": mesh_counts(mesh),
         "components": components,
         "evidence": evidence,
+        "attribute_effects": attribute_effects,
         "component_map": component_map.summary() if component_map is not None else None,
         "created_selections": created_selections,
         "delta": {

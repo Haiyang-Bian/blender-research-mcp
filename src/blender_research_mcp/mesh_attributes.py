@@ -9,9 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_
 from blender_research_mcp.authoring import FiniteNumber
 from blender_research_mcp.mesh_authoring import MeshDataScope, MeshUserObject
 from blender_research_mcp.mesh_resources import SelectionId
-from blender_research_mcp.mesh_topology import ComponentMapIds
 
 Fingerprint = Annotated[str, Field(min_length=64, max_length=64)]
+AttributeComponentMapIds = Annotated[
+    tuple[Annotated[str, Field(min_length=1, max_length=128)], ...],
+    Field(min_length=1, max_length=8),
+]
 ResourceIdentity = Annotated[str, Field(min_length=1, max_length=128)]
 LayerName = Annotated[str, Field(min_length=1, max_length=255)]
 GroupName = Annotated[str, Field(min_length=1, max_length=255)]
@@ -311,6 +314,8 @@ class AttributeMeshTarget(BaseModel):
         tuple[MeshUserObject, ...], Field(min_length=1, max_length=256)
     ]
     expected_mesh_fingerprint: Fingerprint
+    expected_group_schema_fingerprint: Fingerprint | None = None
+    expected_weights_fingerprint: Fingerprint | None = None
     data_scope: MeshDataScope = "OBJECT"
 
 
@@ -322,7 +327,7 @@ class UVTransfer(BaseModel):
     expected_target_layer_identity: ResourceIdentity | None = None
     target_selection_id: SelectionId
     mapping: Literal["TOPOLOGY", "NEAREST_SURFACE"]
-    component_map_ids: ComponentMapIds | None = None
+    component_map_ids: AttributeComponentMapIds | None = None
     source_geometry: Literal["BASE", "EVALUATED_DEFORM_ONLY"] = "BASE"
     maximum_distance: FiniteNumber = Field(gt=0, le=1_000_000)
     on_miss: Literal["KEEP", "ERROR"] = "ERROR"
@@ -340,7 +345,7 @@ class WeightTransfer(BaseModel):
     groups: Annotated[tuple[GroupMapping, ...], Field(min_length=1, max_length=256)]
     target_selection_id: SelectionId
     mapping: Literal["TOPOLOGY", "NEAREST_VERTEX", "NEAREST_SURFACE"]
-    component_map_ids: ComponentMapIds | None = None
+    component_map_ids: AttributeComponentMapIds | None = None
     source_geometry: Literal["BASE", "EVALUATED_DEFORM_ONLY"] = "BASE"
     maximum_distance: FiniteNumber = Field(gt=0, le=1_000_000)
     on_miss: Literal["KEEP", "ERROR"] = "ERROR"

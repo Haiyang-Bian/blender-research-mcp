@@ -374,7 +374,18 @@ def validate_weight_snapshot_guards(transaction: Transaction) -> None:
 def restore_weight_snapshots(transaction: Transaction) -> list[dict[str, Any]]:
     restored = []
     for guard in reversed(tuple(transaction.weight_snapshot_guards.values())):
-        mesh, _objects = _validate_weight_guard(guard)
+        mesh = bpy.data.meshes.get(guard.mesh_name)
+        if mesh is None and guard.data_scope == "OBJECT":
+            objects = _restore_schemas(guard.object_identities, guard.baseline_schemas)
+            restored.append(
+                {
+                    "kind": "mesh_weights",
+                    "action": "restore_group_schema_after_shared_link",
+                    "mesh_name": objects[0].data.name,
+                    "objects": sorted(guard.object_identities),
+                }
+            )
+            continue
         objects = _restore_schemas(guard.object_identities, guard.baseline_schemas)
         _write_weights(objects[0], guard.baseline_weights)
         restored.append(

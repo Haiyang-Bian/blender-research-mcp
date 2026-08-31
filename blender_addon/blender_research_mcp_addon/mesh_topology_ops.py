@@ -37,12 +37,15 @@ from .mesh_ops import (
     _validate_guard,
     _validate_mesh_target,
     _vector,
+    finish_topology_attributes,
     mesh_counts,
     mesh_fingerprint,
     mesh_revision_id,
     mesh_user_refs,
+    prepare_topology_attributes,
     topology_fingerprint,
     unsupported_attributes,
+    validate_attribute_policy,
 )
 from .mesh_query_ops import validate_selection
 from .mesh_resource_model import MeshResourceBook, MeshResourceError, SelectionRecord
@@ -133,12 +136,20 @@ def _validate_operation(raw: Any, material_count: int) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise MeshOperationError("MESH_OPERATION_INVALID", "operation must be an object")
     operation_type = raw.get("type")
+    validate_attribute_policy(raw)
     common = {"type", "selection_id"}
     if operation_type == "subdivide":
         operation = _closed(
             raw,
             common,
-            {"cuts", "smooth", "smooth_falloff", "quad_corner", "use_grid_fill"},
+            {
+                "cuts",
+                "smooth",
+                "smooth_falloff",
+                "quad_corner",
+                "use_grid_fill",
+                "attribute_policy",
+            },
         )
         _integer(operation.get("cuts", 1), "cuts", 1, 32)
         _number(operation.get("smooth", 0), "smooth", 0, 1)
@@ -151,7 +162,7 @@ def _validate_operation(raw: Any, material_count: int) -> dict[str, Any]:
         _boolean(operation.get("use_grid_fill", False), "use_grid_fill")
         return operation
     if operation_type == "loop_cut":
-        operation = _closed(raw, common, {"cuts", "interpolation", "smooth"})
+        operation = _closed(raw, common, {"cuts", "interpolation", "smooth", "attribute_policy"})
         _integer(operation.get("cuts", 1), "cuts", 1, 32)
         _enum(
             operation.get("interpolation", "LINEAR"),
@@ -164,7 +175,7 @@ def _validate_operation(raw: Any, material_count: int) -> dict[str, Any]:
         operation = _closed(
             raw,
             common | {"plane_origin", "plane_normal"},
-            {"space", "tolerance", "snap_to_plane", "clear_side"},
+            {"space", "tolerance", "snap_to_plane", "clear_side", "attribute_policy"},
         )
         _vector(operation["plane_origin"], "plane_origin")
         if _vector(operation["plane_normal"], "plane_normal").length_squared == 0:
@@ -179,9 +190,13 @@ def _validate_operation(raw: Any, material_count: int) -> dict[str, Any]:
         )
         return operation
     if operation_type == "split":
-        return _closed(raw, common, set())
+        return _closed(raw, common, {"attribute_policy"})
     if operation_type == "bridge":
-        operation = _closed(raw, common, {"twist_offset", "material_slot_index", "smooth"})
+        operation = _closed(
+            raw,
+            common,
+            {"twist_offset", "material_slot_index", "smooth", "attribute_policy"},
+        )
         _integer(operation.get("twist_offset", 0), "twist_offset", -4096, 4096)
         _material_index(operation, material_count)
         _boolean(operation.get("smooth", False), "smooth")
@@ -190,7 +205,7 @@ def _validate_operation(raw: Any, material_count: int) -> dict[str, Any]:
         operation = _closed(
             raw,
             common,
-            {"method", "max_sides", "material_slot_index", "smooth"},
+            {"method", "max_sides", "material_slot_index", "smooth", "attribute_policy"},
         )
         _enum(operation.get("method", "NGON"), "method", {"NGON", "TRIANGLES"})
         _integer(operation.get("max_sides", 0), "max_sides", 0, 1024)
@@ -201,7 +216,7 @@ def _validate_operation(raw: Any, material_count: int) -> dict[str, Any]:
         operation = _closed(
             raw,
             common,
-            {"use_interp_simple", "material_slot_index", "smooth"},
+            {"use_interp_simple", "material_slot_index", "smooth", "attribute_policy"},
         )
         _boolean(operation.get("use_interp_simple", False), "use_interp_simple")
         _material_index(operation, material_count)
@@ -246,9 +261,7 @@ def _selection(
     if not selection.indices:
         raise MeshOperationError("MESH_OPERATION_INVALID", "SelectionSet must not be empty")
     if operation["type"] == "loop_cut" and len(selection.indices) > 64:
-        raise MeshOperationError(
-            "MESH_OPERATION_INVALID", "loop_cut accepts at most 64 seed edges"
-        )
+        raise MeshOperationError("MESH_OPERATION_INVALID", "loop_cut accepts at most 64 seed edges")
     return selection
 
 
@@ -308,8 +321,7 @@ def _closed_loops(edges: list[Any], *, expected: int | None = None) -> list[list
             f"Expected {expected} disjoint boundary loops, found {len(components)}",
         )
     if any(
-        any(degree != 2 for degree in _component_degrees(component))
-        for component in components
+        any(degree != 2 for degree in _component_degrees(component)) for component in components
     ):
         raise MeshOperationError(
             "MESH_BOUNDARY_INVALID", "Selected boundary components must be closed loops"
@@ -343,9 +355,7 @@ def _new_faces(result: dict[str, Any]) -> list[Any]:
     return list(dict.fromkeys(face for face in faces if face.is_valid))
 
 
-def _set_face_properties(
-    faces: list[Any], operation: dict[str, Any], material_count: int
-) -> None:
+def _set_face_properties(faces: list[Any], operation: dict[str, Any], material_count: int) -> None:
     material = _material_index(operation, material_count)
     smooth = bool(operation.get("smooth", False))
     for face in faces:
@@ -460,9 +470,7 @@ def _operate(
         return {"boundary_loops": len(loops), "created_faces": len(faces)}
     components = _boundary_components(selected)
     degrees = [_component_degrees(component) for component in components]
-    valid = (
-        len(components) == 1 and all(degree == 2 for degree in degrees[0])
-    ) or (
+    valid = (len(components) == 1 and all(degree == 2 for degree in degrees[0])) or (
         len(components) == 2
         and all(sum(degree == 1 for degree in item) in {0, 2} for item in degrees)
         and all(all(degree in {1, 2} for degree in item) for item in degrees)
@@ -635,6 +643,7 @@ def edit_mesh_topology(
     before_map_evidence = _map_evidence(obj, initial_mesh)
     before_revision = mesh_revision_id(initial_mesh)
     before_attributes = _attribute_signature(initial_mesh)
+    topology_attribute_evidence = prepare_topology_attributes(obj, initial_mesh, operation)
 
     transaction.ensure_capacity()
     guard = transaction.mesh_snapshot_guard(
@@ -652,6 +661,29 @@ def edit_mesh_topology(
     mesh = bpy.data.meshes.get(guard.mesh_name)
     if mesh is None:
         raise MeshOperationError("MESH_DATA_CONFLICT", "Guarded Mesh no longer exists")
+    weight_guard = None
+    new_weight_guard = False
+    weight_call_state = None
+    if topology_attribute_evidence["weight_present"]:
+        from .mesh_weight_ops import (
+            _capture_weights,
+            _create_weight_guard,
+            _group_schema,
+            _validate_weight_guard,
+        )
+
+        weight_guard = transaction.weight_snapshot_guard(mesh.name, session_identity("mesh", mesh))
+        new_weight_guard = weight_guard is None
+        if weight_guard is None:
+            weight_guard = _create_weight_guard(transaction, obj, mesh, data_scope)
+        else:
+            _validate_weight_guard(weight_guard)
+        weight_objects = tuple(bpy.data.objects[name] for name in weight_guard.object_identities)
+        weight_call_state = (
+            {item.name: session_identity("object", item) for item in weight_objects},
+            {item.name: _group_schema(item, identities=False) for item in weight_objects},
+            _capture_weights(mesh),
+        )
     before_fingerprint = mesh_fingerprint(mesh)
     before_topology = topology_fingerprint(mesh)
     before_counts = mesh_counts(mesh)
@@ -665,9 +697,7 @@ def edit_mesh_topology(
     try:
         bm.from_mesh(mesh)
         component_baseline = _bmesh_baseline(bm)
-        requested = {
-            _DOMAIN_COLLECTION[selection.domain]: _index_page(list(selection.indices))
-        }
+        requested = {_DOMAIN_COLLECTION[selection.domain]: _index_page(list(selection.indices))}
         lineage = _start_lineage(bm)
         evidence = _operate(bm, obj, selection, operation, len(mesh.materials))
         bm.normal_update()
@@ -686,13 +716,24 @@ def edit_mesh_topology(
         lineage = None
         bm.to_mesh(mesh)
         mesh.update(calc_edges=True, calc_edges_loose=True)
+        migration_result = finish_topology_attributes(obj, mesh, topology_attribute_evidence)
         if unsupported_attributes(mesh):
             raise MeshOperationError(
                 "MESH_LINEAGE_GENERATION_FAILED",
                 "Topology operation produced unsupported Mesh attributes",
             )
         after_attributes = _attribute_signature(mesh)
-        if before_attributes != after_attributes:
+        expected_attributes = before_attributes
+        if topology_attribute_evidence["policy"]["uv"] == "DISCARD":
+            uv_names = {item[0] for item in before_attributes["uv_layers"]}
+            expected_attributes = {
+                **before_attributes,
+                "attributes": tuple(
+                    item for item in before_attributes["attributes"] if item[0] not in uv_names
+                ),
+                "uv_layers": (),
+            }
+        if expected_attributes != after_attributes:
             raise MeshOperationError(
                 "MESH_LINEAGE_GENERATION_FAILED",
                 "Topology operation did not preserve the supported attribute schema",
@@ -702,6 +743,8 @@ def edit_mesh_topology(
         after_topology = topology_fingerprint(mesh)
         changed = after_fingerprint != before_fingerprint
         if not changed:
+            if new_weight_guard and weight_guard is not None:
+                transaction.remove_weight_snapshot_guard(weight_guard)
             if new_guard:
                 _remove_new_guard(transaction, guard)
             return {
@@ -783,8 +826,14 @@ def edit_mesh_topology(
             if selection_id is not None:
                 book.release_selection(selection_id)
         _restore_failed_edit(mesh, call_snapshot, before_fingerprint, exc)
+        if weight_call_state is not None:
+            from .mesh_weight_ops import _restore_call_state
+
+            _restore_call_state(mesh, *weight_call_state, exc)
         if new_guard:
             _remove_new_guard(transaction, guard)
+        if new_weight_guard and weight_guard is not None:
+            transaction.remove_weight_snapshot_guard(weight_guard)
         raise
     except Exception as exc:
         if component_map is not None:
@@ -793,8 +842,14 @@ def edit_mesh_topology(
             if selection_id is not None:
                 book.release_selection(selection_id)
         _restore_failed_edit(mesh, call_snapshot, before_fingerprint, exc)
+        if weight_call_state is not None:
+            from .mesh_weight_ops import _restore_call_state
+
+            _restore_call_state(mesh, *weight_call_state, exc)
         if new_guard:
             _remove_new_guard(transaction, guard)
+        if new_weight_guard and weight_guard is not None:
+            transaction.remove_weight_snapshot_guard(weight_guard)
         raise MeshOperationError(
             "MESH_EDIT_FAILED",
             f"Topology operation failed: {type(exc).__name__}",
@@ -813,6 +868,12 @@ def edit_mesh_topology(
     guard.expected_fingerprint = after_fingerprint
     guard.expected_users = int(mesh.users)
     guard.expected_user_objects = mesh_user_refs(mesh)
+    if weight_guard is not None:
+        from .mesh_weight_ops import _schema_fingerprints, weights_fingerprint
+
+        weight_objects = tuple(bpy.data.objects[name] for name in weight_guard.object_identities)
+        weight_guard.expected_schema_fingerprints = _schema_fingerprints(weight_objects)
+        weight_guard.expected_weights_fingerprint = weights_fingerprint(mesh)
     transaction.record(
         MeshEditDelta(
             object_name=obj.name,
@@ -853,6 +914,7 @@ def edit_mesh_topology(
             "schema_preserved": True,
             "attributes": before_attributes,
             "interpolation": "BLENDER_BMESH",
+            "migration": migration_result,
         },
         "delta": {"type": "mesh_edit", "recorded": True, "snapshot_reused": not new_guard},
         "warnings": _component_warnings(components),

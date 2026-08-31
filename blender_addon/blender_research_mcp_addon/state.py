@@ -65,6 +65,7 @@ from .material_authoring_ops import (
     load_image,
     material_result,
 )
+from .mesh_attribute_transfer_ops import transfer_attribute
 from .mesh_batch_ops import MeshBatchExecutionError, execute_mesh_batch
 from .mesh_component_map import (
     compose_component_map,
@@ -207,6 +208,7 @@ CAPABILITIES = [
     "mesh.edit",
     "mesh.uv.edit",
     "mesh.weights.edit",
+    "mesh.attribute.transfer",
     "mesh.separate",
     "mesh.batch.execute",
     "shape_key.set_value",
@@ -247,16 +249,17 @@ CAPABILITY_VERSIONS = {
     "object_visibility": 1,
     "modifier_state": 1,
     "modifier_authoring": 1,
-    "mesh_topology": 3,
+    "mesh_topology": 4,
     "mesh_selection": 1,
     "mesh_surface_query": 1,
     "mesh_deformation": 1,
     "mesh_validation": 2,
     "mesh_component_map": 2,
-    "mesh_separation": 1,
+    "mesh_separation": 2,
     "mesh_batch": 1,
     "mesh_uv": 1,
     "mesh_weights": 1,
+    "mesh_attribute_transfer": 1,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -280,6 +283,7 @@ MUTATION_COMMANDS = {
     "mesh.edit",
     "mesh.uv.edit",
     "mesh.weights.edit",
+    "mesh.attribute.transfer",
     "mesh.separate",
     "mesh.batch.execute",
     "shape_key.set_value",
@@ -1325,6 +1329,25 @@ class AddonState:
             previous_count = len(transaction.deltas)
             with self.suppress_generation():
                 result = edit_weights(transaction, self.mesh_resources, params)
+                bpy.context.view_layer.update()
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
+        if command == "mesh.attribute.transfer":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            with self.suppress_generation():
+                result = transfer_attribute(transaction, self.mesh_resources, params)
                 bpy.context.view_layer.update()
             if len(transaction.deltas) > previous_count:
                 self.scene_generation += 1
@@ -2610,8 +2633,8 @@ class AddonState:
                     restored.append(restore_modifier_delta(delta))
             bpy.context.view_layer.update()
             validate_restored_modifier_stacks(transaction)
-            restored.extend(restore_weight_snapshots(transaction))
             restored.extend(restore_mesh_snapshots(transaction))
+            restored.extend(restore_weight_snapshots(transaction))
             for delta in reversed(transaction.deltas):
                 if isinstance(delta, modifier_delta_types):
                     continue

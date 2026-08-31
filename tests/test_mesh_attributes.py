@@ -3,10 +3,11 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from blender_research_mcp.mesh_attributes import UVOperation, WeightOperation
+from blender_research_mcp.mesh_attributes import AttributeTransfer, UVOperation, WeightOperation
 
 ADAPTER = TypeAdapter(UVOperation)
 WEIGHT_ADAPTER = TypeAdapter(WeightOperation)
+TRANSFER_ADAPTER = TypeAdapter(AttributeTransfer)
 LAYER = {"layer_name": "UVMap", "expected_layer_identity": "uv:1"}
 CORNER = {"loop_index": 0, "face_index": 0, "corner_index": 0, "vertex_index": 0}
 
@@ -187,3 +188,39 @@ def test_weight_operations_reject_ambiguous_or_non_strict_payloads(
 ) -> None:
     with pytest.raises(ValidationError):
         WEIGHT_ADAPTER.validate_python(operation)
+
+
+def test_uv_and_weight_transfer_schemas_are_closed() -> None:
+    uv = TRANSFER_ADAPTER.validate_python(
+        {
+            "type": "UV",
+            "source_layer": LAYER,
+            "target_layer_name": "UVMap",
+            "target_selection_id": "selection",
+            "mapping": "NEAREST_SURFACE",
+            "maximum_distance": 1.0,
+        }
+    )
+    assert uv.type == "UV"
+    weights = TRANSFER_ADAPTER.validate_python(
+        {
+            "type": "WEIGHTS",
+            "groups": [{"source": GROUP, "target_group_name": "Bone"}],
+            "target_selection_id": "selection",
+            "mapping": "TOPOLOGY",
+            "component_map_ids": ["map"],
+            "maximum_distance": 1.0,
+        }
+    )
+    assert weights.type == "WEIGHTS"
+    with pytest.raises(ValidationError):
+        TRANSFER_ADAPTER.validate_python(
+            {
+                "type": "UV",
+                "source_layer": LAYER,
+                "target_layer_name": "UVMap",
+                "target_selection_id": "selection",
+                "mapping": "NEAREST_VERTEX",
+                "maximum_distance": 1.0,
+            }
+        )
