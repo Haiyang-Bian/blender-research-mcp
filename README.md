@@ -44,6 +44,10 @@ Shading/Overlay、选择和活动对象；Blender 原生保存则作为用户接
 对象的事务性分离，以及带命名资源、自动 remap 和验证断言的声明式 Mesh batch；
 事务升级到 v8，batch 运行期失败会回退整个活动事务，而成功调用只推进一次全局
 generation。
+0.14.0 新增精确 UV Layer/Seam/Pin/坐标与隔离的官方 unwrap/pack，以及 Vertex
+Group schema、稀疏蒙皮权重、属性传递和 UV/权重验证。拓扑与分离现在可显式选择
+保留插值、已有属性即拒绝或丢弃结果属性；事务升级到 v9，Shape Key Mesh 也可执行
+拓扑不变的 UV/权重写入。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -70,6 +74,8 @@ SelectionSet 与求值曲面拟合见
 [0.13.0 验收记录](docs/validation/2026-08-31-topology-component-maps.md)。
 0.13.1 对象分离与声明式 batch 见
 [0.13.1 验收记录](docs/validation/2026-08-31-mesh-separation-batches.md)。
+0.14 UV 与蒙皮权重见
+[0.14.0 路线图](docs/roadmap/0.14.0-uv-and-skin-weights.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -219,6 +225,21 @@ smooth、relax、project、shrinkwrap、inflate 和 flatten；它们引用 Selec
 Agent 写入。详细边界见
 [0.13.1 路线图](docs/roadmap/0.13.1-mesh-separation-batches.md)。
 
+## 0.14.0 UV 与蒙皮权重创作
+
+`mesh.uv.inspect/edit` 提供 UV Layer、Seam、Pin、corner 坐标、岛屿变换，以及在
+临时对象/私有上下文中运行的 Blender Angle-Based/Conformal unwrap 与 pack；真实
+对象的模式、选择、Workspace 和视口不参与算法输入。`mesh.weights.inspect/edit`
+提供 Vertex Group 生命周期、精确权重写入、归一化与影响数限制，并明确处理 locked
+Group 和共享 Mesh 用户的 schema 一致性。
+
+`mesh.attribute.transfer` 支持 topology lineage、nearest vertex 和 barycentric
+nearest surface 的 UV/权重迁移；`mesh.validate` 返回 UV 越界、退化、重叠、stretch
+及权重总和、影响数、未赋权和骨骼匹配问题的 SelectionSet。`mesh.batch.execute`
+可在同一次主线程调用中组合这些步骤，并在 UV revision 改变后自动重绑定当前目标的
+SelectionSet。详细边界见
+[0.14.0 路线图](docs/roadmap/0.14.0-uv-and-skin-weights.md)。
+
 ## 目录
 
 ~~~text
@@ -249,7 +270,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.13.1
+uv run --no-sync python scripts/build_addon.py --version 0.14.0
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认

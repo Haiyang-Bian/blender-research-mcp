@@ -300,6 +300,11 @@ ABF/LSCM unwrap、pack、Vertex Group、稀疏权重、归一化、影响数限�
 的 Mesh 可以执行拓扑不变的 UV/权重写入，但 Shape Key、自定义法线和通用属性写入
 仍不在本版本授权范围。
 
+实现状态（0.14.0）：上述封闭 UV/权重检查、写入、拓扑/最近映射传递、属性验证、
+拓扑迁移策略和 batch 步骤均已实现。Shape Key Mesh 的授权仍只限拓扑不变属性写入；
+Shape Key 值/结构、自定义法线、通用属性、求值 Mesh 实体化和 Modifier Apply 继续留在
+后续版本。
+
 ### 6.5 对象、求值网格与修改器
 
 ```text

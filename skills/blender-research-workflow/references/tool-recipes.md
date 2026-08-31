@@ -295,7 +295,8 @@ belongs in a material, and reversible whole-object effects belong in a typed Mod
    complete inspected Mesh user set.
 5. Use transform, extrude, inset, bevel, delete, dissolve, merge, face settings, or
    normals only through their typed parameters. Never pass arbitrary BMesh operators,
-   raw coordinate arrays, RNA paths, UV edits, or Python.
+   raw coordinate arrays, RNA paths, or Python. UV changes use the separate typed UV
+   recipe below.
 6. After any changed topology operation, discard all prior component pages and inspect
    again before choosing indices. Carry the response's after-generation, Mesh identity,
    user set, and full fingerprint to the next edit. A no-op does not advance generation.
@@ -339,6 +340,11 @@ dissolve, and merge. Private lineage layers are removed before Mesh writeback. U
 color, material, smooth, and supported generic attribute schemas remain protected;
 Shape-Key, linked, Edit-Mode, unsupported-attribute, and budget boundaries remain hard.
 
+With `mesh_topology: 4`, choose `PRESERVE_INTERPOLATE` for UV and weights by default,
+`ERROR_IF_PRESENT` when migration is not acceptable, or `DISCARD` only when the desired
+result intentionally drops that domain. Treat a failed migration proof as a restored
+call, not permission to continue with guessed attributes.
+
 ## Separated branches and declarative Mesh batches
 
 Use this recipe with `mesh_component_map: 2`, `mesh_topology: 3`,
@@ -366,10 +372,39 @@ Use this recipe with `mesh_component_map: 2`, `mesh_topology: 3`,
    advances none. Native save still accepts the visible result according to main-thread
    order, and disconnect uses the ordinary transaction rollback path.
 
-The batch language is Mesh-only. Do not place object settings, materials, World,
-rendering, arbitrary operators, UV edits, weights, Shape Keys, Modifier Apply, RNA, or
-Python into it. Use ordinary semantic tools around the batch when those domains are
-part of the user's larger authoring workflow.
+With `mesh_batch: 2`, the batch language also accepts typed `uv_edit`, `weights_edit`,
+`attribute_transfer`, and UV/weight validation steps. UV revision changes automatically
+rebind current SelectionSet aliases; weight-only changes refresh weight evidence without
+invalidating geometry selections. It remains Mesh-only: do not place object settings,
+materials, World, rendering, arbitrary operators, Shape Keys, Modifier Apply, RNA, or
+Python into it.
+
+## UV and skin-weight authoring
+
+Use this recipe with `mesh_uv: 1`, `mesh_weights: 1`,
+`mesh_attribute_transfer: 1`, `mesh_validation: 2`, and `transactions >= 9`:
+
+1. Inspect the exact Mesh plus `mesh.uv.inspect` or `mesh.weights.inspect`; retain UV
+   layer/Group identities and every reported fingerprint.
+2. Choose `OBJECT` for a reversible single-user target or `SHARED_DATA` only for all
+   exact users. Shared weights require identical ordered Group schemas across users.
+3. Author UV layers, roles, seams, pins, corner values, island transforms, unwrap, or
+   pack with `mesh.uv.edit`. Official unwrap/pack uses a temporary private context and
+   must leave mode, selection, Workspace, and viewport unchanged.
+4. Author Group lifecycle and weights with `mesh.weights.edit`. Respect locked Groups
+   unless the request explicitly authorizes them; normalize and limit influences only
+   across the intended Group/vertex scope.
+5. Transfer UV or weights by identical topology/ComponentMap lineage, nearest vertex,
+   or barycentric nearest surface. Set a finite maximum distance and explicit miss
+   policy; do not infer a topology correspondence from proximity.
+6. Run UV bounds/degenerate/overlap/stretch or weight sum/influence/unassigned/deform
+   checks. Review the returned problem SelectionSet and metrics, then commit or roll
+   back the coherent task.
+
+Topology and separation validate migration after BMesh interpolation. A Shape-Key Mesh
+accepts only topology-stable UV/weight writes. Custom normals, generic attributes,
+Shape-Key writes, evaluated materialization, Modifier Apply, and retopology remain
+outside this authority.
 
 ## Revision-bound selection and evaluated-surface fitting
 

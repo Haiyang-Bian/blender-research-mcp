@@ -51,12 +51,19 @@ and grid-fill operations on top of the 0.12 selection/surface foundation. Its au
 and Blender 4.2.23 gates have passed; see
 [the 0.13 validation record](validation/2026-08-31-topology-component-maps.md).
 
-Version 0.13.1 is the current implementation milestone. It composes exact map chains,
+Version 0.13.1 is the previous validated milestone. It composes exact map chains,
 separates one connected face region into a guarded object branch, and executes bounded
 Mesh-only declarative batches with named resources, automatic remapping, validation
 assertions, one-generation success semantics, and whole-transaction runtime recovery.
 Its automated, focused Blender, and full `test-model.blend` regression gates passed;
 see [the 0.13.1 validation record](validation/2026-08-31-mesh-separation-batches.md).
+
+Version 0.14.0 is the current implementation milestone. It adds exact UV layers,
+isolated official unwrap/pack, Vertex Group weights, topology/nearest attribute
+transfer, attribute-aware topology migration, validation, and batch composition under
+transaction capability 9. See the
+[0.14 roadmap](roadmap/0.14.0-uv-and-skin-weights.md) and
+[decision 0015](decisions/0015-uv-and-skin-weight-authority.md).
 
 Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
 SurfaceRefs, topology-preserving surface deformation, and quantitative Mesh validation;
@@ -102,7 +109,8 @@ removed after their commits were verified reachable from `main`.
 Documentation does not grant additional runtime authority. Unless a later accepted
 decision explicitly changes the contract, the project still forbids arbitrary Python,
 external network services, arbitrary node graphs, arbitrary Mesh/BMesh operations or
-arrays, UV editing, animation, Cycles, and force-overwriting transaction conflicts.
+  arrays, generic custom attributes, animation, Cycles, and force-overwriting
+  transaction conflicts. UV and weight writes are limited to their typed 0.14 tools.
 Bounded semantic base-Mesh component edits are available only through `mesh.edit`.
 Local absolute-path image loading,
 bounded object location/rotation, fixed semantic nodes, and explicit render export are
