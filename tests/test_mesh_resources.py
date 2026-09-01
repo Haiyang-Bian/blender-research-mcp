@@ -11,11 +11,17 @@ from pydantic import TypeAdapter, ValidationError
 
 from blender_research_mcp.constants import MAX_REQUEST_BYTES
 from blender_research_mcp.mesh_authoring import MeshOperation
+from blender_research_mcp.mesh_component_catalog import (
+    ComponentCatalogMetrics,
+    ComponentIdentities,
+)
 from blender_research_mcp.mesh_resources import SelectionDerivation, SelectionQuery
 
 OPERATIONS = TypeAdapter(MeshOperation)
 QUERIES = TypeAdapter(SelectionQuery)
 DERIVATIONS = TypeAdapter(SelectionDerivation)
+CATALOG_METRICS = TypeAdapter(ComponentCatalogMetrics)
+COMPONENT_IDENTITIES = TypeAdapter(ComponentIdentities)
 
 
 def load_resource_model():
@@ -61,6 +67,117 @@ def load_separation_model():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def load_component_catalog_model():
+    path = (
+        Path(__file__).parents[1]
+        / "blender_addon"
+        / "blender_research_mcp_addon"
+        / "mesh_component_catalog_model.py"
+    )
+    spec = importlib.util.spec_from_file_location("mesh_component_catalog_model_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_component_catalog_public_schema_is_strict_and_bounded() -> None:
+    assert CATALOG_METRICS.validate_python(["COUNT", "AREA"]) == ("COUNT", "AREA")
+    assert COMPONENT_IDENTITIES.validate_python(["component:a"]) == ("component:a",)
+    for payload in ([], ["UNKNOWN"], ["COUNT"] * 6):
+        with pytest.raises(ValidationError):
+            CATALOG_METRICS.validate_python(payload)
+    for payload in ([], ["component:a"] * 4097):
+        with pytest.raises(ValidationError):
+            COMPONENT_IDENTITIES.validate_python(payload)
+
+
+def test_component_catalog_connectivity_is_edge_bound_and_deterministic() -> None:
+    module = load_component_catalog_model()
+    face_edges = (
+        (0, 1, 2, 3),
+        (3, 4, 5, 6),
+        (7, 8, 9),
+        (9, 10, 11),
+        (12, 13, 14),
+    )
+    assert module.connected_face_components(face_edges, (0, 1, 2, 3, 4)) == (
+        (0, 1),
+        (2, 3),
+        (4,),
+    )
+    with pytest.raises(ValueError):
+        module.connected_face_components(face_edges, (1, 0))
+    with pytest.raises(ValueError):
+        module.connected_face_components(face_edges, (5,))
+
+
+def test_component_catalog_identity_hash_and_report_cover_exact_revision() -> None:
+    module = load_component_catalog_model()
+    baseline = module.component_identity("revision-a", "selection-a", (0, 1))
+    assert baseline == module.component_identity("revision-a", "selection-a", (0, 1))
+    assert baseline != module.component_identity("revision-b", "selection-a", (0, 1))
+    assert baseline != module.component_identity("revision-a", "selection-b", (0, 1))
+    assert baseline != module.component_identity("revision-a", "selection-a", (0, 2))
+
+    record = module.make_component_catalog(
+        object_name="Shells",
+        object_identity="object:1",
+        mesh_name="ShellMesh",
+        mesh_identity="mesh:1",
+        mesh_revision_id="revision-a",
+        mesh_fingerprint="fingerprint-a",
+        expected_users=1,
+        expected_user_objects=(("Shells", "object:1"),),
+        source_selection_id="selection-1",
+        source_selection_sha256="selection-a",
+        source_indices=(0, 1, 2),
+        source_weights=(0.25, 0.5, 1.0),
+        include=("COUNT", "BOUNDS", "BOUNDARY_COUNT"),
+        component_metrics=(
+            ((0, 1), 2.5, (-1.0, -2.0, -3.0), (1.0, 2.0, 3.0), 6, (0, 2)),
+            ((2,), 1.0, (4.0, 5.0, 6.0), (7.0, 8.0, 9.0), 3, (1,)),
+        ),
+    )
+    assert record.components[0].component_index == 0
+    assert record.components[0].coverage_ratio == pytest.approx(2 / 3)
+    report = record.components[0].report(record.include)
+    assert report["face_count"] == 2
+    assert report["boundary_edge_count"] == 6
+    assert report["bounds"]["space"] == "LOCAL"
+    assert "area" not in report
+    assert "material_slots" not in report
+    assert len(record.content_sha256) == 64
+
+
+def test_component_catalog_resource_book_is_lru_bounded_and_distinguishes_expiry() -> None:
+    module = load_resource_model()
+    module.MAX_COMPONENT_CATALOGS = 2
+    book = module.MeshResourceBook()
+
+    def add(identifier: str):
+        record = SimpleNamespace(
+            component_catalog_id=identifier,
+            components=(SimpleNamespace(face_indices=(0,)),),
+            face_reference_count=1,
+        )
+        return book.add_component_catalog(record)
+
+    first = add("catalog-1")
+    add("catalog-2")
+    assert book.component_catalog("catalog-1") is first
+    third = add("catalog-3")
+    assert book.component_catalog("catalog-1") is first
+    assert book.component_catalog("catalog-3") is third
+    with pytest.raises(module.MeshResourceError) as expired:
+        book.component_catalog("catalog-2")
+    assert expired.value.code == "MESH_COMPONENT_CATALOG_EXPIRED"
+    with pytest.raises(module.MeshResourceError) as missing:
+        book.component_catalog("never-created")
+    assert missing.value.code == "MESH_COMPONENT_CATALOG_NOT_FOUND"
 
 
 @pytest.mark.parametrize(

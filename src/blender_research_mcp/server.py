@@ -72,6 +72,12 @@ from blender_research_mcp.mesh_authoring import (
     MeshUserObject,
 )
 from blender_research_mcp.mesh_batch import BatchInputs, BatchSteps, BatchTargets
+from blender_research_mcp.mesh_component_catalog import (
+    DEFAULT_COMPONENT_CATALOG_METRICS,
+    ComponentCatalogId,
+    ComponentCatalogMetrics,
+    ComponentIdentities,
+)
 from blender_research_mcp.mesh_modular import (
     ArmatureTarget,
     ExtractMeshTarget,
@@ -620,6 +626,87 @@ def create_server(
         return await client.call(
             "mesh.selection.release",
             {"selection_id": selection_id},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.component_catalog.prepare",
+        description=(
+            "Partition one live non-empty FACE SelectionSet into deterministic "
+            "shared-edge connected components without creating Blender selections."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_component_catalog_prepare(
+        selection_id: SelectionId,
+        include: ComponentCatalogMetrics = DEFAULT_COMPONENT_CATALOG_METRICS,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_component_catalog")
+        return await client.call(
+            "mesh.component_catalog.prepare",
+            {"selection_id": selection_id, "include": list(include)},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.component_catalog.inspect",
+        description="Inspect a bounded page of one revision-bound ComponentCatalog.",
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_component_catalog_inspect(
+        component_catalog_id: ComponentCatalogId,
+        offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=256)] = 128,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_component_catalog")
+        return await client.call(
+            "mesh.component_catalog.inspect",
+            {
+                "component_catalog_id": component_catalog_id,
+                "offset": offset,
+                "limit": limit,
+            },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.component_catalog.select",
+        description=(
+            "Materialize one to 4096 exact catalog components as a new weighted "
+            "FACE SelectionSet on the same Mesh revision."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_component_catalog_select(
+        component_catalog_id: ComponentCatalogId,
+        component_identities: ComponentIdentities,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_component_catalog")
+        return await client.call(
+            "mesh.component_catalog.select",
+            {
+                "component_catalog_id": component_catalog_id,
+                "component_identities": list(component_identities),
+            },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.component_catalog.release",
+        description="Release one session-local ComponentCatalog; repeated release is safe.",
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_component_catalog_release(
+        component_catalog_id: ComponentCatalogId,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_component_catalog")
+        return await client.call(
+            "mesh.component_catalog.release",
+            {"component_catalog_id": component_catalog_id},
             read_only=True,
         )
 

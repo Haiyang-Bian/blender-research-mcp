@@ -32,6 +32,10 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "mesh.selection.derive",
         "mesh.selection.inspect",
         "mesh.selection.release",
+        "mesh.component_catalog.prepare",
+        "mesh.component_catalog.inspect",
+        "mesh.component_catalog.select",
+        "mesh.component_catalog.release",
         "mesh.component_map.inspect",
         "mesh.component_map.release",
         "mesh.component_map.compose",
@@ -217,6 +221,10 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     for name in (
         "mesh.selection.inspect",
         "mesh.selection.release",
+        "mesh.component_catalog.prepare",
+        "mesh.component_catalog.inspect",
+        "mesh.component_catalog.select",
+        "mesh.component_catalog.release",
         "mesh.component_map.compose",
         "mesh.surface.prepare",
         "mesh.surface.query",
@@ -226,6 +234,17 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         assert tool.annotations is not None
         assert tool.annotations.readOnlyHint is True
         assert tool.annotations.destructiveHint is False
+    catalog_prepare = tools_by_name["mesh.component_catalog.prepare"]
+    include_schema = catalog_prepare.inputSchema["properties"]["include"]
+    assert include_schema["minItems"] == 1
+    assert include_schema["maxItems"] == 5
+    catalog_inspect = tools_by_name["mesh.component_catalog.inspect"]
+    assert catalog_inspect.inputSchema["properties"]["limit"]["default"] == 128
+    assert catalog_inspect.inputSchema["properties"]["limit"]["maximum"] == 256
+    catalog_select = tools_by_name["mesh.component_catalog.select"]
+    identities = catalog_select.inputSchema["properties"]["component_identities"]
+    assert identities["minItems"] == 1
+    assert identities["maxItems"] == 4096
     map_compose = tools_by_name["mesh.component_map.compose"]
     map_ids = map_compose.inputSchema["properties"]["component_map_ids"]
     assert map_ids["minItems"] == 2

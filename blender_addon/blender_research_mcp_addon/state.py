@@ -67,6 +67,12 @@ from .material_authoring_ops import (
 )
 from .mesh_attribute_transfer_ops import transfer_attribute
 from .mesh_batch_ops import MeshBatchExecutionError, execute_mesh_batch
+from .mesh_component_catalog_ops import (
+    inspect_component_catalog,
+    prepare_component_catalog,
+    release_component_catalog,
+    select_component_catalog,
+)
 from .mesh_component_map import (
     compose_component_map,
     inspect_component_map,
@@ -180,6 +186,10 @@ CAPABILITIES = [
     "mesh.selection.derive",
     "mesh.selection.inspect",
     "mesh.selection.release",
+    "mesh.component_catalog.prepare",
+    "mesh.component_catalog.inspect",
+    "mesh.component_catalog.select",
+    "mesh.component_catalog.release",
     "mesh.component_map.inspect",
     "mesh.component_map.release",
     "mesh.component_map.compose",
@@ -262,6 +272,7 @@ CAPABILITY_VERSIONS = {
     "mesh_deformation": 1,
     "mesh_validation": 2,
     "mesh_component_map": 3,
+    "mesh_component_catalog": 1,
     "mesh_separation": 2,
     "mesh_batch": 2,
     "mesh_uv": 1,
@@ -1007,6 +1018,25 @@ class AddonState:
             return result
         if command == "mesh.selection.release":
             result = release_selection(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.component_catalog.prepare":
+            with self.suppress_generation():
+                result = prepare_component_catalog(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.component_catalog.inspect":
+            with self.suppress_generation():
+                result = inspect_component_catalog(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.component_catalog.select":
+            with self.suppress_generation():
+                result = select_component_catalog(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.component_catalog.release":
+            result = release_component_catalog(self.mesh_resources, params)
             result["scene_generation"] = self.scene_generation
             return result
         if command == "mesh.component_map.inspect":

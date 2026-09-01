@@ -16,6 +16,9 @@ MAX_SURFACE_TRIANGLES = 2_000_000
 MAX_COMPONENT_MAPS = 8
 MAX_COMPONENT_MAP_RELATIONS = 8_000_000
 MAX_SINGLE_COMPONENT_MAP_RELATIONS = 4_000_000
+MAX_COMPONENT_CATALOGS = 16
+MAX_COMPONENT_CATALOG_FACE_REFERENCES = 2_000_000
+MAX_COMPONENT_CATALOG_COMPONENTS = 500_000
 
 
 class MeshResourceError(RuntimeError):
@@ -137,12 +140,14 @@ class MeshResourceBook:
         self._selections: OrderedDict[str, SelectionRecord] = OrderedDict()
         self._surfaces: OrderedDict[str, SurfaceRecord] = OrderedDict()
         self._component_maps: OrderedDict[str, Any] = OrderedDict()
+        self._component_catalogs: OrderedDict[str, Any] = OrderedDict()
         self._expired: deque[str] = deque(maxlen=256)
 
     def clear(self) -> None:
         self._selections.clear()
         self._surfaces.clear()
         self._component_maps.clear()
+        self._component_catalogs.clear()
         self._expired.clear()
 
     def add_selection(
@@ -298,6 +303,50 @@ class MeshResourceBook:
     def release_component_map(self, component_map_id: str) -> bool:
         return self._component_maps.pop(component_map_id, None) is not None
 
+    def add_component_catalog(self, record: Any) -> Any:
+        if len(record.components) > MAX_COMPONENT_CATALOG_COMPONENTS:
+            raise MeshResourceError(
+                "MESH_COMPONENT_CATALOG_BUDGET_EXCEEDED",
+                "ComponentCatalog exceeds the per-resource component budget",
+            )
+        self._component_catalogs[record.component_catalog_id] = record
+        self._component_catalogs.move_to_end(record.component_catalog_id)
+        while (
+            len(self._component_catalogs) > MAX_COMPONENT_CATALOGS
+            or sum(item.face_reference_count for item in self._component_catalogs.values())
+            > MAX_COMPONENT_CATALOG_FACE_REFERENCES
+            or sum(len(item.components) for item in self._component_catalogs.values())
+            > MAX_COMPONENT_CATALOG_COMPONENTS
+        ):
+            component_catalog_id, _item = self._component_catalogs.popitem(last=False)
+            self._expired.append(component_catalog_id)
+        if record.component_catalog_id not in self._component_catalogs:
+            raise MeshResourceError(
+                "MESH_COMPONENT_CATALOG_BUDGET_EXCEEDED",
+                "ComponentCatalog exceeds the retained resource budget",
+            )
+        return record
+
+    def component_catalog(self, component_catalog_id: str) -> Any:
+        record = self._component_catalogs.get(component_catalog_id)
+        if record is None:
+            if component_catalog_id in self._expired:
+                raise MeshResourceError(
+                    "MESH_COMPONENT_CATALOG_EXPIRED",
+                    f"ComponentCatalog was evicted: {component_catalog_id}",
+                    kind="not_found",
+                )
+            raise MeshResourceError(
+                "MESH_COMPONENT_CATALOG_NOT_FOUND",
+                f"ComponentCatalog does not exist: {component_catalog_id}",
+                kind="not_found",
+            )
+        self._component_catalogs.move_to_end(component_catalog_id)
+        return record
+
+    def release_component_catalog(self, component_catalog_id: str) -> bool:
+        return self._component_catalogs.pop(component_catalog_id, None) is not None
+
     @property
     def selection_count(self) -> int:
         return len(self._selections)
@@ -309,3 +358,7 @@ class MeshResourceBook:
     @property
     def component_map_count(self) -> int:
         return len(self._component_maps)
+
+    @property
+    def component_catalog_count(self) -> int:
+        return len(self._component_catalogs)
