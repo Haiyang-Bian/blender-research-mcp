@@ -495,6 +495,26 @@ def _source_boundary_vertices(mesh: Any) -> tuple[int, ...]:
     )
 
 
+def _boundary_summary(mesh: Any) -> dict[str, int]:
+    edge_faces = [0 for _edge in mesh.edges]
+    for polygon in mesh.polygons:
+        for loop_index in range(polygon.loop_start, polygon.loop_start + polygon.loop_total):
+            edge_faces[int(mesh.loops[loop_index].edge_index)] += 1
+    boundary_edges = [
+        edge for edge, face_count in zip(mesh.edges, edge_faces, strict=True) if face_count == 1
+    ]
+    return {
+        "vertices": len(
+            {
+                int(vertex)
+                for edge in boundary_edges
+                for vertex in edge.vertices
+            }
+        ),
+        "edges": len(boundary_edges),
+    }
+
+
 def _copy_color_values(source: Any, target: Any, domain_offset: int) -> None:
     for index, item in enumerate(source.data):
         target_item = target.data[domain_offset + index]
@@ -1040,6 +1060,7 @@ def weld_mesh_vertices(
     before_fingerprint = mesh_fingerprint(initial_mesh)
     before_topology = topology_fingerprint(initial_mesh)
     before_counts = mesh_counts(initial_mesh)
+    before_boundary = _boundary_summary(initial_mesh)
     if not groups:
         return {
             "transaction_id": transaction.transaction_id,
@@ -1054,6 +1075,13 @@ def weld_mesh_vertices(
             "after_counts": before_counts,
             "accepted_pairs": 0,
             "groups": [],
+            "merged_vertex_reduction": 0,
+            "boundary_changes": {
+                "before": before_boundary,
+                "after": before_boundary,
+                "vertex_delta": 0,
+                "edge_delta": 0,
+            },
             "component_map": None,
             "rebound_selections": [],
             "delta": {"type": "mesh_edit", "recorded": False},
@@ -1232,6 +1260,8 @@ def weld_mesh_vertices(
         _remove_temporary_mesh(call_snapshot)
 
     after_fingerprint = mesh_fingerprint(mesh)
+    after_counts = mesh_counts(mesh)
+    after_boundary = _boundary_summary(mesh)
     guard.expected_fingerprint = after_fingerprint
     guard.expected_users = int(mesh.users)
     guard.expected_user_objects = mesh_user_refs(mesh)
@@ -1268,9 +1298,16 @@ def weld_mesh_vertices(
         "before_topology_fingerprint": before_topology,
         "after_topology_fingerprint": topology_fingerprint(mesh),
         "before_counts": before_counts,
-        "after_counts": mesh_counts(mesh),
+        "after_counts": after_counts,
         "accepted_pairs": accepted_pairs,
         "groups": [list(group) for group in groups],
+        "merged_vertex_reduction": before_counts["vertices"] - after_counts["vertices"],
+        "boundary_changes": {
+            "before": before_boundary,
+            "after": after_boundary,
+            "vertex_delta": after_boundary["vertices"] - before_boundary["vertices"],
+            "edge_delta": after_boundary["edges"] - before_boundary["edges"],
+        },
         "component_map": component_map.summary() if component_map is not None else None,
         "rebound_selections": rebound,
         "attribute_effects": attribute_effects,
