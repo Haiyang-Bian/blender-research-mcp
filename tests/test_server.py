@@ -23,6 +23,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "context.snapshot",
         "context.restore",
         "scene.inspect",
+        "collection.inspect",
         "object.inspect",
         "object.geometry.inspect",
         "mesh.inspect",
@@ -55,6 +56,11 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "object.create",
         "object.duplicate",
         "object.delete",
+        "collection.create",
+        "collection.link_object",
+        "collection.unlink_object",
+        "object.parent.set",
+        "object.parent.clear",
         "object.set",
         "object.transform",
         "object.visibility.set",
@@ -192,6 +198,32 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert rig_bind.annotations.destructiveHint is True
     assert rig_bind.inputSchema["properties"]["parenting"]["enum"] == [
         "NONE",
+        "KEEP_WORLD",
+        "KEEP_LOCAL",
+    ]
+    collection_inspect = tools_by_name["collection.inspect"]
+    assert collection_inspect.annotations is not None
+    assert collection_inspect.annotations.readOnlyHint is True
+    assert collection_inspect.inputSchema["properties"]["limit"]["maximum"] == 256
+    collection_create = tools_by_name["collection.create"]
+    parent_schema = collection_create.inputSchema["properties"]["parent"]
+    assert parent_schema["discriminator"]["propertyName"] == "type"
+    assert len(parent_schema["oneOf"]) == 2
+    for name in (
+        "collection.create",
+        "collection.link_object",
+        "collection.unlink_object",
+        "object.parent.set",
+        "object.parent.clear",
+    ):
+        tool = tools_by_name[name]
+        assert tool.annotations is not None
+        assert tool.annotations.readOnlyHint is False
+        assert tool.annotations.destructiveHint is True
+        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.openWorldHint is False
+    parent_set = tools_by_name["object.parent.set"]
+    assert parent_set.inputSchema["properties"]["transform_mode"]["enum"] == [
         "KEEP_WORLD",
         "KEEP_LOCAL",
     ]

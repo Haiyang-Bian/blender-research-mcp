@@ -123,6 +123,11 @@ from blender_research_mcp.observation import (
     settle_capture_generation,
 )
 from blender_research_mcp.rendering import request_render_preview, request_render_save
+from blender_research_mcp.scene_organization import (
+    CollectionParent,
+    ParentTransformMode,
+    SceneOrganizationFingerprint,
+)
 
 READ_ONLY = ToolAnnotations(
     readOnlyHint=True,
@@ -433,6 +438,27 @@ def create_server(
         return await client.call(
             "scene.inspect",
             {"kinds": list(kinds), "name_filter": name_filter, "limit": limit},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="collection.inspect",
+        description=(
+            "Inspect one exact Collection, its parents, children, direct object links, "
+            "library state, and structural fingerprint."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def collection_inspect(
+        collection_name: ObjectName,
+        offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=256)] = 256,
+    ) -> dict[str, Any]:
+        await require_capability(client, "collection_authoring")
+        return await client.call(
+            "collection.inspect",
+            {"collection_name": collection_name, "offset": offset, "limit": limit},
             read_only=True,
         )
 
@@ -1235,6 +1261,224 @@ def create_server(
                 "transaction_id": transaction_id,
                 "object_name": object_name,
                 "expected_object_identity": expected_object_identity,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="collection.create",
+        description=(
+            "Create one globally unique Collection under an exact Scene root or parent "
+            "Collection inside the active transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def collection_create(
+        transaction_id: TransactionId,
+        name: ObjectName,
+        parent: CollectionParent,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "collection_authoring")
+        client.require_capability("transactions", 11)
+        return await client.call(
+            "collection.create",
+            {
+                "transaction_id": transaction_id,
+                "name": name,
+                "parent": parent.model_dump(),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    async def _collection_link_call(
+        command: str,
+        *,
+        transaction_id: TransactionId,
+        collection_name: ObjectName,
+        expected_collection_identity: SessionIdentity,
+        expected_collection_structure_fingerprint: SceneOrganizationFingerprint,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_object_collections_fingerprint: SceneOrganizationFingerprint,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "collection_authoring")
+        client.require_capability("transactions", 11)
+        return await client.call(
+            command,
+            {
+                "transaction_id": transaction_id,
+                "collection_name": collection_name,
+                "expected_collection_identity": expected_collection_identity,
+                "expected_collection_structure_fingerprint": (
+                    expected_collection_structure_fingerprint
+                ),
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "expected_object_collections_fingerprint": (
+                    expected_object_collections_fingerprint
+                ),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="collection.link_object",
+        description="Link one exact object into one exact Collection transactionally.",
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def collection_link_object(
+        transaction_id: TransactionId,
+        collection_name: ObjectName,
+        expected_collection_identity: SessionIdentity,
+        expected_collection_structure_fingerprint: SceneOrganizationFingerprint,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_object_collections_fingerprint: SceneOrganizationFingerprint,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        return await _collection_link_call(
+            "collection.link_object",
+            transaction_id=transaction_id,
+            collection_name=collection_name,
+            expected_collection_identity=expected_collection_identity,
+            expected_collection_structure_fingerprint=(
+                expected_collection_structure_fingerprint
+            ),
+            object_name=object_name,
+            expected_object_identity=expected_object_identity,
+            expected_object_collections_fingerprint=expected_object_collections_fingerprint,
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+        )
+
+    @server.tool(
+        name="collection.unlink_object",
+        description=(
+            "Unlink one exact object from one exact Collection while refusing its final link."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def collection_unlink_object(
+        transaction_id: TransactionId,
+        collection_name: ObjectName,
+        expected_collection_identity: SessionIdentity,
+        expected_collection_structure_fingerprint: SceneOrganizationFingerprint,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_object_collections_fingerprint: SceneOrganizationFingerprint,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        return await _collection_link_call(
+            "collection.unlink_object",
+            transaction_id=transaction_id,
+            collection_name=collection_name,
+            expected_collection_identity=expected_collection_identity,
+            expected_collection_structure_fingerprint=(
+                expected_collection_structure_fingerprint
+            ),
+            object_name=object_name,
+            expected_object_identity=expected_object_identity,
+            expected_object_collections_fingerprint=expected_object_collections_fingerprint,
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+        )
+
+    @server.tool(
+        name="object.parent.set",
+        description=(
+            "Create one exact OBJECT parent relation while preserving world or local transform."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def object_parent_set(
+        transaction_id: TransactionId,
+        child_name: ObjectName,
+        expected_child_identity: SessionIdentity,
+        expected_child_structure_fingerprint: SceneOrganizationFingerprint,
+        parent_name: ObjectName,
+        expected_parent_identity: SessionIdentity,
+        expected_parent_structure_fingerprint: SceneOrganizationFingerprint,
+        transform_mode: ParentTransformMode,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "object_parenting")
+        client.require_capability("transactions", 11)
+        return await client.call(
+            "object.parent.set",
+            {
+                "transaction_id": transaction_id,
+                "child_name": child_name,
+                "expected_child_identity": expected_child_identity,
+                "expected_child_structure_fingerprint": (
+                    expected_child_structure_fingerprint
+                ),
+                "parent_name": parent_name,
+                "expected_parent_identity": expected_parent_identity,
+                "expected_parent_structure_fingerprint": (
+                    expected_parent_structure_fingerprint
+                ),
+                "transform_mode": transform_mode,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="object.parent.clear",
+        description=(
+            "Clear one exact existing OBJECT or BONE parent while preserving world or "
+            "local transform."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def object_parent_clear(
+        transaction_id: TransactionId,
+        child_name: ObjectName,
+        expected_child_identity: SessionIdentity,
+        expected_child_structure_fingerprint: SceneOrganizationFingerprint,
+        expected_parent_name: ObjectName,
+        expected_parent_identity: SessionIdentity,
+        expected_parent_structure_fingerprint: SceneOrganizationFingerprint,
+        transform_mode: ParentTransformMode,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "object_parenting")
+        client.require_capability("transactions", 11)
+        return await client.call(
+            "object.parent.clear",
+            {
+                "transaction_id": transaction_id,
+                "child_name": child_name,
+                "expected_child_identity": expected_child_identity,
+                "expected_child_structure_fingerprint": (
+                    expected_child_structure_fingerprint
+                ),
+                "expected_parent_name": expected_parent_name,
+                "expected_parent_identity": expected_parent_identity,
+                "expected_parent_structure_fingerprint": (
+                    expected_parent_structure_fingerprint
+                ),
+                "transform_mode": transform_mode,
             },
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,

@@ -189,11 +189,27 @@ def structure_summary(kind: str, resource: Any) -> dict[str, Any]:
             }
         )
     elif kind == "collection":
+        parent_collections = [
+            parent
+            for parent in bpy.data.collections
+            if resource.name in parent.children
+        ]
+        parent_scenes = [
+            scene
+            for scene in bpy.data.scenes
+            if scene.collection is resource or resource.name in scene.collection.children
+        ]
         summary.update(
             {
                 "objects": sorted(session_identity("object", obj) for obj in resource.objects),
                 "children": sorted(
                     session_identity("collection", child) for child in resource.children
+                ),
+                "parent_collections": sorted(
+                    session_identity("collection", parent) for parent in parent_collections
+                ),
+                "parent_scenes": sorted(
+                    session_identity("scene", scene) for scene in parent_scenes
                 ),
             }
         )
@@ -211,6 +227,11 @@ def structure_summary(kind: str, resource: Any) -> dict[str, Any]:
                     session_identity("world", resource.world)
                     if resource.world is not None
                     else None
+                ),
+                "root_collection": session_identity("collection", resource.collection),
+                "root_children": sorted(
+                    session_identity("collection", child)
+                    for child in resource.collection.children
                 ),
             }
         )
@@ -345,6 +366,14 @@ def restore_structural_delta(delta: StructuralDelta) -> dict[str, Any]:
         from .rig_ops import restore_rig_binding
 
         return restore_rig_binding(delta)
+    if delta.action in {
+        "collection_link_object",
+        "collection_unlink_object",
+        "object_parent",
+    }:
+        from .scene_organization_ops import restore_scene_organization_delta
+
+        return restore_scene_organization_delta(delta)
     if delta.action == "unlink_object":
         obj = delta.payload["object"]
         linked = []
