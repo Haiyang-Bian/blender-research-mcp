@@ -17,8 +17,9 @@ transaction-v5 collaborative UI and native-save authority. Decision 0012 defines
 revision-bound SelectionSets, evaluated SurfaceRefs, and transaction-v6 resource
 lifecycle. Decision 0013 defines exact one-revision topology lineage, ComponentMap
 resources, and transaction-v7 remapping. Decision 0014 defines composed lineage,
-two-branch object separation, and transaction-v8 declarative Mesh batches. UV authority
-remains a later decision.
+two-branch object separation, and transaction-v8 declarative Mesh batches. Decision
+0015 defines isolated UV authoring, object/Mesh skin-weight ownership, verified
+attribute migration, and transaction-v9 recovery.
 
 Each record should include context, decision, alternatives, consequences, and
 status. Do not use decision records for routine implementation details.

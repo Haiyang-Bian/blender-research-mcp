@@ -1,9 +1,9 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.13 topology revision and ComponentMap validated in Blender 4.2.23
-- Current milestone: 0.13.1 object separation and declarative Mesh batches
+- Status: 0.14 UV and skin-weight authoring implementation
+- Current milestone: 0.14.0 typed UV, deform weights, transfer, and validation
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.13.1
+- Package and add-on version: 0.14.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,7 +12,7 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.13.1 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.14.0 now covers
 the validated observation/lifecycle/static-authoring path, unified typed object,
 Light, and Camera settings, four bounded non-destructive Modifier families, and exact
 base-Mesh component editing with transaction snapshots; the older bridge is no longer
@@ -416,6 +416,36 @@ global generation update, and whole-transaction rollback after any runtime failu
 It is not a general scene script or arbitrary BMesh surface. See
 `docs/roadmap/0.13.1-mesh-separation-batches.md` and decision 0014.
 
+Version 0.14 adds separate typed ownership domains for Mesh-corner UV data and
+object-schema/Mesh-deform weights. UV unwrap and packing execute only on temporary
+objects under a private operator context; the verified UV result is copied back without
+using the user's mode, selection, Workspace, or viewport. Weight writes use exact Group
+schema plus sparse deform-value guards, including explicit shared-data rules.
+
+`mesh.attribute.transfer` supports exact topology lineage, nearest vertex, and
+barycentric nearest surface mappings. Topology and separation expose explicit
+`PRESERVE_INTERPOLATE`, `ERROR_IF_PRESENT`, or `DISCARD` policy, and batch v2 composes
+UV, weight, transfer, and validation steps with automatic same-topology SelectionSet
+rebind. Transaction capability 9 makes both attribute domains participate in commit,
+rollback, disconnect recovery, and native-save adoption. See
+`docs/roadmap/0.14.0-uv-and-skin-weights.md` and decision 0015.
+
+The accepted 0.15 direction closes a different gap: create a new editable Mesh from
+BASE, current Shape-Key-only, or final evaluated geometry; extract a disconnected FACE
+SelectionSet as one object; and bind an exact weighted Mesh to an Armature. Materialize
+creates a new resource and never applies or removes a source Modifier or Shape Key.
+The Shape-Key-only mode excludes Modifiers so a result can be rigged without silently
+baking and then repeating Armature deformation. Final evaluated output records that
+all current deformation is baked and is not assumed to be a reusable rest mesh.
+
+Character-specific completion remains a workflow over generic tools. Missing surface
+under hair or clothing is underdetermined and requires an explicit template or cage;
+the bridge does not claim to reconstruct undisclosed source geometry. Component
+catalogs, Collection organization, and cross-object batches follow in 0.15.1; bounded
+library append and template workflows follow in 0.16. Shape-Key structure writes and
+Modifier Apply remain separate later authorities. See
+`docs/requirements/modular-character-surface.md`.
+
 Tool count is not a success metric. A small composable surface with precise
 preconditions is preferable to dozens of overlapping convenience tools.
 
@@ -455,6 +485,11 @@ terminal adoption. Rollback no longer restores a transaction-opening UI snapshot
 Blender native save handlers run on the same main-thread sequence as queued semantic
 commands, so the operation that actually executes first determines whether the write
 precedes the user-save barrier or is rejected by its terminal record.
+
+Transaction capability v9 extends Mesh snapshot evidence with UV roles, coordinates,
+pins, seams, object Group schemas, and deform values. Shape-Key Meshes remain topology
+immutable but may receive topology-stable UV or weight changes. Attribute writes never
+make Blender or UV Editor selection part of the hard transaction state.
 
 ## 9. Development phases
 
@@ -567,19 +602,32 @@ duplicate-selection regressions live-validated in 0.10.1.
   `modifier_authoring: 1` is absent.
 - Compare one typed Modifier field through independent rollback-safe candidates.
 
-### Phase 9 — semantic Mesh topology, selection resources, then UV
+### Phase 9 — semantic Mesh topology, selection resources, UV, and weights
 
 Status: 0.11 through 0.13 implementation, automated gates, and Blender 4.2.23 release
 gates complete. Version 0.12 adds SelectionSet and evaluated-surface fitting on the
 snapshot model. Version 0.13 adds exact one-revision ComponentMaps plus seven bounded
-topology handlers; bounded UV remains in 0.14. None of these responsibilities is hidden
-in Modifier tools.
+topology handlers. Version 0.14 adds bounded UV and deform-weight authoring without
+hiding either responsibility in Modifier tools.
 
 - Page exact base-Mesh components and bind indices to full fingerprints.
 - Edit one closed semantic operation through transaction-v4 snapshots.
 - Preserve explicit object-only or complete shared-data scope.
-- Keep material surface detail, Modifier effects, Mesh structure, and future UV
+- Keep material surface detail, Modifier effects, Mesh structure, UV, and weight
   authority as separate decisions.
+
+### Phase 10 — materialized Mesh modules and rig assembly
+
+Status: accepted 0.15.0 direction; implementation follows the merged 0.14 baseline.
+
+- Materialize BASE, current Shape-Key-only, or final evaluated geometry into a new
+  independent object with explicit material/UV/weight copy policy.
+- Extract one or more disconnected face components into one exact object branch.
+- Inspect and bind existing deform groups to an exact Armature without generating or
+  rewriting weights implicitly.
+- Keep the source object, Shape Keys, Modifier stack, and binding unchanged.
+- Validate the complete materialize → extract → bind chain with rollback, native-save
+  adoption, save/reload, and a real modular-character fixture.
 
 ## 10. Acceptance criteria for the first milestone
 
@@ -623,9 +671,10 @@ research scenarios.
   current traditional ZIP.
 - Whether a bounded repository script tool is necessary beyond project-owned Blender
   drivers/startup scripts; arbitrary inline Python remains out of scope.
-- Which bounded UV unwrap/island/transform operations can reuse transaction Mesh
-  snapshots and future ComponentMaps without exposing arbitrary loop arrays; keep that
-  authority for 0.14.
+- Which bounded retopology and custom-normal operations can preserve the 0.14 attribute
+  evidence without exposing arbitrary Mesh arrays.
+- How a later Shape-Key migration authority should preserve relative-key graphs,
+  drivers, masks, and animation without being conflated with 0.15 materialization.
 - Blender 5.x capability policy and the project license; decide both before publishing.
 
 ## 13. Guidance for a new Codex task

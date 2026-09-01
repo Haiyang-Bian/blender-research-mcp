@@ -1,6 +1,6 @@
 ---
 name: blender-research-workflow
-description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects, revision-aware Mesh topology, separated Mesh branches and surface fits, typed Modifier stacks, and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, semantic Mesh modeling, evaluated-surface fitting, non-destructive Modifier modeling, or static scene delivery; do not use for arbitrary Python, arbitrary BMesh/RNA, arbitrary node graphs, animation, Modifier apply, or UV editing.
+description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects, revision-aware Mesh topology, UV layouts, skin weights, separated Mesh branches and surface fits, typed Modifier stacks, and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, semantic Mesh modeling, evaluated-surface fitting, UV/weight authoring, non-destructive Modifier modeling, or static scene delivery; do not use for arbitrary Python, arbitrary BMesh/RNA, arbitrary node graphs, animation, Modifier apply, generic attributes, or retopology.
 ---
 
 # Blender Research Workflow
@@ -90,8 +90,8 @@ exact object/Modifier identities, index, type, and complete stack fingerprint fr
 latest inspection. Use `modifier.set_state` only for legacy viewport/render flags.
 
 Do not use a Modifier as a substitute for requested vertex/edge/face editing or UV
-work, and do not apply it: use exact Mesh authority for real component changes and
-report UV editing as outside the current surface. If
+work, and do not apply it: use exact Mesh authority for real component changes and the
+typed UV domain for mapping work. If
 `modifier_authoring: 1` is unavailable, retain compatible older tools and report the
 new-domain boundary rather than falling back to arbitrary RNA or Python.
 
@@ -124,6 +124,15 @@ the target object should leave shared
 Mesh data, or `SHARED_DATA` when all inspected users should change together. Do not use
 topology to imitate a material effect, edit UVs through Mesh operations, or fall back to
 arbitrary BMesh, RNA, or Python.
+
+Use `mesh.uv.inspect/edit` for UV layers, seams, pins, corner coordinates, island
+transforms, unwrap, and pack. Use `mesh.weights.inspect/edit` for Vertex Group schema
+and deform weights. For topology changes, keep the default preserve/interpolate policy
+unless the user's intent requires an explicit reject-or-discard policy; choose SOURCE
+and SEPARATED policies independently. Use `mesh.attribute.transfer` when exact lineage
+or a bounded nearest mapping is better than authoring values directly, then validate
+UV or weight evidence before commit. Shape-Key Meshes may receive topology-stable UV or
+weight edits, but not topology changes.
 
 ## Ground image evidence
 
@@ -176,5 +185,5 @@ creation/deletion, or reordering as a comparison candidate.
 Read [references/tool-recipes.md](references/tool-recipes.md) when executing an
 application/project lifecycle, multi-step scene authoring, exact Mesh editing,
 SelectionSet/surface fitting, revision-aware topology, Modifier-stack authoring,
-rendering, observation,
+UV/weight authoring, rendering, observation,
 comparison, preview, reconnect, or recovery workflow.

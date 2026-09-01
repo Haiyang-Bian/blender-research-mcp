@@ -104,6 +104,8 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
         "object.delete",
         "object.set",
         "mesh.inspect",
+        "mesh.uv.inspect",
+        "mesh.weights.inspect",
         "mesh.selection.query",
         "mesh.selection.derive",
         "mesh.selection.inspect",
@@ -115,9 +117,12 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
         "mesh.surface.prepare",
         "mesh.surface.query",
         "mesh.validate",
-            "mesh.edit",
-            "mesh.separate",
-            "mesh.batch.execute",
+        "mesh.edit",
+        "mesh.uv.edit",
+        "mesh.weights.edit",
+        "mesh.attribute.transfer",
+        "mesh.separate",
+        "mesh.batch.execute",
         "material.create",
         "material.assign",
         "image.load",
@@ -130,19 +135,22 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
     ):
         assert command in state
     for capability in (
-        '"transactions": 8',
+        '"transactions": 9',
         '"scene_inspection": 1',
         '"object_authoring": 1',
         '"object_settings": 1',
         '"modifier_authoring": 1',
-        '"mesh_topology": 3',
+        '"mesh_topology": 4',
         '"mesh_component_map": 2',
-        '"mesh_separation": 1',
-        '"mesh_batch": 1',
+        '"mesh_separation": 2',
+        '"mesh_batch": 2',
+        '"mesh_uv": 1',
+        '"mesh_weights": 1',
+        '"mesh_attribute_transfer": 1',
         '"mesh_selection": 1',
         '"mesh_surface_query": 1',
         '"mesh_deformation": 1',
-        '"mesh_validation": 1',
+        '"mesh_validation": 2',
         '"material_authoring": 1',
         '"image_assets": 1',
         '"world_authoring": 1',
@@ -256,6 +264,23 @@ def test_mesh_authoring_uses_bounded_data_api_snapshots_without_operators() -> N
     ):
         assert f'"{operation}"' in deformation
     assert "bpy.ops" not in deformation
+
+
+def test_uv_and_weight_restore_do_not_delete_through_stale_rna_wrappers() -> None:
+    mesh_source = (SOURCE / "mesh_ops.py").read_text(encoding="utf-8")
+    weight_source = (SOURCE / "mesh_weight_ops.py").read_text(encoding="utf-8")
+
+    assert "while mesh.uv_layers:" in mesh_source
+    assert "for layer in tuple(mesh.uv_layers)" not in mesh_source
+    restore_schemas = weight_source.split("def _restore_schemas", 1)[1].split(
+        "def _schema_fingerprints", 1
+    )[0]
+    write_weights = weight_source.split("def _write_weights", 1)[1].split(
+        "def _restore_schemas", 1
+    )[0]
+    assert "while obj.vertex_groups:" in restore_schemas
+    assert "for group in tuple(obj.vertex_groups)" not in restore_schemas
+    assert "if weight > 0" not in write_weights
 
 
 def test_addon_zip_has_an_installable_package_root(tmp_path: Path) -> None:

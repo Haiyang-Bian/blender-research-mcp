@@ -7,6 +7,24 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
 from blender_research_mcp.authoring import FiniteNumber, Vector3
+from blender_research_mcp.mesh_attributes import (
+    AttributeComponentMapIds,
+    GroupMapping,
+    GroupName,
+    LayerName,
+    UVCoordinate,
+    UVCoordinateSetOperation,
+    UVLayerCreateOperation,
+    UVLayerDeleteOperation,
+    UVLayerRef,
+    UVLayerRolesOperation,
+    UVPinSetOperation,
+    VertexGroupRef,
+    VertexWeightValue,
+    WeightGroupCreateOperation,
+    WeightGroupDeleteOperation,
+    WeightGroupRenameOperation,
+)
 from blender_research_mcp.mesh_authoring import MeshDataScope, MeshUserObject
 from blender_research_mcp.mesh_resources import (
     CoordinateSpace,
@@ -16,7 +34,11 @@ from blender_research_mcp.mesh_resources import (
     SurfaceId,
     ValidationCheck,
 )
-from blender_research_mcp.mesh_topology import SelectionRemapMode, WeightMergeMode
+from blender_research_mcp.mesh_topology import (
+    MeshAttributePolicy,
+    SelectionRemapMode,
+    WeightMergeMode,
+)
 
 BatchAlias = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")]
 Fingerprint = Annotated[str, Field(min_length=64, max_length=64)]
@@ -254,6 +276,7 @@ class BatchSubdivide(BaseModel):
     smooth_falloff: Literal["LINEAR", "SMOOTH"] = "SMOOTH"
     quad_corner: Literal["STRAIGHT_CUT", "INNER_VERT", "PATH", "FAN"] = "STRAIGHT_CUT"
     use_grid_fill: StrictBool = False
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
 class BatchLoopCut(BaseModel):
@@ -263,6 +286,7 @@ class BatchLoopCut(BaseModel):
     cuts: Annotated[StrictInt, Field(ge=1, le=32)] = 1
     interpolation: Literal["LINEAR", "PATH", "SURFACE"] = "LINEAR"
     smooth: FiniteNumber = Field(default=0, ge=0, le=1)
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
 class BatchBisect(BaseModel):
@@ -275,6 +299,7 @@ class BatchBisect(BaseModel):
     tolerance: FiniteNumber = Field(default=1e-6, ge=0, le=1)
     snap_to_plane: StrictBool = False
     clear_side: Literal["NONE", "POSITIVE", "NEGATIVE"] = "NONE"
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
     @model_validator(mode="after")
     def nonzero_normal(self) -> BatchBisect:
@@ -287,6 +312,7 @@ class BatchSplit(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["split"]
     selection_alias: BatchAlias
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
 class BatchBridge(BaseModel):
@@ -296,6 +322,7 @@ class BatchBridge(BaseModel):
     twist_offset: Annotated[StrictInt, Field(ge=-4096, le=4096)] = 0
     material_slot_index: Annotated[StrictInt, Field(ge=0, le=63)] | None = None
     smooth: StrictBool = False
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
 class BatchFill(BaseModel):
@@ -306,6 +333,7 @@ class BatchFill(BaseModel):
     max_sides: Annotated[StrictInt, Field(ge=0, le=1024)] = 0
     material_slot_index: Annotated[StrictInt, Field(ge=0, le=63)] | None = None
     smooth: StrictBool = False
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
 class BatchGridFill(BaseModel):
@@ -315,6 +343,7 @@ class BatchGridFill(BaseModel):
     use_interp_simple: StrictBool = False
     material_slot_index: Annotated[StrictInt, Field(ge=0, le=63)] | None = None
     smooth: StrictBool = False
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
 BatchMeshOperation = Annotated[
@@ -370,12 +399,212 @@ class BatchMeshSeparateStep(BaseModel):
     new_object_name: str = Field(min_length=1, max_length=255)
     collection_name: str | None = Field(default=None, min_length=1, max_length=255)
     expected_collection_identity: str | None = Field(default=None, min_length=1, max_length=128)
+    source_attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
+    separated_attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
     @model_validator(mode="after")
     def collection_pair(self) -> BatchMeshSeparateStep:
         if (self.collection_name is None) != (self.expected_collection_identity is None):
             raise ValueError("collection name and identity must be supplied together")
         return self
+
+
+class BatchUVSeamSetOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["seam_set"]
+    selection_alias: BatchAlias
+    seam: StrictBool
+
+
+class BatchUVTransformOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["transform"]
+    layer: UVLayerRef
+    selection_alias: BatchAlias
+    scope: Literal["FACES", "ISLANDS"] = "ISLANDS"
+    translation: UVCoordinate = (0.0, 0.0)
+    rotation_degrees: FiniteNumber = Field(default=0, ge=-360_000, le=360_000)
+    scale: UVCoordinate = (1.0, 1.0)
+    pivot: UVCoordinate | Literal["MEDIAN"] = "MEDIAN"
+
+    @model_validator(mode="after")
+    def bounded_transform(self) -> BatchUVTransformOperation:
+        if (
+            all(value == 0 for value in self.translation)
+            and self.rotation_degrees == 0
+            and all(value == 1 for value in self.scale)
+        ):
+            raise ValueError("UV transform must change translation, rotation, or scale")
+        if any(abs(value) > 1_000_000 for value in (*self.translation, *self.scale)):
+            raise ValueError("UV transform components are out of range")
+        return self
+
+
+class BatchUVUnwrapOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["unwrap"]
+    layer: UVLayerRef
+    selection_alias: BatchAlias
+    method: Literal["ANGLE_BASED", "CONFORMAL"] = "ANGLE_BASED"
+    fill_holes: StrictBool = True
+    correct_aspect: StrictBool = True
+    use_subsurf_data: StrictBool = False
+    margin: FiniteNumber = Field(default=0.001, ge=0, le=1)
+    pin_policy: Literal["RESPECT", "IGNORE", "ERROR_IF_PRESENT"] = "RESPECT"
+
+
+class BatchUVPackOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["pack"]
+    layer: UVLayerRef
+    selection_alias: BatchAlias
+    tile_u: Annotated[StrictInt, Field(ge=0, le=999)] = 0
+    tile_v: Annotated[StrictInt, Field(ge=0, le=999)] = 0
+    rotate: StrictBool = True
+    scale: StrictBool = True
+    margin: FiniteNumber = Field(default=0.001, ge=0, le=1)
+    pinned_policy: Literal["KEEP", "MOVE", "ERROR_IF_PRESENT"] = "KEEP"
+
+
+BatchUVOperation = Annotated[
+    UVLayerCreateOperation
+    | UVLayerDeleteOperation
+    | UVLayerRolesOperation
+    | BatchUVSeamSetOperation
+    | UVCoordinateSetOperation
+    | BatchUVTransformOperation
+    | UVPinSetOperation
+    | BatchUVUnwrapOperation
+    | BatchUVPackOperation,
+    Field(discriminator="type"),
+]
+
+
+class BatchUVEditStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["uv_edit"]
+    target_alias: BatchAlias
+    data_scope: MeshDataScope
+    operation: BatchUVOperation
+
+
+class BatchWeightSetOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["set"]
+    group: VertexGroupRef
+    selection_alias: BatchAlias
+    mode: Literal["REPLACE", "ADD", "SUBTRACT"] = "REPLACE"
+    value: FiniteNumber | None = Field(default=None, ge=0, le=1)
+    values: (
+        Annotated[tuple[VertexWeightValue, ...], Field(min_length=1, max_length=4096)] | None
+    ) = None
+    use_selection_weights: StrictBool = False
+    allow_locked: StrictBool = False
+
+    @model_validator(mode="after")
+    def one_value_source(self) -> BatchWeightSetOperation:
+        choices = (
+            int(self.value is not None)
+            + int(self.values is not None)
+            + int(self.use_selection_weights)
+        )
+        if choices != 1:
+            raise ValueError("set requires exactly one value source")
+        return self
+
+
+class BatchWeightClearOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["clear"]
+    selection_alias: BatchAlias
+    groups: Annotated[tuple[VertexGroupRef, ...], Field(min_length=1, max_length=256)] | None = None
+    all_groups: StrictBool = False
+    allow_locked: StrictBool = False
+
+    @model_validator(mode="after")
+    def one_group_scope(self) -> BatchWeightClearOperation:
+        if (self.groups is None) == (not self.all_groups):
+            raise ValueError("clear requires either groups or all_groups=true")
+        return self
+
+
+class BatchWeightNormalizeOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["normalize"]
+    selection_alias: BatchAlias
+    groups: Annotated[tuple[VertexGroupRef, ...], Field(min_length=1, max_length=256)]
+    keep_locked: StrictBool = True
+    zero_policy: Literal["KEEP", "ERROR"] = "KEEP"
+    target_total: FiniteNumber = Field(default=1, gt=0, le=1)
+
+
+class BatchWeightLimitTotalOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["limit_total"]
+    selection_alias: BatchAlias
+    maximum_influences: Annotated[StrictInt, Field(ge=1, le=32)] = 4
+    normalize: StrictBool = True
+    keep_locked: StrictBool = True
+
+
+BatchWeightOperation = Annotated[
+    WeightGroupCreateOperation
+    | WeightGroupRenameOperation
+    | WeightGroupDeleteOperation
+    | BatchWeightSetOperation
+    | BatchWeightClearOperation
+    | BatchWeightNormalizeOperation
+    | BatchWeightLimitTotalOperation,
+    Field(discriminator="type"),
+]
+
+
+class BatchWeightsEditStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["weights_edit"]
+    target_alias: BatchAlias
+    data_scope: MeshDataScope
+    operation: BatchWeightOperation
+
+
+class BatchUVTransfer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["UV"]
+    source_layer: UVLayerRef
+    target_layer_name: LayerName
+    expected_target_layer_identity: str | None = Field(default=None, min_length=1, max_length=128)
+    target_selection_alias: BatchAlias
+    mapping: Literal["TOPOLOGY", "NEAREST_SURFACE"]
+    component_map_ids: AttributeComponentMapIds | None = None
+    source_geometry: Literal["BASE", "EVALUATED_DEFORM_ONLY"] = "BASE"
+    maximum_distance: FiniteNumber = Field(gt=0, le=1_000_000)
+    on_miss: Literal["KEEP", "ERROR"] = "ERROR"
+
+
+class BatchWeightTransfer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["WEIGHTS"]
+    groups: Annotated[tuple[GroupMapping, ...], Field(min_length=1, max_length=256)]
+    target_selection_alias: BatchAlias
+    mapping: Literal["TOPOLOGY", "NEAREST_VERTEX", "NEAREST_SURFACE"]
+    component_map_ids: AttributeComponentMapIds | None = None
+    source_geometry: Literal["BASE", "EVALUATED_DEFORM_ONLY"] = "BASE"
+    maximum_distance: FiniteNumber = Field(gt=0, le=1_000_000)
+    on_miss: Literal["KEEP", "ERROR"] = "ERROR"
+
+
+BatchAttributeTransfer = Annotated[
+    BatchUVTransfer | BatchWeightTransfer, Field(discriminator="type")
+]
+
+
+class BatchAttributeTransferStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["attribute_transfer"]
+    source_target_alias: BatchAlias
+    target_alias: BatchAlias
+    target_data_scope: MeshDataScope = "OBJECT"
+    transfer: BatchAttributeTransfer
 
 
 class CountAtMost(BaseModel):
@@ -412,6 +641,9 @@ class BatchMeshValidateStep(BaseModel):
     maximum_distance: FiniteNumber = Field(default=1_000_000, gt=0, le=1_000_000)
     threshold: FiniteNumber | None = None
     sample_limit: Annotated[StrictInt, Field(ge=0, le=256)] = 64
+    group_names: Annotated[tuple[GroupName, ...], Field(min_length=1, max_length=256)] | None = None
+    target_total: FiniteNumber = Field(default=1, gt=0, le=1)
+    maximum_influences: Annotated[StrictInt, Field(ge=1, le=32)] = 4
     assertions: Annotated[tuple[BatchAssertion, ...], Field(max_length=8)] = ()
 
     @model_validator(mode="after")
@@ -421,6 +653,17 @@ class BatchMeshValidateStep(BaseModel):
             raise ValueError(f"{self.check} requires surface_alias")
         if not requires_surface and self.surface_alias is not None:
             raise ValueError("surface_alias is only valid for surface validation checks")
+        if (
+            self.check
+            not in {
+                "WEIGHT_SUM",
+                "WEIGHT_INFLUENCE_LIMIT",
+                "WEIGHT_UNASSIGNED",
+                "DEFORM_GROUP_MISMATCH",
+            }
+            and self.group_names is not None
+        ):
+            raise ValueError("weight evidence is only valid for weight validation checks")
         if len({item.type for item in self.assertions}) != len(self.assertions):
             raise ValueError("assertion types must be unique")
         return self
@@ -431,6 +674,9 @@ BatchStep = Annotated[
     | BatchSelectionDeriveStep
     | BatchMeshEditStep
     | BatchMeshSeparateStep
+    | BatchUVEditStep
+    | BatchWeightsEditStep
+    | BatchAttributeTransferStep
     | BatchMeshValidateStep,
     Field(discriminator="type"),
 ]

@@ -57,6 +57,14 @@ from blender_research_mcp.lifecycle import (
     DEFAULT_LAUNCH_TIMEOUT_SECONDS,
     ApplicationManager,
 )
+from blender_research_mcp.mesh_attributes import (
+    AttributeMeshTarget,
+    AttributeTransfer,
+    MeshUVComponent,
+    MeshWeightComponent,
+    UVOperation,
+    WeightOperation,
+)
 from blender_research_mcp.mesh_authoring import (
     MeshComponent,
     MeshDataScope,
@@ -81,6 +89,7 @@ from blender_research_mcp.mesh_topology import (
     ComponentMapDomain,
     ComponentMapId,
     ComponentMapIds,
+    MeshAttributePolicy,
     SelectionRemapMode,
     WeightMergeMode,
 )
@@ -466,6 +475,64 @@ def create_server(
         )
 
     @server.tool(
+        name="mesh.uv.inspect",
+        description=(
+            "Inspect exact UV layers, roles, seams, pins, loops, faces, and islands "
+            "without changing Blender or UV Editor selection."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_uv_inspect(
+        object_name: ObjectName,
+        layer_name: Annotated[str, Field(min_length=1, max_length=255)] | None = None,
+        component: MeshUVComponent = "SUMMARY",
+        offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=512)] = 256,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_uv")
+        return await client.call(
+            "mesh.uv.inspect",
+            {
+                "object_name": object_name,
+                "layer_name": layer_name,
+                "component": component,
+                "offset": offset,
+                "limit": limit,
+            },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.weights.inspect",
+        description=(
+            "Inspect exact ordered Vertex Groups, Armature/Bone matches, sparse per-vertex "
+            "weights, and schema/value fingerprints without entering Weight Paint mode."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_weights_inspect(
+        object_name: ObjectName,
+        group_name: Annotated[str, Field(min_length=1, max_length=255)] | None = None,
+        component: MeshWeightComponent = "SUMMARY",
+        offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=512)] = 256,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_weights")
+        return await client.call(
+            "mesh.weights.inspect",
+            {
+                "object_name": object_name,
+                "group_name": group_name,
+                "component": component,
+                "offset": offset,
+                "limit": limit,
+            },
+            read_only=True,
+        )
+
+    @server.tool(
         name="mesh.selection.query",
         description=(
             "Create one immutable revision-bound SelectionSet from an exact semantic "
@@ -707,6 +774,19 @@ def create_server(
         selection_id: SelectionId,
         check: ValidationCheck,
         surface_id: SurfaceId | None = None,
+        layer_name: Annotated[str, Field(min_length=1, max_length=255)] | None = None,
+        expected_uv_fingerprint: Annotated[str, Field(min_length=64, max_length=64)] | None = None,
+        group_names: Annotated[
+            tuple[Annotated[str, Field(min_length=1, max_length=255)], ...],
+            Field(min_length=1, max_length=256),
+        ]
+        | None = None,
+        expected_group_schema_fingerprint: Annotated[str, Field(min_length=64, max_length=64)]
+        | None = None,
+        expected_weights_fingerprint: Annotated[str, Field(min_length=64, max_length=64)]
+        | None = None,
+        target_weight_total: FiniteNumber = 1.0,
+        maximum_influences: Annotated[StrictInt, Field(ge=1, le=32)] = 4,
         tolerance: FiniteNumber = 1e-6,
         maximum_distance: FiniteNumber = 1_000_000,
         threshold: FiniteNumber | None = None,
@@ -719,6 +799,13 @@ def create_server(
                 "selection_id": selection_id,
                 "check": check,
                 "surface_id": surface_id,
+                "layer_name": layer_name,
+                "expected_uv_fingerprint": expected_uv_fingerprint,
+                "group_names": list(group_names) if group_names is not None else None,
+                "expected_group_schema_fingerprint": expected_group_schema_fingerprint,
+                "expected_weights_fingerprint": expected_weights_fingerprint,
+                "target_weight_total": target_weight_total,
+                "maximum_influences": maximum_influences,
                 "tolerance": tolerance,
                 "maximum_distance": maximum_distance,
                 "threshold": threshold,
@@ -1404,6 +1491,13 @@ def create_server(
         idempotency_key: IdempotencyKey,
     ) -> dict[str, Any]:
         await require_capability(client, "mesh_topology")
+        operation_payload = operation.model_dump(exclude_none=True)
+        attribute_policy = operation_payload.get("attribute_policy")
+        if attribute_policy == MeshAttributePolicy().model_dump():
+            operation_payload.pop("attribute_policy", None)
+        elif attribute_policy is not None:
+            client.require_capability("mesh_topology", 4)
+            client.require_capability("transactions", 9)
         topology_v2_operations = {
             "subdivide",
             "loop_cut",
@@ -1454,7 +1548,159 @@ def create_server(
                 ],
                 "expected_mesh_fingerprint": expected_mesh_fingerprint,
                 "data_scope": data_scope,
+                "operation": operation_payload,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="mesh.uv.edit",
+        description=(
+            "Edit exact UV layers, seams, pins, coordinates, islands, unwraps, or packs "
+            "inside an active transaction without changing user UI selection."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def mesh_uv_edit(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_mesh_identity: SessionIdentity,
+        expected_mesh_users: DataUsers,
+        expected_mesh_user_objects: Annotated[
+            tuple[MeshUserObject, ...], Field(min_length=1, max_length=256)
+        ],
+        expected_mesh_fingerprint: Annotated[str, Field(min_length=64, max_length=64)],
+        expected_uv_fingerprint: Annotated[str, Field(min_length=64, max_length=64)],
+        data_scope: MeshDataScope,
+        operation: UVOperation,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_uv")
+        client.require_capability("transactions", 9)
+        if len(
+            {
+                (item.object_name, item.expected_object_identity)
+                for item in expected_mesh_user_objects
+            }
+        ) != len(expected_mesh_user_objects):
+            raise ValueError("expected_mesh_user_objects must be unique")
+        if expected_mesh_users != len(expected_mesh_user_objects):
+            raise ValueError(
+                "expected_mesh_users must equal the number of expected_mesh_user_objects"
+            )
+        return await client.call(
+            "mesh.uv.edit",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "expected_mesh_identity": expected_mesh_identity,
+                "expected_mesh_users": expected_mesh_users,
+                "expected_mesh_user_objects": [
+                    item.model_dump() for item in expected_mesh_user_objects
+                ],
+                "expected_mesh_fingerprint": expected_mesh_fingerprint,
+                "expected_uv_fingerprint": expected_uv_fingerprint,
+                "data_scope": data_scope,
                 "operation": operation.model_dump(exclude_none=True),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="mesh.weights.edit",
+        description=(
+            "Create or edit exact Vertex Groups and deform weights in an active transaction, "
+            "with explicit shared-data scope and locked-group handling."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def mesh_weights_edit(
+        transaction_id: TransactionId,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_mesh_identity: SessionIdentity,
+        expected_mesh_users: DataUsers,
+        expected_mesh_user_objects: Annotated[
+            tuple[MeshUserObject, ...], Field(min_length=1, max_length=256)
+        ],
+        expected_mesh_fingerprint: Annotated[str, Field(min_length=64, max_length=64)],
+        expected_group_schema_fingerprint: Annotated[str, Field(min_length=64, max_length=64)],
+        expected_weights_fingerprint: Annotated[str, Field(min_length=64, max_length=64)],
+        data_scope: MeshDataScope,
+        operation: WeightOperation,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_weights")
+        client.require_capability("transactions", 9)
+        if len(
+            {
+                (item.object_name, item.expected_object_identity)
+                for item in expected_mesh_user_objects
+            }
+        ) != len(expected_mesh_user_objects):
+            raise ValueError("expected_mesh_user_objects must be unique")
+        if expected_mesh_users != len(expected_mesh_user_objects):
+            raise ValueError(
+                "expected_mesh_users must equal the number of expected_mesh_user_objects"
+            )
+        return await client.call(
+            "mesh.weights.edit",
+            {
+                "transaction_id": transaction_id,
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "expected_mesh_identity": expected_mesh_identity,
+                "expected_mesh_users": expected_mesh_users,
+                "expected_mesh_user_objects": [
+                    item.model_dump() for item in expected_mesh_user_objects
+                ],
+                "expected_mesh_fingerprint": expected_mesh_fingerprint,
+                "expected_group_schema_fingerprint": expected_group_schema_fingerprint,
+                "expected_weights_fingerprint": expected_weights_fingerprint,
+                "data_scope": data_scope,
+                "operation": operation.model_dump(exclude_none=True),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="mesh.attribute.transfer",
+        description=(
+            "Transfer exact UV layers or Vertex Group weights by topology lineage, nearest "
+            "vertex, or nearest-surface interpolation inside an active transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def mesh_attribute_transfer(
+        transaction_id: TransactionId,
+        source: AttributeMeshTarget,
+        target: AttributeMeshTarget,
+        transfer: AttributeTransfer,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_attribute_transfer")
+        client.require_capability("transactions", 9)
+        return await client.call(
+            "mesh.attribute.transfer",
+            {
+                "transaction_id": transaction_id,
+                "source": source.model_dump(exclude_none=True),
+                "target": target.model_dump(exclude_none=True),
+                "transfer": transfer.model_dump(exclude_none=True),
             },
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,
@@ -1486,11 +1732,17 @@ def create_server(
         idempotency_key: IdempotencyKey,
         collection_name: MeshObjectName | None = None,
         expected_collection_identity: SessionIdentity | None = None,
+        source_attribute_policy: MeshAttributePolicy | None = None,
+        separated_attribute_policy: MeshAttributePolicy | None = None,
     ) -> dict[str, Any]:
         await require_capability(client, "mesh_separation")
         client.require_capability("mesh_component_map", 2)
         client.require_capability("mesh_topology", 3)
         client.require_capability("transactions", 8)
+        if source_attribute_policy is not None or separated_attribute_policy is not None:
+            client.require_capability("mesh_separation", 2)
+            client.require_capability("mesh_topology", 4)
+            client.require_capability("transactions", 9)
         if (collection_name is None) != (expected_collection_identity is None):
             raise ValueError(
                 "collection_name and expected_collection_identity must be supplied together"
@@ -1506,23 +1758,28 @@ def create_server(
             raise ValueError(
                 "expected_mesh_users must equal the number of expected_mesh_user_objects"
             )
+        payload: dict[str, Any] = {
+            "transaction_id": transaction_id,
+            "object_name": object_name,
+            "expected_object_identity": expected_object_identity,
+            "expected_mesh_identity": expected_mesh_identity,
+            "expected_mesh_users": expected_mesh_users,
+            "expected_mesh_user_objects": [
+                item.model_dump() for item in expected_mesh_user_objects
+            ],
+            "expected_mesh_fingerprint": expected_mesh_fingerprint,
+            "selection_id": selection_id,
+            "new_object_name": new_object_name,
+            "collection_name": collection_name,
+            "expected_collection_identity": expected_collection_identity,
+        }
+        if source_attribute_policy is not None:
+            payload["source_attribute_policy"] = source_attribute_policy.model_dump()
+        if separated_attribute_policy is not None:
+            payload["separated_attribute_policy"] = separated_attribute_policy.model_dump()
         return await client.call(
             "mesh.separate",
-            {
-                "transaction_id": transaction_id,
-                "object_name": object_name,
-                "expected_object_identity": expected_object_identity,
-                "expected_mesh_identity": expected_mesh_identity,
-                "expected_mesh_users": expected_mesh_users,
-                "expected_mesh_user_objects": [
-                    item.model_dump() for item in expected_mesh_user_objects
-                ],
-                "expected_mesh_fingerprint": expected_mesh_fingerprint,
-                "selection_id": selection_id,
-                "new_object_name": new_object_name,
-                "collection_name": collection_name,
-                "expected_collection_identity": expected_collection_identity,
-            },
+            payload,
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,
             read_only=False,
@@ -1552,13 +1809,61 @@ def create_server(
         client.require_capability("mesh_component_map", 2)
         client.require_capability("mesh_topology", 3)
         client.require_capability("transactions", 8)
+        step_payloads = [item.model_dump(exclude_none=True) for item in steps]
+        requires_batch_v2 = False
+        for payload in step_payloads:
+            step_type = payload["type"]
+            if step_type == "uv_edit":
+                await require_capability(client, "mesh_uv")
+                requires_batch_v2 = True
+            elif step_type == "weights_edit":
+                await require_capability(client, "mesh_weights")
+                requires_batch_v2 = True
+            elif step_type == "attribute_transfer":
+                await require_capability(client, "mesh_attribute_transfer")
+                requires_batch_v2 = True
+            elif step_type == "mesh_validate" and payload.get("check") in {
+                "UV_BOUNDS",
+                "UV_DEGENERATE",
+                "UV_OVERLAP",
+                "UV_STRETCH",
+                "WEIGHT_SUM",
+                "WEIGHT_INFLUENCE_LIMIT",
+                "WEIGHT_UNASSIGNED",
+                "DEFORM_GROUP_MISMATCH",
+            }:
+                client.require_capability("mesh_validation", 2)
+                requires_batch_v2 = True
+            elif step_type == "mesh_edit":
+                operation_payload = payload.get("operation", {})
+                policy = operation_payload.get("attribute_policy")
+                if policy == MeshAttributePolicy().model_dump():
+                    operation_payload.pop("attribute_policy", None)
+                elif policy is not None:
+                    requires_batch_v2 = True
+            elif step_type == "mesh_separate":
+                source_policy = payload.get("source_attribute_policy")
+                separated_policy = payload.get("separated_attribute_policy")
+                default_policy = MeshAttributePolicy().model_dump()
+                if source_policy == default_policy:
+                    payload.pop("source_attribute_policy", None)
+                else:
+                    requires_batch_v2 = True
+                if separated_policy == default_policy:
+                    payload.pop("separated_attribute_policy", None)
+                else:
+                    requires_batch_v2 = True
+        if requires_batch_v2:
+            client.require_capability("mesh_batch", 2)
+            client.require_capability("mesh_topology", 4)
+            client.require_capability("transactions", 9)
         return await client.call(
             "mesh.batch.execute",
             {
                 "transaction_id": transaction_id,
                 "targets": [item.model_dump() for item in targets],
                 "inputs": [item.model_dump() for item in inputs],
-                "steps": [item.model_dump(exclude_none=True) for item in steps],
+                "steps": step_payloads,
                 "on_error": on_error,
             },
             expected_scene_generation=expected_scene_generation,

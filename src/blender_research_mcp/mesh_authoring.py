@@ -22,6 +22,7 @@ from blender_research_mcp.mesh_topology import (
     FillOperation,
     GridFillOperation,
     LoopCutOperation,
+    MeshAttributePolicy,
     SplitOperation,
     SubdivideOperation,
 )
@@ -108,6 +109,7 @@ class ExtrudeFacesOperation(BaseModel):
     type: Literal["extrude_faces"]
     face_indices: MeshIndices
     offset: Vector3
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
     @model_validator(mode="after")
     def validate_extrusion(self) -> ExtrudeFacesOperation:
@@ -130,6 +132,7 @@ class InsetFacesOperation(BaseModel):
     depth: FiniteNumber = Field(default=0.0, ge=-100_000, le=100_000)
     individual: StrictBool = False
     even_offset: StrictBool = True
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
     @model_validator(mode="after")
     def validate_inset(self) -> InsetFacesOperation:
@@ -149,6 +152,7 @@ class BevelEdgesOperation(BaseModel):
     segments: Annotated[StrictInt, Field(ge=1, le=32)] = 1
     profile: FiniteNumber = Field(default=0.5, ge=0, le=1)
     clamp_overlap: StrictBool = True
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
     @model_validator(mode="after")
     def unique_edges(self) -> BevelEdgesOperation:
@@ -162,6 +166,7 @@ class DeleteOperation(BaseModel):
 
     type: Literal["delete"]
     target: ElementTarget
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
 class DissolveOperation(BaseModel):
@@ -172,6 +177,7 @@ class DissolveOperation(BaseModel):
     use_face_split: StrictBool = False
     use_boundary_tear: StrictBool = False
     use_verts: StrictBool = False
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
     @model_validator(mode="after")
     def validate_target_options(self) -> DissolveOperation:
@@ -191,6 +197,7 @@ class MergeVerticesOperation(BaseModel):
     vertex_indices: Annotated[tuple[MeshIndex, ...], Field(min_length=2, max_length=4096)]
     destination: Literal["CENTER", "TARGET"] = "CENTER"
     target_index: MeshIndex | None = None
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
     @model_validator(mode="after")
     def validate_merge(self) -> MergeVerticesOperation:

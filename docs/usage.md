@@ -25,10 +25,13 @@
    Revision-aware topology requires `mesh_component_map: 1`, `mesh_topology: 2`, and
    `transactions: 7`. Map composition, object separation, and declarative batches
    require `mesh_component_map: 2`, `mesh_topology: 3`, `mesh_separation: 1`,
-   `mesh_batch: 1`, and `transactions: 8`.
+   `mesh_batch: 1`, and `transactions: 8`. UV/weights and their attribute-aware topology
+   and batch workflows require `mesh_uv: 1`, `mesh_weights: 1`,
+   `mesh_attribute_transfer: 1`, `mesh_validation: 2`, `mesh_topology: 4`,
+   `mesh_separation: 2`, `mesh_batch: 2`, and `transactions: 9`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.13.1.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.14.0.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -191,7 +194,7 @@ in-memory authoring batch:
 Transactions contain at most 256 property plus structural deltas. `object.delete`
 unlinks first, restores links on rollback, and removes the object only after commit
 guards pass. The current surface exposes only the closed `mesh.edit` operation union;
-it does not expose arbitrary Mesh/BMesh arrays or operators, UV editing, arbitrary
+   it does not expose arbitrary Mesh/BMesh arrays or operators, generic attributes, arbitrary
 shader nodes, Geometry Nodes, unsupported Modifier parameters, apply, animation, rigs,
 compositor operations, Cycles, network downloads, or image pack/unpack/reload.
 
@@ -301,7 +304,8 @@ repeated network round trips and manual SelectionSet remapping:
 1. Bind one to eight exact initial targets and any existing SelectionSet/SurfaceRef
    inputs to unique invocation-local aliases.
 2. List only closed `selection_query`, `selection_derive`, `mesh_edit`,
-   `mesh_separate`, and `mesh_validate` steps. References must point backward; a later
+   `mesh_separate`, `uv_edit`, `weights_edit`, `attribute_transfer`, and `mesh_validate`
+   steps. References must point backward; a later
    separation step may introduce a new target alias for subsequent steps.
 3. Give SelectionSet aliases an explicit remap mode/weight merge when the default
    `ALL_MAPPED/MAX` is not correct. The runtime remaps every current selection on an
@@ -318,6 +322,34 @@ budget, or assertion failure rolls back the entire active transaction—includin
 writes performed before this batch. A `MESH_BATCH_RESTORE_FAILED` result means recovery
 could not be proven; preserve current user state and stop. A successful all-no-op batch
 does not advance generation; any successful write advances it exactly once.
+
+## Author and validate UVs and skin weights
+
+Use the 0.14 domains only after inspecting exact Mesh and attribute evidence:
+
+1. Call `mesh.uv.inspect` or `mesh.weights.inspect` and retain object/Mesh identities,
+   complete users, Mesh fingerprint, and the UV or Group/weight fingerprints.
+2. Begin a transaction-v9 write. Choose `OBJECT` to single-user only the target object,
+   or `SHARED_DATA` only when every exact user is intended; shared weight writes also
+   require identical ordered Group schemas on all users.
+3. Use `mesh.uv.edit` for layer roles/lifecycle, seams, pins, exact corner coordinates,
+   island transforms, unwrap, or packing. Official unwrap/pack runs on a temporary
+   object and copies back only verified UV data, without consuming the user's UI
+   selection or mode.
+4. Use `mesh.weights.edit` for Group lifecycle, constant/falloff/per-vertex weights,
+   normalization, or influence limiting. Locked Groups remain immutable unless the
+   request explicitly opts in.
+5. Use `mesh.attribute.transfer` when exact topology/ComponentMap lineage, nearest
+   vertex, or barycentric nearest-surface mapping is more appropriate than authoring
+   from scratch. Always bound distance and choose explicit `KEEP` or `ERROR` misses.
+6. Run UV or weight `mesh.validate` checks and review both quantitative summaries and
+   returned problem SelectionSets before commit.
+
+Topology edits default to `PRESERVE_INTERPOLATE`. Use `ERROR_IF_PRESENT` when losing
+or interpolating an existing domain is unacceptable, and `DISCARD` only when the
+requested result intentionally drops that domain. `mesh.separate` accepts independent
+SOURCE and SEPARATED policies. Shape-Key Meshes permit topology-stable UV/weight edits,
+but all topology changes remain rejected.
 
 ## Select, fit, and validate a Mesh region
 

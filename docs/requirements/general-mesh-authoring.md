@@ -294,21 +294,37 @@ shape_key.transfer
 
 属性传递需要支持最近点、射线、拓扑对应、重心坐标和笼形投射等映射模式。
 
+0.14 将该阶段收敛为 UV 与蒙皮权重两个封闭领域：UV Layer、Seam、Pin、坐标、
+ABF/LSCM unwrap、pack、Vertex Group、稀疏权重、归一化、影响数限制，以及拓扑或
+最近曲面传递。拓扑与分离默认保留插值，并在无法证明结果完整时回退。带 Shape Key
+的 Mesh 可以执行拓扑不变的 UV/权重写入，但 Shape Key、自定义法线和通用属性写入
+仍不在本版本授权范围。
+
+实现状态（0.14.0）：上述封闭 UV/权重检查、写入、拓扑/最近映射传递、属性验证、
+拓扑迁移策略和 batch 步骤均已实现。Shape Key Mesh 的授权仍只限拓扑不变属性写入。
+0.15 优先实现创建独立输出的求值实体化、非连通区域提取和受控 Armature 绑定；Shape
+Key 结构写入、自定义法线、通用属性和 Modifier Apply 继续留在后续版本。
+
 ### 6.5 对象、求值网格与修改器
 
 ```text
+mesh.materialize
+mesh.extract
+rig.inspect
+rig.bind
 object.join
-object.separate
-mesh.from_evaluated
-mesh.copy_region
-modifier.create
-modifier.configure
 modifier.apply
-modifier.convert_to_mesh
-data.transfer
 ```
 
-`mesh.from_evaluated` 应能从包含 Armature、Shape Key 和 Modifier 的当前求值结果创建真实 Mesh，同时报告丢失或烘焙了哪些依赖关系。
+`mesh.materialize` 从基础 Mesh、仅当前 Shape Key 结果或完整求值结果创建新的独立
+Mesh 对象，同时报告丢失或烘焙的依赖。它不修改源对象，也不等同于 Modifier Apply。
+面向重新绑定的流程应使用排除 Modifier 的 `SHAPE_KEYS_CURRENT`；完整 EVALUATED 输出
+已经包含 Armature 和 Modifier 结果，不能默认再次绑定。
+
+`mesh.extract` 从一个或多个连通片组成的 FACE SelectionSet 创建一个对象，并返回源侧
+和提取侧的精确 ComponentMap。`rig.bind` 只装配现有权重与 Armature；权重生成和迁移
+继续由独立的权重工具负责。详细要求见
+[模块化角色表面需求](modular-character-surface.md)。
 
 修改器应逐步支持 Shrinkwrap、Mirror、Lattice、Data Transfer、Surface Deform 和 Multiresolution，而不局限于当前的 Bevel、Subdivision、Solidify 和 Boolean。
 
@@ -393,14 +409,17 @@ mesh.intersection
 
 这一阶段开始支持大范围面分割、补面和局部精细化。
 
-### 阶段 C：属性、绑定与形态键
+### 阶段 C：属性、实体化与绑定
 
 - UV、法线、材质、顶点组和蒙皮权重的读写与传递；
-- 形态键编辑、重映射、烘焙和迁移；
-- Armature/Shape Key 求值结果实体化；
+- 当前 Shape Key 结果与最终求值结果实体化；
+- 非连通区域提取和 Armature 装配；
 - Data Transfer 与 Surface Deform。
 
 这一阶段使修改后的模型能够继续参与角色动画和表情系统。
+
+Shape Key 结构编辑、重映射和迁移是后续独立阶段，不与创建无 Shape Key 工作副本的
+materialize 混为同一授权。
 
 ### 阶段 D：重拓扑与高精度生产
 

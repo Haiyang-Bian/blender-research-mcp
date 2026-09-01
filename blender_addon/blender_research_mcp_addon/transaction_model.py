@@ -212,6 +212,36 @@ class MeshEditDelta:
 
 
 @dataclass
+class WeightSnapshotGuard:
+    """Baseline and latest exact object-group/deform-weight state."""
+
+    object_name: str
+    object_identity: str
+    mesh_name: str
+    mesh_identity: str
+    data_scope: str
+    object_identities: dict[str, str]
+    baseline_schemas: dict[str, tuple[tuple[str, bool], ...]]
+    expected_schema_fingerprints: dict[str, str]
+    baseline_weights: tuple[tuple[tuple[int, float], ...], ...]
+    expected_weights_fingerprint: str
+
+
+@dataclass
+class WeightEditDelta:
+    object_name: str
+    object_identity: str
+    mesh_name: str
+    mesh_identity: str
+    operation: str
+    before_schema_fingerprint: str
+    after_schema_fingerprint: str
+    before_weights_fingerprint: str
+    after_weights_fingerprint: str
+    data_scope: str
+
+
+@dataclass
 class StructuralDelta:
     """A reversible structural change interpreted by the Blender-side authoring layer.
 
@@ -240,6 +270,7 @@ TransactionDelta = (
     | MaterialInputDelta
     | ObjectDataDelta
     | MeshEditDelta
+    | WeightEditDelta
     | StructuralDelta
 )
 
@@ -386,6 +417,7 @@ def delta_properties(
             ModifierMoveDelta,
             ModifierDeleteDelta,
             MeshEditDelta,
+            WeightEditDelta,
         ),
     ):
         return []
@@ -424,6 +456,7 @@ class Transaction:
     deltas: list[TransactionDelta] = field(default_factory=list)
     modifier_stack_guards: dict[tuple[str, str], ModifierStackGuard] = field(default_factory=dict)
     mesh_snapshot_guards: dict[tuple[str, str], MeshSnapshotGuard] = field(default_factory=dict)
+    weight_snapshot_guards: dict[tuple[str, str], WeightSnapshotGuard] = field(default_factory=dict)
 
     def ensure_capacity(self, additional: int = 1) -> None:
         if isinstance(additional, bool) or additional < 0:
@@ -523,6 +556,23 @@ class Transaction:
     def remove_mesh_snapshot_guard(self, guard: MeshSnapshotGuard) -> None:
         self.mesh_snapshot_guards.pop((guard.mesh_name, guard.mesh_identity), None)
 
+    def weight_snapshot_guard(
+        self, mesh_name: str, mesh_identity: str
+    ) -> WeightSnapshotGuard | None:
+        return self.weight_snapshot_guards.get((mesh_name, mesh_identity))
+
+    def add_weight_snapshot_guard(self, guard: WeightSnapshotGuard) -> None:
+        key = (guard.mesh_name, guard.mesh_identity)
+        if key in self.weight_snapshot_guards:
+            raise TransactionModelError(
+                "MESH_WEIGHT_SNAPSHOT_ACTIVE",
+                f"A weight snapshot already exists for {guard.mesh_name}",
+            )
+        self.weight_snapshot_guards[key] = guard
+
+    def remove_weight_snapshot_guard(self, guard: WeightSnapshotGuard) -> None:
+        self.weight_snapshot_guards.pop((guard.mesh_name, guard.mesh_identity), None)
+
     def expected_properties(self) -> dict[PropertyRef, PropertyValue]:
         expected: dict[PropertyRef, PropertyValue] = {}
         for delta in self.deltas:
@@ -546,6 +596,8 @@ class Transaction:
                 kinds.add("modifier_delete")
             elif isinstance(delta, MeshEditDelta):
                 kinds.add("mesh_edit")
+            elif isinstance(delta, WeightEditDelta):
+                kinds.add("mesh_weights")
         return sorted(kinds)
 
 

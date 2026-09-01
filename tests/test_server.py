@@ -8,7 +8,7 @@ from blender_research_mcp.server import MaterialInputValue, create_server
 
 def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     server = create_server()
-    assert server._mcp_server.version == "0.13.1"
+    assert server._mcp_server.version == "0.14.0"
     tools = asyncio.run(server.list_tools())
     assert [tool.name for tool in tools] == [
         "application.status",
@@ -24,20 +24,22 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "context.restore",
         "scene.inspect",
         "object.inspect",
-            "object.geometry.inspect",
-            "mesh.inspect",
-            "mesh.selection.query",
-            "mesh.selection.derive",
-            "mesh.selection.inspect",
-            "mesh.selection.release",
-            "mesh.component_map.inspect",
-            "mesh.component_map.release",
-            "mesh.component_map.compose",
-            "mesh.selection.remap",
-            "mesh.surface.prepare",
-            "mesh.surface.query",
-            "mesh.validate",
-            "object.lookdev.inspect",
+        "object.geometry.inspect",
+        "mesh.inspect",
+        "mesh.uv.inspect",
+        "mesh.weights.inspect",
+        "mesh.selection.query",
+        "mesh.selection.derive",
+        "mesh.selection.inspect",
+        "mesh.selection.release",
+        "mesh.component_map.inspect",
+        "mesh.component_map.release",
+        "mesh.component_map.compose",
+        "mesh.selection.remap",
+        "mesh.surface.prepare",
+        "mesh.surface.query",
+        "mesh.validate",
+        "object.lookdev.inspect",
         "modifier.inspect",
         "material.inspect",
         "image.inspect",
@@ -58,6 +60,9 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "modifier.move",
         "modifier.delete",
         "mesh.edit",
+        "mesh.uv.edit",
+        "mesh.weights.edit",
+        "mesh.attribute.transfer",
         "mesh.separate",
         "mesh.batch.execute",
         "shape_key.set_value",
@@ -131,6 +136,24 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "faces",
     ]
     assert mesh_inspect.inputSchema["properties"]["limit"]["maximum"] == 512
+    mesh_uv_inspect = tools_by_name["mesh.uv.inspect"]
+    assert mesh_uv_inspect.annotations is not None
+    assert mesh_uv_inspect.annotations.readOnlyHint is True
+    assert mesh_uv_inspect.inputSchema["properties"]["component"]["enum"] == [
+        "SUMMARY",
+        "FACES",
+        "LOOPS",
+        "ISLANDS",
+        "SEAMS",
+    ]
+    mesh_weights_inspect = tools_by_name["mesh.weights.inspect"]
+    assert mesh_weights_inspect.annotations is not None
+    assert mesh_weights_inspect.annotations.readOnlyHint is True
+    assert mesh_weights_inspect.inputSchema["properties"]["component"]["enum"] == [
+        "SUMMARY",
+        "GROUPS",
+        "VERTICES",
+    ]
     mesh_separate = tools_by_name["mesh.separate"]
     assert mesh_separate.annotations is not None
     assert mesh_separate.annotations.readOnlyHint is False
@@ -151,7 +174,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert mesh_batch.inputSchema["properties"]["steps"]["maxItems"] == 32
     step_schema = mesh_batch.inputSchema["properties"]["steps"]["items"]
     assert step_schema["discriminator"]["propertyName"] == "type"
-    assert len(step_schema["oneOf"]) == 5
+    assert len(step_schema["oneOf"]) == 8
     selection_query = tools_by_name["mesh.selection.query"]
     assert selection_query.annotations is not None
     assert selection_query.annotations.readOnlyHint is True
@@ -189,7 +212,10 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "RAYCAST",
     ]
     validation = tools_by_name["mesh.validate"]
-    assert len(validation.inputSchema["properties"]["check"]["enum"]) == 7
+    assert len(validation.inputSchema["properties"]["check"]["enum"]) == 15
+    assert "layer_name" in validation.inputSchema["properties"]
+    assert "expected_uv_fingerprint" in validation.inputSchema["properties"]
+    assert "expected_weights_fingerprint" in validation.inputSchema["properties"]
     lookdev = tools_by_name["object.lookdev.inspect"]
     assert lookdev.annotations is not None
     assert lookdev.annotations.readOnlyHint is True
@@ -221,9 +247,10 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert comparison.annotations.openWorldHint is False
     assert comparison.inputSchema["properties"]["candidates"]["minItems"] == 1
     assert comparison.inputSchema["properties"]["candidates"]["maxItems"] == 3
-    assert comparison.inputSchema["$defs"]["ComparisonCapture"]["properties"]["max_size"][
-        "maximum"
-    ] == 1000
+    assert (
+        comparison.inputSchema["$defs"]["ComparisonCapture"]["properties"]["max_size"]["maximum"]
+        == 1000
+    )
     target_schema = comparison.inputSchema["properties"]["target"]
     assert target_schema["discriminator"]["propertyName"] == "type"
     assert len(target_schema["oneOf"]) == 7
@@ -242,9 +269,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     object_duplicate = tools_by_name["object.duplicate"]
     assert object_duplicate.inputSchema["properties"]["linked_data"]["default"] is False
     object_delete = tools_by_name["object.delete"]
-    assert object_delete.inputSchema["properties"]["expected_object_identity"][
-        "maxLength"
-    ] == 128
+    assert object_delete.inputSchema["properties"]["expected_object_identity"]["maxLength"] == 128
     object_set = tools_by_name["object.set"]
     assert object_set.annotations is not None
     assert object_set.annotations.readOnlyHint is False
@@ -267,9 +292,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     visibility = tools_by_name["object.visibility.set"]
     assert visibility.annotations is not None
     assert visibility.annotations.destructiveHint is True
-    assert visibility.inputSchema["properties"]["hide_viewport"]["anyOf"][0]["type"] == (
-        "boolean"
-    )
+    assert visibility.inputSchema["properties"]["hide_viewport"]["anyOf"][0]["type"] == ("boolean")
     modifier = tools_by_name["modifier.set_state"]
     assert modifier.annotations is not None
     assert modifier.annotations.idempotentHint is True
@@ -304,6 +327,27 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     operation_schema = mesh_edit.inputSchema["properties"]["operation"]
     assert operation_schema["discriminator"]["propertyName"] == "type"
     assert len(operation_schema["oneOf"]) == 23
+    mesh_uv_edit = tools_by_name["mesh.uv.edit"]
+    assert mesh_uv_edit.annotations is not None
+    assert mesh_uv_edit.annotations.readOnlyHint is False
+    assert mesh_uv_edit.annotations.destructiveHint is True
+    assert mesh_uv_edit.annotations.idempotentHint is True
+    assert mesh_uv_edit.annotations.openWorldHint is False
+    uv_operation = mesh_uv_edit.inputSchema["properties"]["operation"]
+    assert uv_operation["discriminator"]["propertyName"] == "type"
+    assert len(uv_operation["oneOf"]) == 9
+    mesh_weights_edit = tools_by_name["mesh.weights.edit"]
+    assert mesh_weights_edit.annotations is not None
+    assert mesh_weights_edit.annotations.destructiveHint is True
+    weight_operation = mesh_weights_edit.inputSchema["properties"]["operation"]
+    assert weight_operation["discriminator"]["propertyName"] == "type"
+    assert len(weight_operation["oneOf"]) == 7
+    attribute_transfer = tools_by_name["mesh.attribute.transfer"]
+    assert attribute_transfer.annotations is not None
+    assert attribute_transfer.annotations.destructiveHint is True
+    transfer_schema = attribute_transfer.inputSchema["properties"]["transfer"]
+    assert transfer_schema["discriminator"]["propertyName"] == "type"
+    assert len(transfer_schema["oneOf"]) == 2
     shape_key = tools_by_name["shape_key.set_value"]
     assert shape_key.annotations is not None
     assert shape_key.annotations.destructiveHint is True
@@ -347,17 +391,13 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     ]
     assert texture_bind.inputSchema["properties"]["replace_existing"]["default"] is False
     texture_clear = tools_by_name["material.texture.clear"]
-    assert texture_clear.inputSchema["properties"]["expected_link_identities"][
-        "minItems"
-    ] == 1
+    assert texture_clear.inputSchema["properties"]["expected_link_identities"]["minItems"] == 1
     world_set = tools_by_name["world.set"]
     assert world_set.inputSchema["properties"]["allow_shared"]["default"] is False
     assert world_set.annotations is not None
     assert world_set.annotations.destructiveHint is True
     scene_camera = tools_by_name["scene.camera.set"]
-    assert scene_camera.inputSchema["properties"]["expected_camera_identity"][
-        "maxLength"
-    ] == 128
+    assert scene_camera.inputSchema["properties"]["expected_camera_identity"]["maxLength"] == 128
     render_preview = tools_by_name["render.preview"]
     assert render_preview.annotations is not None
     assert render_preview.annotations.readOnlyHint is False

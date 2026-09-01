@@ -9,6 +9,7 @@ from typing import Any
 import bpy
 
 from .capture_model import CaptureBook
+from .mesh_attribute_transfer_ops import transfer_attribute
 from .mesh_component_map import compose_component_map, remap_selection
 from .mesh_deform_ops import DEFORM_OPERATIONS, edit_mesh_deform
 from .mesh_ops import (
@@ -23,6 +24,12 @@ from .mesh_resource_model import MeshResourceBook, MeshResourceError
 from .mesh_separation_ops import separate_mesh
 from .mesh_surface_ops import validate_mesh, validate_surface
 from .mesh_topology_ops import TOPOLOGY_OPERATIONS, edit_mesh_topology
+from .mesh_uv_ops import edit_uv, uv_fingerprint
+from .mesh_weight_ops import (
+    edit_weights,
+    group_schema_fingerprint,
+    weights_fingerprint,
+)
 from .structural_ops import session_identity
 from .transaction_model import Transaction
 
@@ -76,11 +83,21 @@ def _live_target(alias: str, obj: Any) -> dict[str, Any]:
         "expected_mesh_identity": session_identity("mesh", mesh),
         "expected_mesh_users": int(mesh.users),
         "expected_mesh_user_objects": [
-            {"object_name": name, "expected_object_identity": identity}
-            for name, identity in refs
+            {"object_name": name, "expected_object_identity": identity} for name, identity in refs
         ],
         "expected_mesh_fingerprint": mesh_fingerprint(mesh),
         "mesh_revision_id": mesh_revision_id(mesh),
+        "uv_fingerprint": uv_fingerprint(mesh),
+        "group_schema_fingerprint": group_schema_fingerprint(obj),
+        "weights_fingerprint": weights_fingerprint(mesh),
+    }
+
+
+def _attribute_target(target: dict[str, Any], *, data_scope: str = "OBJECT") -> dict[str, Any]:
+    return {
+        **_target_params(target, data_scope),
+        "expected_group_schema_fingerprint": target["group_schema_fingerprint"],
+        "expected_weights_fingerprint": target["weights_fingerprint"],
     }
 
 
@@ -235,6 +252,22 @@ def _preflight(
             _reserve(alias_kinds, step.get("separated_map_alias"), "component_map")
             topology_steps += 1
             capacity += 2
+        elif step_type in {"uv_edit", "weights_edit"}:
+            _require_alias(alias_kinds, step.get("target_alias"), "target")
+            operation = step.get("operation")
+            if not isinstance(operation, dict):
+                _batch_error("MESH_BATCH_INVALID", f"{step_type} requires operation")
+            if operation.get("selection_alias") is not None:
+                _require_alias(alias_kinds, operation.get("selection_alias"), "selection")
+            capacity += 1
+        elif step_type == "attribute_transfer":
+            _require_alias(alias_kinds, step.get("source_target_alias"), "target")
+            _require_alias(alias_kinds, step.get("target_alias"), "target")
+            transfer = step.get("transfer")
+            if not isinstance(transfer, dict):
+                _batch_error("MESH_BATCH_INVALID", "attribute_transfer requires transfer")
+            _require_alias(alias_kinds, transfer.get("target_selection_alias"), "selection")
+            capacity += 1
         elif step_type == "mesh_validate":
             _require_alias(alias_kinds, step.get("selection_alias"), "selection")
             if step.get("surface_alias") is not None:
@@ -243,9 +276,7 @@ def _preflight(
         else:
             _batch_error("MESH_BATCH_INVALID", f"Unsupported step type: {step_type}")
     if topology_steps > MAX_TOPOLOGY_STEPS:
-        _batch_error(
-            "MESH_BATCH_BUDGET_EXCEEDED", "A batch may contain at most 8 topology steps"
-        )
+        _batch_error("MESH_BATCH_BUDGET_EXCEEDED", "A batch may contain at most 8 topology steps")
     transaction.ensure_capacity(capacity)
     return {
         "targets": targets,
@@ -290,6 +321,59 @@ def _edit_operation(
     return result
 
 
+def _attribute_operation(
+    operation: dict[str, Any], selections: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    result = {key: value for key, value in operation.items() if key != "selection_alias"}
+    if operation.get("selection_alias") is not None:
+        result["selection_id"] = selections[str(operation["selection_alias"])]["selection_id"]
+    return result
+
+
+def _transfer_operation(
+    transfer: dict[str, Any], selections: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    result = {key: value for key, value in transfer.items() if key != "target_selection_alias"}
+    result["target_selection_id"] = selections[str(transfer["target_selection_alias"])][
+        "selection_id"
+    ]
+    return result
+
+
+def _rebind_target_selections_same_topology(
+    book: MeshResourceBook,
+    selections: dict[str, dict[str, Any]],
+    target_alias: str,
+    obj: Any,
+) -> list[dict[str, Any]]:
+    mesh = obj.data
+    reports = []
+    for alias, binding in selections.items():
+        if binding["target_alias"] != target_alias:
+            continue
+        source = book.selection(binding["selection_id"])
+        rebound = book.add_selection(
+            object_name=obj.name,
+            object_identity=session_identity("object", obj),
+            mesh_name=mesh.name,
+            mesh_identity=session_identity("mesh", mesh),
+            mesh_revision_id=mesh_revision_id(mesh),
+            mesh_fingerprint=mesh_fingerprint(mesh),
+            expected_users=int(mesh.users),
+            expected_user_objects=mesh_user_refs(mesh),
+            domain=source.domain,
+            indices=source.indices,
+            weights=source.weights,
+            source_query={
+                "type": "batch_attribute_rebound",
+                "source": source.selection_id,
+            },
+        )
+        binding["selection_id"] = rebound.selection_id
+        reports.append({"alias": alias, "selection": rebound.summary()})
+    return reports
+
+
 def _remap_target_selections(
     book: MeshResourceBook,
     selections: dict[str, dict[str, Any]],
@@ -322,9 +406,7 @@ def _append_map(
     target_state["direct_component_map_ids"].append(component_map_id)
     previous = target_state.get("composed_component_map_id")
     ids = (
-        [previous, component_map_id]
-        if previous
-        else target_state["direct_component_map_ids"][-2:]
+        [previous, component_map_id] if previous else target_state["direct_component_map_ids"][-2:]
     )
     if len(ids) < 2:
         return None
@@ -472,9 +554,9 @@ def execute_mesh_batch(
                     if step.get("map_alias") is not None:
                         maps[str(step["map_alias"])] = component_map_id
                 elif result.get("rebound_selection") is not None:
-                    selections[selection_alias]["selection_id"] = result[
-                        "rebound_selection"
-                    ]["selection_id"]
+                    selections[selection_alias]["selection_id"] = result["rebound_selection"][
+                        "selection_id"
+                    ]
                 created_aliases = step.get("created_selection_aliases") or {}
                 created = result.get("created_selections") or {}
                 for domain_key, alias in created_aliases.items():
@@ -507,6 +589,8 @@ def execute_mesh_batch(
                     "new_object_name": step["new_object_name"],
                     "collection_name": step.get("collection_name"),
                     "expected_collection_identity": step.get("expected_collection_identity"),
+                    "source_attribute_policy": step.get("source_attribute_policy", {}),
+                    "separated_attribute_policy": step.get("separated_attribute_policy", {}),
                 }
                 result = separate_mesh(transaction, book, call_params)
                 changed = True
@@ -553,8 +637,99 @@ def execute_mesh_batch(
                     "source_composed_component_map": source_composed,
                     "separated_composed_component_map": separated_composed,
                 }
+            elif step_type == "uv_edit":
+                target_alias = str(step["target_alias"])
+                operation = _attribute_operation(step["operation"], selections)
+                selection_alias = step["operation"].get("selection_alias")
+                if selection_alias is not None and (
+                    selections[str(selection_alias)]["target_alias"] != target_alias
+                ):
+                    _batch_error(
+                        "MESH_BATCH_TARGET_MISMATCH",
+                        f"Selection {selection_alias} does not belong to {target_alias}",
+                    )
+                target = targets[target_alias]
+                call_params = {
+                    **_target_params(target, str(step["data_scope"])),
+                    "transaction_id": transaction.transaction_id,
+                    "expected_uv_fingerprint": target["uv_fingerprint"],
+                    "operation": operation,
+                }
+                result = edit_uv(transaction, book, call_params)
+                changed = changed or bool(result.get("changed"))
+                obj = bpy.data.objects.get(target["object_name"])
+                if obj is None:
+                    _batch_error("MESH_BATCH_TARGET_MISMATCH", "UV target disappeared")
+                targets[target_alias] = _live_target(target_alias, obj)
+                remaps = (
+                    _rebind_target_selections_same_topology(book, selections, target_alias, obj)
+                    if result.get("changed")
+                    else []
+                )
+                report = {**result, "automatic_rebinds": remaps}
+            elif step_type == "weights_edit":
+                target_alias = str(step["target_alias"])
+                operation = _attribute_operation(step["operation"], selections)
+                selection_alias = step["operation"].get("selection_alias")
+                if selection_alias is not None and (
+                    selections[str(selection_alias)]["target_alias"] != target_alias
+                ):
+                    _batch_error(
+                        "MESH_BATCH_TARGET_MISMATCH",
+                        f"Selection {selection_alias} does not belong to {target_alias}",
+                    )
+                target = targets[target_alias]
+                call_params = {
+                    **_attribute_target(target, data_scope=str(step["data_scope"])),
+                    "transaction_id": transaction.transaction_id,
+                    "operation": operation,
+                }
+                result = edit_weights(transaction, book, call_params)
+                changed = changed or bool(result.get("changed"))
+                obj = bpy.data.objects.get(target["object_name"])
+                if obj is None:
+                    _batch_error("MESH_BATCH_TARGET_MISMATCH", "Weight target disappeared")
+                targets[target_alias] = _live_target(target_alias, obj)
+                report = result
+            elif step_type == "attribute_transfer":
+                source_alias = str(step["source_target_alias"])
+                target_alias = str(step["target_alias"])
+                transfer = _transfer_operation(step["transfer"], selections)
+                selection_alias = str(step["transfer"]["target_selection_alias"])
+                if selections[selection_alias]["target_alias"] != target_alias:
+                    _batch_error(
+                        "MESH_BATCH_TARGET_MISMATCH",
+                        f"Selection {selection_alias} does not belong to {target_alias}",
+                    )
+                source = targets[source_alias]
+                target = targets[target_alias]
+                result = transfer_attribute(
+                    transaction,
+                    book,
+                    {
+                        "transaction_id": transaction.transaction_id,
+                        "source": _attribute_target(source),
+                        "target": _attribute_target(
+                            target, data_scope=str(step["target_data_scope"])
+                        ),
+                        "transfer": transfer,
+                    },
+                )
+                changed = changed or bool(result.get("changed"))
+                obj = bpy.data.objects.get(target["object_name"])
+                if obj is None:
+                    _batch_error("MESH_BATCH_TARGET_MISMATCH", "Attribute target disappeared")
+                targets[target_alias] = _live_target(target_alias, obj)
+                remaps = (
+                    _rebind_target_selections_same_topology(book, selections, target_alias, obj)
+                    if result.get("changed") and transfer["type"] == "UV"
+                    else []
+                )
+                report = {**result, "automatic_rebinds": remaps}
             else:
                 selection_alias = str(step["selection_alias"])
+                target_alias = selections[selection_alias]["target_alias"]
+                target = targets[target_alias]
                 surface_alias = step.get("surface_alias")
                 validate_params = {
                     "selection_id": selections[selection_alias]["selection_id"],
@@ -566,6 +741,11 @@ def execute_mesh_batch(
                     "maximum_distance": step.get("maximum_distance", 1_000_000),
                     "threshold": step.get("threshold"),
                     "sample_limit": step.get("sample_limit", 64),
+                    "group_names": step.get("group_names"),
+                    "expected_group_schema_fingerprint": target["group_schema_fingerprint"],
+                    "expected_weights_fingerprint": target["weights_fingerprint"],
+                    "target_total": step.get("target_total", 1.0),
+                    "maximum_influences": step.get("maximum_influences", 4),
                 }
                 result = validate_mesh(book, validate_params)
                 _assert_validation(result, step.get("assertions", []))
@@ -602,10 +782,7 @@ def execute_mesh_batch(
         {alias: {"kind": "target", **target} for alias, target in sorted(targets.items())}
     )
     final_aliases.update(
-        {
-            alias: {"kind": "selection", **binding}
-            for alias, binding in sorted(selections.items())
-        }
+        {alias: {"kind": "selection", **binding} for alias, binding in sorted(selections.items())}
     )
     final_aliases.update(
         {

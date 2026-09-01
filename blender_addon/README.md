@@ -16,7 +16,7 @@ uv run --no-sync python scripts/build_addon.py
 ~~~
 
 The ignored output is written to
-`artifacts/blender-research-mcp-addon-0.13.1.zip`. Install that ZIP in Blender
+`artifacts/blender-research-mcp-addon-0.14.0.zip`. Install that ZIP in Blender
 4.2, then enable **Blender Research MCP**. The listener binds only to
 `127.0.0.1:9877`, creates a random per-session token, and publishes its
 ephemeral manifest under the current user's local application data directory.
@@ -33,13 +33,16 @@ Version 0.10 adds exact Modifier-stack inspection and transaction-scoped create,
 set, reorder, and deferred delete operations for Bevel, Subdivision, Solidify, and
 Boolean. Version 0.11 adds transaction-v4 exact base-Mesh inspection and one bounded
 component editor with reversible snapshots and explicit object/shared-data scope. It
-does not expose apply, UV editing, arbitrary BMesh/RNA, or component-array replacement.
+does not expose Modifier Apply, arbitrary BMesh/RNA, component-array replacement, or
+generic custom-attribute writes. UV and weight writes use their own typed tools.
 Version 0.12 adds revision-bound SelectionSets, evaluated SurfaceRefs, deformation, and
 validation. Version 0.13 adds one-revision ComponentMaps, exact SelectionSet remapping,
 and bounded subdivide, loop-cut, bisect, split, bridge, fill, and grid-fill operations.
 Version 0.13.1 adds exact ComponentMap composition, connected-face object separation,
 and closed declarative Mesh batches with invocation-local aliases, automatic remapping,
 validation assertions, and whole-transaction failure recovery.
+Version 0.14.0 adds exact UV-layer and deform-weight inspection/writes, isolated official
+unwrap/pack, attribute transfer and validation, and explicit topology migration policy.
 Captures can temporarily use solid, material, wireframe, or rendered shading and an
 absolute orbit while restoring the user's original context. Blender may be obscured by
 another window, but it must remain running with a `VIEW_3D`; minimized capture is not

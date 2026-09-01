@@ -65,6 +65,7 @@ from .material_authoring_ops import (
     load_image,
     material_result,
 )
+from .mesh_attribute_transfer_ops import transfer_attribute
 from .mesh_batch_ops import MeshBatchExecutionError, execute_mesh_batch
 from .mesh_component_map import (
     compose_component_map,
@@ -93,6 +94,15 @@ from .mesh_resource_model import MeshResourceBook, MeshResourceError
 from .mesh_separation_ops import separate_mesh
 from .mesh_surface_ops import prepare_surface, query_surface, validate_mesh
 from .mesh_topology_ops import TOPOLOGY_OPERATIONS, edit_mesh_topology
+from .mesh_uv_ops import edit_uv, inspect_uv
+from .mesh_weight_ops import (
+    adopt_weight_snapshots_for_native_save,
+    edit_weights,
+    finalize_weight_snapshots,
+    inspect_weights,
+    restore_weight_snapshots,
+    validate_weight_snapshot_guards,
+)
 from .modifier_ops import (
     adopt_modifier_delta_for_native_save,
     clear_modifier_pending_deletes,
@@ -142,6 +152,7 @@ from .transaction_model import (
     Transaction,
     TransactionBook,
     TransactionModelError,
+    WeightEditDelta,
     changed_context_paths,
     context_fingerprint,
     request_fingerprint,
@@ -161,6 +172,8 @@ CAPABILITIES = [
     "scene.inspect",
     "object.geometry.inspect",
     "mesh.inspect",
+    "mesh.uv.inspect",
+    "mesh.weights.inspect",
     "mesh.selection.query",
     "mesh.selection.derive",
     "mesh.selection.inspect",
@@ -193,6 +206,9 @@ CAPABILITIES = [
     "modifier.move",
     "modifier.delete",
     "mesh.edit",
+    "mesh.uv.edit",
+    "mesh.weights.edit",
+    "mesh.attribute.transfer",
     "mesh.separate",
     "mesh.batch.execute",
     "shape_key.set_value",
@@ -219,7 +235,7 @@ CAPABILITY_VERSIONS = {
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 8,
+    "transactions": 9,
     "object_transform_scale": 1,
     "object_transform": 1,
     "object_settings": 1,
@@ -233,14 +249,17 @@ CAPABILITY_VERSIONS = {
     "object_visibility": 1,
     "modifier_state": 1,
     "modifier_authoring": 1,
-    "mesh_topology": 3,
+    "mesh_topology": 4,
     "mesh_selection": 1,
     "mesh_surface_query": 1,
     "mesh_deformation": 1,
-    "mesh_validation": 1,
+    "mesh_validation": 2,
     "mesh_component_map": 2,
-    "mesh_separation": 1,
-    "mesh_batch": 1,
+    "mesh_separation": 2,
+    "mesh_batch": 2,
+    "mesh_uv": 1,
+    "mesh_weights": 1,
+    "mesh_attribute_transfer": 1,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -262,6 +281,9 @@ MUTATION_COMMANDS = {
     "modifier.move",
     "modifier.delete",
     "mesh.edit",
+    "mesh.uv.edit",
+    "mesh.weights.edit",
+    "mesh.attribute.transfer",
     "mesh.separate",
     "mesh.batch.execute",
     "shape_key.set_value",
@@ -766,9 +788,7 @@ class AddonState:
                 )
                 viewport.space.lens = min(250.0, float(viewport.space.lens) + 7.0)
                 viewport.space.shading.type = shading
-                viewport.space.overlay.show_overlays = bool(
-                    params.get("show_overlays", False)
-                )
+                viewport.space.overlay.show_overlays = bool(params.get("show_overlays", False))
                 if active_name is not None:
                     for obj in viewport.window.view_layer.objects:
                         obj.select_set(False)
@@ -917,6 +937,44 @@ class AddonState:
                 raise MeshOperationError("MESH_PAGINATION_INVALID", "limit must be an integer")
             with self.suppress_generation():
                 result = inspect_mesh(object_name, component, offset, limit)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.uv.inspect":
+            object_name = params.get("object_name")
+            if not isinstance(object_name, str) or not object_name:
+                raise MeshOperationError("OBJECT_NAME_INVALID", "object_name must be non-empty")
+            layer_name = params.get("layer_name")
+            if layer_name is not None and (not isinstance(layer_name, str) or not layer_name):
+                raise MeshOperationError(
+                    "MESH_UV_LAYER_NAME_INVALID", "layer_name must be non-empty or null"
+                )
+            with self.suppress_generation():
+                result = inspect_uv(
+                    object_name,
+                    layer_name,
+                    str(params.get("component", "SUMMARY")),
+                    int(params.get("offset", 0)),
+                    int(params.get("limit", 256)),
+                )
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.weights.inspect":
+            object_name = params.get("object_name")
+            if not isinstance(object_name, str) or not object_name:
+                raise MeshOperationError("OBJECT_NAME_INVALID", "object_name must be non-empty")
+            group_name = params.get("group_name")
+            if group_name is not None and (not isinstance(group_name, str) or not group_name):
+                raise MeshOperationError(
+                    "MESH_WEIGHT_GROUP_NAME_INVALID", "group_name must be non-empty or null"
+                )
+            with self.suppress_generation():
+                result = inspect_weights(
+                    object_name,
+                    group_name,
+                    str(params.get("component", "SUMMARY")),
+                    int(params.get("offset", 0)),
+                    int(params.get("limit", 256)),
+                )
             result["scene_generation"] = self.scene_generation
             return result
         if command == "mesh.selection.query":
@@ -1246,6 +1304,63 @@ class AddonState:
                 }
             )
             return result
+        if command == "mesh.uv.edit":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            with self.suppress_generation():
+                result = edit_uv(transaction, self.mesh_resources, params)
+                bpy.context.view_layer.update()
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
+        if command == "mesh.weights.edit":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            with self.suppress_generation():
+                result = edit_weights(transaction, self.mesh_resources, params)
+                bpy.context.view_layer.update()
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
+        if command == "mesh.attribute.transfer":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            with self.suppress_generation():
+                result = transfer_attribute(transaction, self.mesh_resources, params)
+                bpy.context.view_layer.update()
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
         if command == "mesh.separate":
             transaction = self._require_transaction(params, request)
             self._validate_transaction_guards(transaction)
@@ -1458,6 +1573,7 @@ class AddonState:
                     item = finalize_modifier_delta(delta)
                     if item is not None:
                         finalized.append(item)
+                finalized.extend(finalize_weight_snapshots(transaction))
                 finalized.extend(finalize_mesh_snapshots(transaction))
                 for delta in transaction.structural_deltas():
                     item = finalize_structural_delta(delta)
@@ -1501,6 +1617,7 @@ class AddonState:
                 item = finalize_modifier_delta(delta)
                 if item is not None:
                     finalized.append(item)
+            finalized.extend(finalize_weight_snapshots(transaction))
             finalized.extend(finalize_mesh_snapshots(transaction))
             for delta in transaction.structural_deltas():
                 item = finalize_structural_delta(delta)
@@ -1536,6 +1653,7 @@ class AddonState:
                             "finalized_native_save"
                         )
                 adopted.extend(adopt_mesh_snapshots_for_native_save(transaction))
+                adopted.extend(adopt_weight_snapshots_for_native_save(transaction))
                 for delta in transaction.structural_deltas():
                     item = adopt_structural_delta_for_native_save(delta)
                     if item is not None:
@@ -1921,6 +2039,7 @@ class AddonState:
                 )
         validate_modifier_stack_guards(transaction)
         validate_mesh_snapshot_guards(transaction)
+        validate_weight_snapshot_guards(transaction)
         validate_structural_transaction(transaction)
 
     def _set_object_settings(
@@ -2515,10 +2634,13 @@ class AddonState:
             bpy.context.view_layer.update()
             validate_restored_modifier_stacks(transaction)
             restored.extend(restore_mesh_snapshots(transaction))
+            restored.extend(restore_weight_snapshots(transaction))
             for delta in reversed(transaction.deltas):
                 if isinstance(delta, modifier_delta_types):
                     continue
                 if isinstance(delta, MeshEditDelta):
+                    continue
+                if isinstance(delta, WeightEditDelta):
                     continue
                 if isinstance(delta, StructuralDelta):
                     restored.append(restore_structural_delta(delta))

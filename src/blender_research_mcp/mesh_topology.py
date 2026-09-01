@@ -15,6 +15,14 @@ ComponentMapDomain = Literal["SUMMARY", "VERTEX", "EDGE", "FACE"]
 ComponentMapDirection = Literal["FORWARD", "REVERSE", "CREATED", "DELETED"]
 SelectionRemapMode = Literal["ALL_MAPPED", "EXACT_SURVIVORS", "STRICT"]
 WeightMergeMode = Literal["MAX", "AVERAGE"]
+AttributeMigrationMode = Literal["PRESERVE_INTERPOLATE", "ERROR_IF_PRESENT", "DISCARD"]
+
+
+class MeshAttributePolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    uv: AttributeMigrationMode = "PRESERVE_INTERPOLATE"
+    weights: AttributeMigrationMode = "PRESERVE_INTERPOLATE"
 
 
 class SubdivideOperation(BaseModel):
@@ -27,6 +35,7 @@ class SubdivideOperation(BaseModel):
     smooth_falloff: Literal["LINEAR", "SMOOTH"] = "SMOOTH"
     quad_corner: Literal["STRAIGHT_CUT", "INNER_VERT", "PATH", "FAN"] = "STRAIGHT_CUT"
     use_grid_fill: StrictBool = False
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
 class LoopCutOperation(BaseModel):
@@ -37,6 +46,7 @@ class LoopCutOperation(BaseModel):
     cuts: Annotated[StrictInt, Field(ge=1, le=32)] = 1
     interpolation: Literal["LINEAR", "PATH", "SURFACE"] = "LINEAR"
     smooth: FiniteNumber = Field(default=0, ge=0, le=1)
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
 class BisectOperation(BaseModel):
@@ -50,6 +60,7 @@ class BisectOperation(BaseModel):
     tolerance: FiniteNumber = Field(default=1e-6, ge=0, le=1)
     snap_to_plane: StrictBool = False
     clear_side: Literal["NONE", "POSITIVE", "NEGATIVE"] = "NONE"
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
     @model_validator(mode="after")
     def nonzero_normal(self) -> BisectOperation:
@@ -63,6 +74,7 @@ class SplitOperation(BaseModel):
 
     type: Literal["split"]
     selection_id: SelectionId
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
 class BridgeOperation(BaseModel):
@@ -73,6 +85,7 @@ class BridgeOperation(BaseModel):
     twist_offset: Annotated[StrictInt, Field(ge=-4096, le=4096)] = 0
     material_slot_index: Annotated[StrictInt, Field(ge=0, le=63)] | None = None
     smooth: StrictBool = False
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
 class FillOperation(BaseModel):
@@ -84,6 +97,7 @@ class FillOperation(BaseModel):
     max_sides: Annotated[StrictInt, Field(ge=0, le=1024)] = 0
     material_slot_index: Annotated[StrictInt, Field(ge=0, le=63)] | None = None
     smooth: StrictBool = False
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
 class GridFillOperation(BaseModel):
@@ -94,6 +108,7 @@ class GridFillOperation(BaseModel):
     use_interp_simple: StrictBool = False
     material_slot_index: Annotated[StrictInt, Field(ge=0, le=63)] | None = None
     smooth: StrictBool = False
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
 TopologyOperation = (
