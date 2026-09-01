@@ -408,6 +408,19 @@ def bind_rig(transaction: Transaction, params: dict[str, Any]) -> dict[str, Any]
             obj.matrix_parent_inverse.identity()
             obj.matrix_basis = basis
         bpy.context.view_layer.update()
+        object_identity = session_identity("object", obj)
+        if transaction.tracks_object_transform(obj.name, object_identity):
+            transaction.refresh_object_transform(
+                obj.name,
+                object_identity,
+                {
+                    "location": dict(zip("xyz", map(float, obj.location), strict=True)),
+                    "rotation_euler": dict(
+                        zip("xyz", map(float, obj.rotation_euler), strict=True)
+                    ),
+                    "scale": dict(zip("xyz", map(float, obj.scale), strict=True)),
+                },
+            )
         after_object_fingerprint = structure_fingerprint("object", obj)
         changed = before_object_fingerprint != after_object_fingerprint
         if not changed:

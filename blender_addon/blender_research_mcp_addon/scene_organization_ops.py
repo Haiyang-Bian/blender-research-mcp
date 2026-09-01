@@ -474,6 +474,19 @@ def change_object_parent(
     before = _parent_state(child)
     try:
         _apply_parent(child, parent, transform_mode)
+        child_identity = session_identity("object", child)
+        if transaction.tracks_object_transform(child.name, child_identity):
+            transaction.refresh_object_transform(
+                child.name,
+                child_identity,
+                {
+                    "location": dict(zip("xyz", map(float, child.location), strict=True)),
+                    "rotation_euler": dict(
+                        zip("xyz", map(float, child.rotation_euler), strict=True)
+                    ),
+                    "scale": dict(zip("xyz", map(float, child.scale), strict=True)),
+                },
+            )
         refresh_structure_guard_if_present(transaction, "object", child)
         after_guards = [make_structure_guard("object", child)]
         if protected_parent is not child:

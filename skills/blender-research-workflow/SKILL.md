@@ -149,6 +149,15 @@ organization changes. Prefer `mesh.batch.execute` v3 when materialize, catalog, 
 organization, and rig binding form one atomic assembly chain; review its response-only
 assembly manifest and never treat it as persistent project metadata.
 
+When an editable template lives in an external local `.blend`, inspect its SHA-bound
+Library catalog first and append one exact Object, Collection, or Mesh root as local
+data. Use `mesh.materialize` instead when the source already exists in the current
+scene. After append, align the object before creating SelectionSets or SurfaceRefs;
+fit only visible high-confidence anchors and preserve the template/cage prior where
+source geometry is hidden. Keep weight transfer and `rig.bind` as separately verified
+steps. Prefer batch v4 when append, alignment, dynamic surfaces, fitting, organization,
+weights and binding must succeed or roll back as one chain.
+
 ## Ground image evidence
 
 Use a successful capture's own `capture_id` when mapping normalized top-left image

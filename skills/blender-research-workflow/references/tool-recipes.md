@@ -483,6 +483,43 @@ Use this recipe with `mesh_component_catalog: 1`, `collection_authoring: 1`,
    `MESH_BATCH_RESTORE_FAILED`; native save still accepts the complete visible state in
    actual Blender main-thread order.
 
+## Controlled Library templates and coverage batches
+
+Use this recipe with `library_inspection: 1`, `library_append: 1`, `mesh_batch: 4`,
+and `transactions >= 12`:
+
+1. Call `library.inspect` on one exact absolute `.blend`. Retain file SHA-256, size,
+   entry type/name, and `entry_identity`. Catalog inspection is read-only; any file
+   evidence change requires a new inspection.
+2. Begin a transaction and append one exact Object, Collection, or Mesh root. Supply
+   current destination Collection or Scene-root evidence and a unique exact root name.
+   Never accept an automatic `.001` root or reinterpret a different entry with the old
+   identity.
+3. Review `created_ids`, dependency counts, identities and fingerprints. The output is
+   local editable data, not a Library Link or Override. Stop on scripted/animated data,
+   constraints, Geometry Nodes, nested Library, unsupported ID, or closure budget errors.
+4. For one atomic template workflow, bind a SHA/size `library` input in batch v4. Use
+   `library_append`, register only declared root/export aliases, apply bounded alignment
+   with `object_set`, and create BASE/EVALUATED dynamic evidence with
+   `mesh_surface_prepare` after the final alignment.
+5. Discover visible anchors through SelectionSet queries; do not hard-code all target
+   indices. Fit anchors with project/shrinkwrap/relax, retain the original cage prior in
+   hidden areas, then transfer bounded UV/weights and call `rig.bind` separately.
+6. Validate boundary distance, p95/maximum distance, penetration, target intersection,
+   non-manifold, degeneracy, self-intersection and weight constraints. Treat unreliable
+   signed distance as unsigned evidence plus explicit intersection counts.
+7. Review `assembly_manifest.libraries`, entry identities, dependency closure, target
+   evidence, SurfaceRefs, selections, weights, binding and validations. The manifest is
+   response evidence only and is not stored as project custom properties.
+8. Runtime failure rolls back the entire active transaction. On
+   `LIBRARY_DATA_CONFLICT` or `LIBRARY_APPEND_RESTORE_FAILED`, preserve the user's state,
+   stop writes and re-inspect. Native save adopts the visible append/batch state and
+   ends later Agent writes as usual.
+
+Use `mesh.materialize`, not Library append, for an object already present in the active
+scene. A template supplies prior geometry; it is never evidence that an occluded source
+surface was recovered.
+
 ## Revision-bound selection and evaluated-surface fitting
 
 Use this recipe with `mesh_selection: 1`, `mesh_surface_query: 1`,
@@ -648,6 +685,15 @@ requested scope before `allow_shared=true`.
 - `MESH_SELECTION_REMAP_INCOMPLETE`: use a non-strict mode only when deleted sources
   are acceptable to the requested result. Otherwise stop and inspect forward/deleted
   pages before continuing.
+- `LIBRARY_FILE_CHANGED`, `LIBRARY_ENTRY_IDENTITY_MISMATCH`, or
+  `MESH_BATCH_LIBRARY_REFERENCE_INVALID`: discard the file/entry aliases and repeat
+  `library.inspect`; never mix evidence from two file revisions.
+- `LIBRARY_DEPENDENCY_UNSUPPORTED` or `LIBRARY_SCRIPTED_DATA_UNSUPPORTED`: choose a
+  static bounded template root or clean the source Library explicitly; do not bypass
+  the rejection with Link, Override, arbitrary scripts, or whole-file append.
+- `LIBRARY_DATA_CONFLICT` or `LIBRARY_APPEND_RESTORE_FAILED`: preserve the user's
+  current appended resources, stop all Agent writes, and inspect the transaction and
+  created-ID closure before deciding on manual cleanup.
 - Invalid ring/boundary, lineage-generation, topology-budget, or topology-restore
   errors require a fresh bounded selection or a different semantic operation; do not
   bypass them with arbitrary BMesh/operator/RNA parameters.

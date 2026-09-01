@@ -5,53 +5,63 @@ in this order when starting a new implementation task:
 
 1. [Design and handoff](design.md) — architecture, safety boundaries, implemented
    phases, and open decisions.
-2. [0.15.1 ComponentCatalog and cross-object assembly roadmap](roadmap/0.15.1-component-catalog-assembly.md)
+   - [Post-0.16 model-editing completeness direction](requirements/model-editing-completeness.md)
+     — accepted 0.17–0.20 capability sequence.
+   - [0.17.0 cross-object Mesh composition roadmap](roadmap/0.17.0-cross-object-mesh-composition.md)
+     — next implementation plan for exact join, lineage branches, and seam welding.
+   - [Cross-object Mesh composition decision](decisions/0019-cross-object-mesh-composition.md)
+     — planned transaction-v13 Mesh-domain authority.
+2. [0.16.0 controlled Library and template coverage roadmap](roadmap/0.16.0-library-template-coverage.md)
+   — accepted local Library evidence, transactional append, and batch-v4 direction.
+3. [Controlled Library and template coverage decision](decisions/0018-controlled-library-template-coverage.md)
+   — transaction-v12 asset-ingress and template-prior boundary.
+4. [0.15.1 ComponentCatalog and cross-object assembly roadmap](roadmap/0.15.1-component-catalog-assembly.md)
    — accepted compact component, scene organization, and batch-v3 authority.
-3. [ComponentCatalog and cross-object assembly decision](decisions/0017-component-catalogs-and-cross-object-assembly.md)
+5. [ComponentCatalog and cross-object assembly decision](decisions/0017-component-catalogs-and-cross-object-assembly.md)
    — transaction-v11 resource, organization, and response-manifest boundary.
-4. [0.15.0 modular character materialization roadmap](roadmap/0.15.0-modular-character-materialization.md)
+6. [0.15.0 modular character materialization roadmap](roadmap/0.15.0-modular-character-materialization.md)
    — accepted materialize, extract, and rig-binding authority.
-5. [Materialized Mesh modules and rig binding decision](decisions/0016-materialized-mesh-modules-and-rig-binding.md)
+7. [Materialized Mesh modules and rig binding decision](decisions/0016-materialized-mesh-modules-and-rig-binding.md)
    — explicit evaluation modes and transaction-v10 assembly boundary.
-6. [0.14.0 UV and skin-weight roadmap](roadmap/0.14.0-uv-and-skin-weights.md)
+8. [0.14.0 UV and skin-weight roadmap](roadmap/0.14.0-uv-and-skin-weights.md)
    — validated attribute ownership, migration, and validation baseline.
-7. [UV and skin-weight decision](decisions/0015-uv-and-skin-weight-authority.md)
+9. [UV and skin-weight decision](decisions/0015-uv-and-skin-weight-authority.md)
    — isolated unwrap, deform-data ownership, and transaction-v9 semantics.
-8. [0.13.1 separation and Mesh-batch roadmap](roadmap/0.13.1-mesh-separation-batches.md)
+10. [0.13.1 separation and Mesh-batch roadmap](roadmap/0.13.1-mesh-separation-batches.md)
    — validated branch lineage and declarative execution boundary.
-9. [Separated-branch and batch decision](decisions/0014-separated-mesh-branches-and-declarative-batches.md)
+11. [Separated-branch and batch decision](decisions/0014-separated-mesh-branches-and-declarative-batches.md)
    — composed maps, transaction-v8 separation, and all-or-nothing batch semantics.
-10. [0.13.0 topology and ComponentMap roadmap](roadmap/0.13.0-topology-component-maps.md)
+12. [0.13.0 topology and ComponentMap roadmap](roadmap/0.13.0-topology-component-maps.md)
    — validated one-revision topology lineage and acceptance gate.
-11. [0.12.0 SelectionSet and surface-fitting roadmap](roadmap/0.12.0-selection-surface-fitting.md)
+13. [0.12.0 SelectionSet and surface-fitting roadmap](roadmap/0.12.0-selection-surface-fitting.md)
    — validated selection, surface resource, and deformation baseline.
-12. [Modular character surface requirements](requirements/modular-character-surface.md)
+14. [Modular character surface requirements](requirements/modular-character-surface.md)
    — accepted materialize, disconnected extraction, rig binding, and template direction.
-13. [General Mesh authoring requirements](requirements/general-mesh-authoring.md) —
+15. [General Mesh authoring requirements](requirements/general-mesh-authoring.md) —
    long-term selection, topology, attribute, Shape-Key, and validation direction.
-14. [Using Blender Research MCP](usage.md) — current operator workflow and error
+16. [Using Blender Research MCP](usage.md) — current operator workflow and error
    recovery.
-15. [Topology lineage decision](decisions/0013-revision-aware-topology-lineage.md) —
+17. [Topology lineage decision](decisions/0013-revision-aware-topology-lineage.md) —
    one-revision ComponentMap and transaction-v7 boundary.
-16. [Selection and evaluated-surface decision](decisions/0012-revision-bound-selection-and-surface-resources.md)
+18. [Selection and evaluated-surface decision](decisions/0012-revision-bound-selection-and-surface-resources.md)
    — revision resource and transaction-v6 boundary.
-17. [Collaborative UI and native-save authority](decisions/0011-collaborative-ui-and-native-save-authority.md)
+19. [Collaborative UI and native-save authority](decisions/0011-collaborative-ui-and-native-save-authority.md)
    — transaction-v5 user intent and main-thread ordering.
-18. [0.11.0 semantic Mesh editing roadmap](roadmap/0.11.0-semantic-mesh-editing.md) —
+20. [0.11.0 semantic Mesh editing roadmap](roadmap/0.11.0-semantic-mesh-editing.md) —
    exact base-Mesh pages, snapshot guards, shared scopes, and bounded topology edits.
-19. [0.10.0 Modifier authoring roadmap](roadmap/0.10.0-modifier-authoring.md) — typed
+21. [0.10.0 Modifier authoring roadmap](roadmap/0.10.0-modifier-authoring.md) — typed
    inspection, stack guards, four Modifier families, and comparison.
-20. [0.9.0 unified object settings roadmap](roadmap/0.9.0-unified-object-settings.md) —
+22. [0.9.0 unified object settings roadmap](roadmap/0.9.0-unified-object-settings.md) —
    typed object, Light, Camera, and comparison settings.
-21. [0.8.0 semantic scene authoring roadmap](roadmap/0.8.0-semantic-scene-authoring.md) —
+23. [0.8.0 semantic scene authoring roadmap](roadmap/0.8.0-semantic-scene-authoring.md) —
    structural transactions, objects, materials, local images, World/Camera, and renders.
-22. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
+24. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
    launch, project switching, implementation, and completed live evidence.
-23. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
+25. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
    implemented and live-validated comparison contract.
-24. [Architecture decisions](decisions/README.md) — accepted protocol and authority
+26. [Architecture decisions](decisions/README.md) — accepted protocol and authority
    decisions.
-25. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
+27. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
 
 ## Current release
 
@@ -85,13 +95,29 @@ full `test-model.blend` gates passed; see the
 It does not authorize Shape-Key structure editing or Modifier Apply. See the
 [modular character surface requirements](requirements/modular-character-surface.md).
 
-Version 0.15.1 is the current implementation milestone. It adds compact revision-bound
+Version 0.15.1 is the previous validated milestone. It adds compact revision-bound
 ComponentCatalogs, exact Collection/object-parent organization, and cross-object
 `mesh.batch.execute` v3 without adding persistent project metadata. See the
 [0.15.1 roadmap](roadmap/0.15.1-component-catalog-assembly.md) and
 [decision 0017](decisions/0017-component-catalogs-and-cross-object-assembly.md). The
 automated and Blender 4.2.23 gates are recorded in
 [the 0.15.1 validation record](validation/2026-09-01-component-catalog-assembly.md).
+
+Version 0.16.0 is the current validated milestone. It adds SHA-bound local
+Library inspection, transactionally guarded local-data append, and batch-v4 template
+coverage composition. See the
+[0.16 roadmap](roadmap/0.16.0-library-template-coverage.md) and
+[decision 0018](decisions/0018-controlled-library-template-coverage.md). The automated,
+deterministic Blender, and `test-model.blend` coverage gates are recorded in
+[the 0.16 validation record](validation/2026-09-01-library-template-coverage.md).
+
+Version 0.17.0 is the next planned milestone. It will add read-only join preflight,
+transactional independent Mesh composition, one exact JOIN_BRANCH map per source,
+explicit SelectionSet-based seam welding, and batch v5. It deliberately precedes
+Shape-Key, bone-authoring, and Modifier-Apply authority. See the
+[0.17 roadmap](roadmap/0.17.0-cross-object-mesh-composition.md),
+[decision 0019](decisions/0019-cross-object-mesh-composition.md), and the
+[post-0.16 completeness direction](requirements/model-editing-completeness.md).
 
 Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
 SurfaceRefs, topology-preserving surface deformation, and quantitative Mesh validation;

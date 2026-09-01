@@ -312,7 +312,9 @@ mesh.materialize
 mesh.extract
 rig.inspect
 rig.bind
-object.join
+mesh.join.preflight
+mesh.join
+mesh.edit(weld_vertices)
 modifier.apply
 ```
 
@@ -325,6 +327,11 @@ Mesh 对象，同时报告丢失或烘焙的依赖。它不修改源对象，也
 和提取侧的精确 ComponentMap。`rig.bind` 只装配现有权重与 Armature；权重生成和迁移
 继续由独立的权重工具负责。详细要求见
 [模块化角色表面需求](modular-character-surface.md)。
+
+0.17 将跨对象合成归入 Mesh 领域，而不是复刻依赖 selection/active-object 的 Blender
+Object Join operator。`mesh.join` 创建独立输出并为每个输入返回一条 JOIN_BRANCH
+lineage；`weld_vertices` 只合并显式 SelectionSet 与距离规则接受的边界。材质、UV、
+权重、颜色、Shape Key、Modifier 和自定义法线均使用明确的合并、丢弃或拒绝策略。
 
 修改器应逐步支持 Shrinkwrap、Mirror、Lattice、Data Transfer、Surface Deform 和 Multiresolution，而不局限于当前的 Bevel、Subdivision、Solidify 和 Boolean。
 
@@ -421,7 +428,17 @@ mesh.intersection
 Shape Key 结构编辑、重映射和迁移是后续独立阶段，不与创建无 Shape Key 工作副本的
 materialize 混为同一授权。
 
-### 阶段 D：重拓扑与高精度生产
+### 阶段 D：跨对象合成、Shape Key 与骨架结构
+
+- 多 Mesh 对象 join 与显式接缝 weld；
+- Shape Key 结构写入、重映射和迁移；
+- Armature 与 Edit Bone 创作；
+- 受控 Modifier Apply 与 lineage 证据。
+
+这一阶段按 0.17–0.20 依次实施；每项都必须在上一层的 topology/attribute evidence
+通过真实 Blender 验收后再扩大权限。
+
+### 阶段 E：重拓扑与高精度生产
 
 - 通用 remesh/retopology；
 - 对称、镜像和拓扑模板；

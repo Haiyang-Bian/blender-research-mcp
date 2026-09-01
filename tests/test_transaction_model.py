@@ -122,6 +122,39 @@ def test_transaction_book_is_single_owner_and_tracks_expected_properties() -> No
     }
 
 
+def test_later_agent_parenting_refreshes_prior_transform_guards() -> None:
+    model = load_transaction_model()
+    transaction = model.Transaction(
+        transaction_id="tx",
+        label=None,
+        context_snapshot={},
+        context_fingerprint="context",
+        started_generation=1,
+    )
+    delta = model.ObjectTransformDelta(
+        "Template",
+        "object:template",
+        {"rotation_euler": {"z": 0.0}},
+        {"rotation_euler": {"z": 0.20943951023931956}},
+    )
+    transaction.record(delta)
+
+    assert transaction.tracks_object_transform("Template", "object:template") is True
+    assert transaction.tracks_object_transform("Other", "object:other") is False
+
+    transaction.refresh_object_transform(
+        "Template",
+        "object:template",
+        {
+            "location": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "rotation_euler": {"x": 0.0, "y": 0.0, "z": 0.20943953096866608},
+            "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
+        },
+    )
+
+    assert delta.after["rotation_euler"]["z"] == 0.20943953096866608
+
+
 def test_transaction_terminal_state_keeps_native_save_details() -> None:
     model = load_transaction_model()
     book = model.TransactionBook()

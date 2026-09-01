@@ -1,9 +1,10 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.15.1 ComponentCatalog and cross-object modular assembly
-- Current milestone: 0.15.1 transaction-v11 catalog, organization, and batch v3
+- Status: 0.16.0 controlled Library and template coverage validated
+- Current milestone: 0.16.0 transaction-v12 local Library append and batch v4 accepted
+- Next milestone: 0.17.0 exact cross-object Mesh composition and seam welding
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.15.1
+- Package and add-on version: 0.16.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,11 +13,18 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.15.1 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.16.0 now covers
 the validated observation/lifecycle/static-authoring path, unified typed object,
 Light, and Camera settings, four bounded non-destructive Modifier families, and exact
 base-Mesh component editing with transaction snapshots; the older bridge is no longer
 the primary interface for this repository.
+
+The 0.16 direction adds exact local Library inspection and guarded append as the final
+general asset-ingress primitive needed by template-based coverage. A template supplies
+geometry which is absent from the evaluated source; it is not evidence that hidden
+original anatomy was reconstructed. Fitting remains an explicit composition of
+SelectionSets, SurfaceRefs, bounded deformation, attribute transfer, rig binding, and
+validation rather than a role-specific character command.
 
 That shape creates a poor long-running LookDev loop:
 
@@ -444,9 +452,12 @@ the bridge does not claim to reconstruct undisclosed source geometry. Component
 catalogs, Collection organization, and cross-object batches are the implemented 0.15.1
 authority. Catalogs are session-local revision evidence, and batch manifests are
 returned to callers rather than stored as project custom properties. Bounded
-library append and template workflows follow in 0.16. Shape-Key structure writes and
-Modifier Apply remain separate later authorities. See
-`docs/requirements/modular-character-surface.md`.
+controlled Library append and template workflows are implemented in 0.16. Shape-Key
+structure writes and Modifier Apply remain separate later authorities. See
+`docs/requirements/modular-character-surface.md`. The next authority is not another
+role-specific workflow: 0.17 composes exact Mesh-object inputs into one independent
+base Mesh, returns one lineage branch per source, and welds only explicitly selected
+boundaries. See `docs/requirements/model-editing-completeness.md`.
 
 Tool count is not a success metric. A small composable surface with precise
 preconditions is preferable to dozens of overlapping convenience tools.
@@ -645,6 +656,34 @@ Status: implemented and validated in 0.15.1; see
 - Return a hashed assembly manifest as response evidence without writing persistent
   project-specific metadata.
 
+### Phase 12 — controlled Library and template coverage
+
+- Inspect exact absolute `.blend` catalogs under streamed SHA/size evidence.
+- Append one bounded Object, Collection, or Mesh root as local editable data.
+- Reject scripted, animated, linked, override, constraint and Geometry-Nodes closures.
+- Compose append, typed object alignment, dynamic SurfaceRefs, fitting, attribute
+  transfer, organization, rig binding and validation through batch v4.
+- Retain hidden-region template/cage priors instead of claiming reconstruction of
+  geometry that the evaluated source does not contain.
+
+Completed on Blender 4.2.23 LTS with deterministic Library fixtures and a temporary
+`test-model.blend` copy; see
+`docs/validation/2026-09-01-library-template-coverage.md`.
+
+### Phase 13 — cross-object Mesh composition
+
+Status: accepted for 0.17.0 planning; implementation not started.
+
+- Preflight and join 2–32 exact BASE Mesh-object inputs into one independent output.
+- Reconcile material, UV, color and weight schemas only through explicit policies.
+- Return one partial JOIN_BRANCH ComponentMap per source instead of inventing a
+  synthetic source Mesh.
+- Weld revision-bound boundary SelectionSets as a separate deterministic topology
+  operation.
+- Compose join and weld through batch v5 with guarded source retention or deletion.
+
+See `docs/roadmap/0.17.0-cross-object-mesh-composition.md` and decision 0019.
+
 ## 10. Acceptance criteria for the first milestone
 
 Completed on Blender 4.2.23 LTS; see the validation record under `docs/validation`.
@@ -691,6 +730,10 @@ research scenarios.
   evidence without exposing arbitrary Mesh arrays.
 - How a later Shape-Key migration authority should preserve relative-key graphs,
   drivers, masks, and animation without being conflated with 0.15 materialization.
+- Which exact rest-pose and coordinate contracts 0.19 bone authoring should use before
+  pose or animation authority is considered.
+- How 0.20 Modifier Apply should report lineage when a supported Modifier changes
+  topology, and when it must explicitly return lineage unavailable.
 - Blender 5.x capability policy and the project license; decide both before publishing.
 
 ## 13. Guidance for a new Codex task

@@ -35,6 +35,7 @@ from .context_ops import (
     restore_context,
 )
 from .generation import has_persistent_scene_update
+from .library_ops import append_library, inspect_library
 from .lookdev_model import LookdevModelError, normalize_material_value
 from .lookdev_ops import (
     inspect_material,
@@ -186,6 +187,7 @@ CAPABILITIES = [
     "object.inspect",
     "scene.inspect",
     "collection.inspect",
+    "library.inspect",
     "object.geometry.inspect",
     "mesh.inspect",
     "mesh.uv.inspect",
@@ -219,6 +221,7 @@ CAPABILITIES = [
     "object.create",
     "object.duplicate",
     "object.delete",
+    "library.append",
     "collection.create",
     "collection.link_object",
     "collection.unlink_object",
@@ -265,7 +268,7 @@ CAPABILITY_VERSIONS = {
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 11,
+    "transactions": 12,
     "object_transform_scale": 1,
     "object_transform": 1,
     "object_settings": 1,
@@ -287,7 +290,7 @@ CAPABILITY_VERSIONS = {
     "mesh_component_map": 3,
     "mesh_component_catalog": 1,
     "mesh_separation": 2,
-    "mesh_batch": 3,
+    "mesh_batch": 4,
     "mesh_uv": 1,
     "mesh_weights": 1,
     "mesh_attribute_transfer": 1,
@@ -296,6 +299,8 @@ CAPABILITY_VERSIONS = {
     "rig_binding": 1,
     "collection_authoring": 1,
     "object_parenting": 1,
+    "library_inspection": 1,
+    "library_append": 1,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -310,6 +315,7 @@ MUTATION_COMMANDS = {
     "object.create",
     "object.duplicate",
     "object.delete",
+    "library.append",
     "collection.create",
     "collection.link_object",
     "collection.unlink_object",
@@ -970,6 +976,11 @@ class AddonState:
                     "COLLECTION_PAGINATION_INVALID", "limit must be an integer"
                 )
             return inspect_collection(name, offset, limit)
+        if command == "library.inspect":
+            with self.suppress_generation():
+                result = inspect_library(params)
+            result["scene_generation"] = self.scene_generation
+            return result
         if command == "object.geometry.inspect":
             object_name = params.get("object_name")
             if not isinstance(object_name, str) or not object_name:
@@ -1366,6 +1377,21 @@ class AddonState:
             result = organization_result(
                 transaction, changed=True, collection=collection
             )
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
+        if command == "library.append":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            with self.suppress_generation():
+                result, delta = append_library(transaction, params)
+                bpy.context.view_layer.update()
+            self._record_delta(transaction, delta)
             result.update(
                 {
                     "status": transaction.status,
