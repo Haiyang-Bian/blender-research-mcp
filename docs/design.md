@@ -1,6 +1,7 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.17.0 cross-object Mesh composition implemented; live release gate pending
+- Status: 0.17.0 cross-object Mesh composition implemented; deterministic live gate
+  passed, aggregate same-process stress and real-character cage gate pending
 - Current milestone: 0.17.0 transaction-v13 Mesh join, explicit weld, and batch v5
 - Next milestone: 0.18.0 bounded Shape-Key structure authoring
 - Primary Blender target: 4.2.23 LTS
@@ -672,7 +673,9 @@ Completed on Blender 4.2.23 LTS with deterministic Library fixtures and a tempor
 
 ### Phase 13 — cross-object Mesh composition
 
-Status: implemented for 0.17.0; isolated Blender 4.2.23 release evidence pending.
+Status: implemented for 0.17.0; deterministic Blender 4.2.23 commit/save/reload
+evidence passed. Aggregate same-process rollback stress and the real-character cage
+composition remain pending; see the validation record.
 
 - Preflight and join 2–32 exact BASE Mesh-object inputs into one independent output.
 - Reconcile material, UV, color and weight schemas only through explicit policies.

@@ -102,7 +102,8 @@ SelectionSet 与求值曲面拟合见
 [0.16.0 路线图](docs/roadmap/0.16.0-library-template-coverage.md)和
 [0.16.0 验收记录](docs/validation/2026-09-01-library-template-coverage.md)。
 0.17 跨对象 Mesh 合成与接缝焊接见
-[0.17.0 路线图](docs/roadmap/0.17.0-cross-object-mesh-composition.md)。
+[0.17.0 路线图](docs/roadmap/0.17.0-cross-object-mesh-composition.md)和
+[0.17.0 验收记录](docs/validation/2026-09-01-cross-object-mesh-composition.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -331,11 +332,14 @@ join 不会自动按距离焊接。新的 `mesh.edit(weld_vertices)` 只处理�
 Batch v5 将 Library append、拟合、join、weld、权重、绑定和验证组合为一次原子流程。
 Batch v5 会为每个来源维护 JOIN_BRANCH → Weld/Topology 的独立组合 Map，并在
 assembly manifest 中记录 Join schema 与边界证据。会话资源上限相应扩展为 192 个
-SelectionSet 和 128 张 ComponentMap，组件/关系总预算不变。实机发布门通过后再按
-0.18 Shape Key、0.19 骨架创作、0.20 Modifier 最终化推进。详细
+SelectionSet 和 128 张 ComponentMap，组件/关系总预算不变。确定性
+commit/save/reload 实机门已通过；聚合同会话压力与真实角色笼拼接仍明确待关闭。
+后续再按 0.18 Shape Key、0.19 骨架创作、0.20 Modifier 最终化推进。详细
 接口、事务语义和实机验收计划见
 [0.17.0 路线图](docs/roadmap/0.17.0-cross-object-mesh-composition.md)和
-[0.16 后模型编辑完整性方向](docs/requirements/model-editing-completeness.md)。
+[0.16 后模型编辑完整性方向](docs/requirements/model-editing-completeness.md)；实机证据与
+尚存限制见
+[0.17.0 验收记录](docs/validation/2026-09-01-cross-object-mesh-composition.md)。
 
 ## 目录
 

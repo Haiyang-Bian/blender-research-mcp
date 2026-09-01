@@ -166,6 +166,46 @@ def test_client_rejects_addon_without_offscreen_capability(tmp_path) -> None:
     asyncio.run(scenario())
 
 
+def test_client_normalizes_expected_reload_reset_during_handshake(tmp_path) -> None:
+    async def scenario() -> None:
+        async def handler(
+            reader: asyncio.StreamReader,
+            writer: asyncio.StreamWriter,
+        ) -> None:
+            await read_frame(reader, max_bytes=MAX_REQUEST_BYTES)
+            writer.transport.abort()
+
+        server = await asyncio.start_server(handler, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        manifest_path = tmp_path / "session-reload.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "protocol": 1,
+                    "host": "127.0.0.1",
+                    "port": port,
+                    "pid": os.getpid(),
+                    "instance_id": "instance-reload",
+                    "session_token": "t" * 43,
+                    "addon_version": "0.17.0",
+                    "created_at": datetime.now(UTC).isoformat(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        client = BridgeClient(port=port, session_file=manifest_path)
+        try:
+            with pytest.raises(TransportError) as reset:
+                await client.connect()
+            assert reset.value.error.code == "CONNECT_FAILED"
+        finally:
+            await client.close()
+            server.close()
+            await server.wait_closed()
+
+    asyncio.run(scenario())
+
+
 def test_lifecycle_capabilities_are_enforced_per_tool() -> None:
     client = BridgeClient()
     client._handshake = HandshakeResult(
@@ -196,3 +236,28 @@ def test_lifecycle_capabilities_are_enforced_per_tool() -> None:
     assert mismatch.value.error.details == {
         "capabilities": {"project_lifecycle": {"required": 1, "actual": 0}}
     }
+
+
+def test_close_does_not_await_proactor_transport_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ResetWriter:
+        waited = False
+
+        def close(self) -> None:
+            pass
+
+        async def wait_closed(self) -> None:
+            self.waited = True
+            raise ConnectionResetError(64, "connection reset during project reload")
+
+    async def scenario() -> None:
+        client = BridgeClient()
+        writer = ResetWriter()
+        client._writer = writer  # type: ignore[assignment]
+        await client.close()
+        assert client._writer is None
+        assert writer.waited is False
+
+    monkeypatch.setattr("blender_research_mcp.client.sys.platform", "win32")
+    asyncio.run(scenario())

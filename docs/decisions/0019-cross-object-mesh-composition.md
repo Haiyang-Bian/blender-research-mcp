@@ -1,6 +1,7 @@
 # Decision 0019: exact cross-object Mesh composition
 
-- Status: accepted and implemented for 0.17.0; live release evidence pending
+- Status: accepted and implemented for 0.17.0; deterministic release evidence passed,
+  aggregate same-process stress and real-character cage evidence pending
 - Date: 2026-09-01
 
 ## Context

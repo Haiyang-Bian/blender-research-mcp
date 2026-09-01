@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from blender_research_mcp.mesh_authoring import MeshOperation
 from blender_research_mcp.mesh_join import MeshJoinRequest
+
+ROOT = Path(__file__).parents[1]
 
 
 def _source(name: str, identity: str) -> dict[str, object]:
@@ -108,3 +112,34 @@ def test_weld_vertices_requires_exact_selection_groups_and_positive_distance() -
     ):
         with pytest.raises(ValidationError):
             adapter.validate_python(invalid)
+
+
+def test_addon_maps_join_guard_and_restore_failures_to_stable_errors() -> None:
+    state = (ROOT / "blender_addon/blender_research_mcp_addon/state.py").read_text(
+        encoding="utf-8"
+    )
+    join = (ROOT / "blender_addon/blender_research_mcp_addon/mesh_join_ops.py").read_text(
+        encoding="utf-8"
+    )
+    structural = (
+        ROOT / "blender_addon/blender_research_mcp_addon/structural_ops.py"
+    ).read_text(encoding="utf-8")
+    assert '"MESH_JOIN_DATA_CONFLICT"' in state
+    assert '"MESH_JOIN_RESTORE_FAILED"' in join
+    assert 'delta.kind == "mesh_join"' in structural
+
+
+def test_addon_publishes_welded_join_mesh_atomically_and_preserves_loose_edges() -> None:
+    state = (ROOT / "blender_addon/blender_research_mcp_addon/state.py").read_text(
+        encoding="utf-8"
+    )
+    join = (ROOT / "blender_addon/blender_research_mcp_addon/mesh_join_ops.py").read_text(
+        encoding="utf-8"
+    )
+    assert "loose_edges.extend(" in join
+    assert "mesh.from_pydata(vertices, loose_edges, faces)" in join
+    assert "mesh = initial_mesh.copy()" in join
+    assert "obj.data = mesh" in join
+    assert "_restore_weld_uv(mesh, uv_evidence, relations)" in join
+    assert "_restore_weld_colors(mesh, color_evidence, relations)" in join
+    assert "defer_view_update=contains_join" in state

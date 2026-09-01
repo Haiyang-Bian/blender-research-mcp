@@ -48,6 +48,41 @@ class MeshJoinError(MeshOperationError):
     pass
 
 
+def _remove_join_output(resource: Any, owned: tuple[tuple[str, Any], ...]) -> list[str]:
+    removed = [f"object:{resource.name}"] + [
+        f"{owned_kind}:{owned_resource.name}"
+        for owned_kind, owned_resource in owned
+    ]
+    # Privatize the intact closure. Blender 4.2 can retain evaluated references
+    # to UV/color/deform CustomData beyond this timer tick; freeing those IDs
+    # immediately may terminate Blender on a later dependency-graph refresh.
+    # Zero-user tombstones are not serialized and disappear on file load.
+    for collection in tuple(resource.users_collection):
+        collection.objects.unlink(resource)
+    token = uuid.uuid4().hex
+    resource.name = f".MCP-Join-Rollback-{token}"
+    for owned_kind, owned_resource in owned:
+        owned_resource.name = f".MCP-Join-Rollback-{owned_kind}-{token}"
+    return removed
+
+
+def restore_mesh_join(delta: StructuralDelta) -> dict[str, Any]:
+    """Remove an unchanged transaction-created Join output and its owned data."""
+
+    resource = delta.payload["resource"]
+    owned = tuple(delta.payload.get("owned_resources", ()))
+    try:
+        removed = _remove_join_output(resource, owned)
+    except Exception as exc:
+        raise MeshJoinError(
+            "MESH_JOIN_RESTORE_FAILED",
+            "Joined output could not be removed without overwriting user-owned state",
+            kind="conflict",
+            details={"error_type": type(exc).__name__, "message": str(exc)},
+        ) from exc
+    return {"kind": delta.kind, "action": delta.action, "removed": removed}
+
+
 def _error(code: str, message: str, *, kind: str = "validation", **details: Any) -> None:
     raise MeshJoinError(code, message, kind=kind, details=details)
 
@@ -522,14 +557,14 @@ def _copy_color_values(source: Any, target: Any, domain_offset: int) -> None:
             target_item.color = tuple(float(value) for value in item.color)
 
 
-def _build_output(preflight: dict[str, Any]) -> tuple[Any, Any, list[dict[str, int]]]:
+def _build_output(preflight: dict[str, Any]) -> tuple[Any, Any, list[dict[str, Any]]]:
     sources = preflight["sources"]
     output_evidence = preflight["output"]
     schemas = preflight["schemas"]
     vertices: list[tuple[float, float, float]] = []
-    edges: list[tuple[int, int]] = []
+    loose_edges: list[tuple[int, int]] = []
     faces: list[tuple[int, ...]] = []
-    offsets: list[dict[str, int]] = []
+    offsets: list[dict[str, Any]] = []
     vertex_offset = edge_offset = face_offset = loop_offset = 0
     inverse = output_evidence["inverse_matrix_world"]
     for source in sources:
@@ -548,9 +583,18 @@ def _build_output(preflight: dict[str, Any]) -> tuple[Any, Any, list[dict[str, i
             tuple(float(value) for value in (transform @ vertex.co))
             for vertex in mesh.vertices
         )
-        edges.extend(
-            (int(edge.vertices[0]) + vertex_offset, int(edge.vertices[1]) + vertex_offset)
+        face_edges = {
+            int(mesh.loops[loop_index].edge_index)
+            for polygon in mesh.polygons
+            for loop_index in polygon.loop_indices
+        }
+        loose_edges.extend(
+            (
+                int(edge.vertices[0]) + vertex_offset,
+                int(edge.vertices[1]) + vertex_offset,
+            )
             for edge in mesh.edges
+            if int(edge.index) not in face_edges
         )
         faces.extend(
             tuple(int(vertex) + vertex_offset for vertex in polygon.vertices)
@@ -565,18 +609,38 @@ def _build_output(preflight: dict[str, Any]) -> tuple[Any, Any, list[dict[str, i
     mesh = bpy.data.meshes.new(str(raw_output["new_mesh_name"]))
     obj = bpy.data.objects.new(str(raw_output["new_object_name"]), mesh)
     try:
-        mesh.from_pydata(vertices, edges, faces)
+        # Let face construction create its edge table once and pass only truly
+        # loose source edges.  Supplying the complete face-edge list as well as
+        # faces can leave Blender 4.2 UV CustomData on duplicate-edge layout.
+        mesh.from_pydata(vertices, loose_edges, faces)
         mesh.update(calc_edges=True, calc_edges_loose=True)
+        edge_lookup = {
+            tuple(sorted((int(edge.vertices[0]), int(edge.vertices[1])))): int(edge.index)
+            for edge in mesh.edges
+        }
+        for source, offset in zip(sources, offsets, strict=True):
+            source_mesh = source["mesh"]
+            offset["edge_map"] = tuple(
+                edge_lookup[
+                    tuple(
+                        sorted(
+                            (
+                                int(source_edge.vertices[0]) + offset["vertex"],
+                                int(source_edge.vertices[1]) + offset["vertex"],
+                            )
+                        )
+                    )
+                ]
+                for source_edge in source_mesh.edges
+            )
         obj.matrix_world = output_evidence["matrix_world"].copy()
         obj.parent = None
-        output_evidence["collection"].objects.link(obj)
-        obj.select_set(False)
         for material in schemas["materials"]["items"]:
             mesh.materials.append(material)
         for source, offset in zip(sources, offsets, strict=True):
             source_mesh = source["mesh"]
             for index, source_edge in enumerate(source_mesh.edges):
-                target_edge = mesh.edges[offset["edge"] + index]
+                target_edge = mesh.edges[offset["edge_map"][index]]
                 target_edge.use_seam = bool(source_edge.use_seam)
                 target_edge.use_edge_sharp = bool(source_edge.use_edge_sharp)
             for index, source_polygon in enumerate(source_mesh.polygons):
@@ -596,10 +660,14 @@ def _build_output(preflight: dict[str, Any]) -> tuple[Any, Any, list[dict[str, i
                     target_polygon.material_index = schemas["materials"]["indices"][identity]
 
         for name in schemas["uv"]["names"]:
-            target_layer = mesh.uv_layers.new(name=name, do_init=False)
+            target_layer = mesh.uv_layers.get(name)
+            if target_layer is None:
+                target_layer = mesh.uv_layers.new(name=name, do_init=True)
             role = schemas["uv"]["roles"][name]
-            target_layer.active_render = bool(role["active_render"])
-            target_layer.active_clone = bool(role["active_clone"])
+            if role["active_render"]:
+                target_layer.active_render = True
+            if role["active_clone"]:
+                target_layer.active_clone = True
             for source, offset in zip(sources, offsets, strict=True):
                 source_layer = source["mesh"].uv_layers.get(name)
                 if source_layer is None:
@@ -611,7 +679,20 @@ def _build_output(preflight: dict[str, Any]) -> tuple[Any, Any, list[dict[str, i
                         target_item.pin_uv = bool(getattr(item, "pin_uv", False))
 
         for name, data_type, domain in schemas["colors"]["items"]:
-            target_color = mesh.color_attributes.new(name=name, type=data_type, domain=domain)
+            target_color = mesh.color_attributes.get(name)
+            if target_color is None:
+                target_color = mesh.color_attributes.new(
+                    name=name, type=data_type, domain=domain
+                )
+            elif (
+                str(target_color.data_type) != data_type
+                or str(target_color.domain) != domain
+            ):
+                _error(
+                    "MESH_JOIN_ATTRIBUTE_SCHEMA_CONFLICT",
+                    f"Template Color Attribute schema changed: {name}",
+                    domain="colors",
+                )
             domain_key = {
                 "POINT": "vertex",
                 "EDGE": "edge",
@@ -627,7 +708,13 @@ def _build_output(preflight: dict[str, Any]) -> tuple[Any, Any, list[dict[str, i
             for source, offset in zip(sources, offsets, strict=True):
                 source_color = source["mesh"].color_attributes.get(name)
                 if source_color is not None:
-                    _copy_color_values(source_color, target_color, offset[domain_key])
+                    if domain_key == "edge":
+                        for index, item in enumerate(source_color.data):
+                            target_color.data[offset["edge_map"][index]].color = tuple(
+                                float(value) for value in item.color
+                            )
+                    else:
+                        _copy_color_values(source_color, target_color, offset[domain_key])
 
         for name, locked in schemas["weights"]["items"]:
             group = obj.vertex_groups.new(name=name)
@@ -647,6 +734,8 @@ def _build_output(preflight: dict[str, Any]) -> tuple[Any, Any, list[dict[str, i
                             [target_index], float(membership.weight), "REPLACE"
                         )
         mesh.update(calc_edges=True, calc_edges_loose=True)
+        output_evidence["collection"].objects.link(obj)
+        obj.select_set(False)
         return obj, mesh, offsets
     except Exception:
         if bpy.data.objects.get(obj.name) is obj:
@@ -683,11 +772,13 @@ def join_meshes(
     phase = "create_output"
     try:
         obj, mesh, offsets = _build_output(preflight)
+        object_guard = make_structure_guard("object", obj)
+        mesh_guard = make_structure_guard("mesh", mesh)
         output_delta = StructuralDelta(
             kind="mesh_join",
             action="create_resource",
             before=(),
-            after=(make_structure_guard("object", obj), make_structure_guard("mesh", mesh)),
+            after=(object_guard, mesh_guard),
             payload={
                 "resource": obj,
                 "resource_kind": "object",
@@ -707,7 +798,7 @@ def join_meshes(
                     for index in range(len(source_mesh.vertices))
                 ),
                 "EDGE": tuple(
-                    ComponentRelation(index, (index + offset["edge"],), "SURVIVED")
+                    ComponentRelation(index, (offset["edge_map"][index],), "SURVIVED")
                     for index in range(len(source_mesh.edges))
                 ),
                 "FACE": tuple(
@@ -733,10 +824,18 @@ def join_meshes(
             book.add_component_map(record)
             maps.append(record)
             per_domain = {}
-            for domain, count, domain_offset in (
-                ("VERTEX", len(source_mesh.vertices), offset["vertex"]),
-                ("EDGE", len(source_mesh.edges), offset["edge"]),
-                ("FACE", len(source_mesh.polygons), offset["face"]),
+            for domain, indices in (
+                (
+                    "VERTEX",
+                    tuple(
+                        range(offset["vertex"], offset["vertex"] + len(source_mesh.vertices))
+                    ),
+                ),
+                ("EDGE", offset["edge_map"]),
+                (
+                    "FACE",
+                    tuple(range(offset["face"], offset["face"] + len(source_mesh.polygons))),
+                ),
             ):
                 selection = book.add_selection(
                     object_name=obj.name,
@@ -748,7 +847,7 @@ def join_meshes(
                     expected_users=int(mesh.users),
                     expected_user_objects=mesh_user_refs(mesh),
                     domain=domain,
-                    indices=tuple(range(domain_offset, domain_offset + count)),
+                    indices=indices,
                     weights=None,
                     source_query={
                         "type": "join_branch",
@@ -812,6 +911,10 @@ def join_meshes(
                     expected_object_identity=session_identity("object", source["object"]),
                 )
                 delete_deltas.append(delta)
+        output_delta.after = (
+            make_structure_guard("object", obj),
+            make_structure_guard("mesh", mesh),
+        )
         transaction.record(output_delta)
         for delta in delete_deltas:
             transaction.record(delta)
@@ -824,8 +927,8 @@ def join_meshes(
         for record in maps:
             book.release_component_map(record.component_map_id)
         if obj is not None and bpy.data.objects.get(obj.name) is obj:
-            bpy.data.objects.remove(obj)
-        if mesh is not None and bpy.data.meshes.get(mesh.name) is mesh and int(mesh.users) == 0:
+            _remove_join_output(obj, (("mesh", mesh),) if mesh is not None else ())
+        elif mesh is not None and bpy.data.meshes.get(mesh.name) is mesh and int(mesh.users) == 0:
             bpy.data.meshes.remove(mesh)
         raise
     except Exception as exc:
@@ -837,8 +940,8 @@ def join_meshes(
         for record in maps:
             book.release_component_map(record.component_map_id)
         if obj is not None and bpy.data.objects.get(obj.name) is obj:
-            bpy.data.objects.remove(obj)
-        if mesh is not None and bpy.data.meshes.get(mesh.name) is mesh and int(mesh.users) == 0:
+            _remove_join_output(obj, (("mesh", mesh),) if mesh is not None else ())
+        elif mesh is not None and bpy.data.meshes.get(mesh.name) is mesh and int(mesh.users) == 0:
             bpy.data.meshes.remove(mesh)
         raise MeshJoinError(
             "MESH_JOIN_FAILED",
@@ -1028,6 +1131,184 @@ def _merge_weight_values(values: list[dict[int, float]], mode: str) -> dict[int,
     return merged
 
 
+def _capture_weld_colors(mesh: Any) -> dict[str, Any]:
+    layers = []
+    for attribute in mesh.color_attributes:
+        layers.append(
+            {
+                "name": str(attribute.name),
+                "data_type": str(attribute.data_type),
+                "domain": str(attribute.domain),
+                "values": tuple(
+                    tuple(float(value) for value in item.color)
+                    for item in attribute.data
+                ),
+            }
+        )
+    return {
+        "layers": layers,
+        "counts": {
+            "VERTEX": len(mesh.vertices),
+            "EDGE": len(mesh.edges),
+            "FACE": len(mesh.polygons),
+        },
+        "faces": tuple(
+            {
+                "vertices": tuple(int(index) for index in polygon.vertices),
+                "loops": tuple(int(index) for index in polygon.loop_indices),
+            }
+            for polygon in mesh.polygons
+        ),
+        "active": str(getattr(mesh.color_attributes, "active_color_name", "")),
+        "default": str(getattr(mesh.color_attributes, "default_color_name", "")),
+    }
+
+
+def _capture_weld_uv(mesh: Any) -> dict[str, Any]:
+    return {
+        "layers": tuple(
+            {
+                "name": str(layer.name),
+                "active_render": bool(getattr(layer, "active_render", False)),
+                "active_clone": bool(getattr(layer, "active_clone", False)),
+                "values": tuple(
+                    {
+                        "uv": tuple(float(value) for value in item.uv),
+                        "pin_uv": bool(getattr(item, "pin_uv", False)),
+                    }
+                    for item in layer.data
+                ),
+            }
+            for layer in mesh.uv_layers
+        ),
+        "active_index": int(getattr(mesh.uv_layers, "active_index", -1)),
+        "faces": tuple(
+            {
+                "vertices": tuple(int(index) for index in polygon.vertices),
+                "loops": tuple(int(index) for index in polygon.loop_indices),
+            }
+            for polygon in mesh.polygons
+        ),
+    }
+
+
+def _remove_weld_colors(mesh: Any) -> None:
+    while len(mesh.color_attributes):
+        mesh.color_attributes.remove(mesh.color_attributes[-1])
+
+
+def _remove_weld_uv(mesh: Any) -> None:
+    while len(mesh.uv_layers):
+        mesh.uv_layers.remove(mesh.uv_layers[-1])
+
+
+def _relation_targets(
+    relations: dict[str, tuple[ComponentRelation, ...]],
+    domain: str,
+) -> dict[int, tuple[int, ...]]:
+    return {
+        int(relation.source_index): tuple(int(index) for index in relation.target_indices)
+        for relation in relations[domain]
+    }
+
+
+def _restore_weld_colors(
+    mesh: Any,
+    evidence: dict[str, Any],
+    relations: dict[str, tuple[ComponentRelation, ...]],
+) -> None:
+    _remove_weld_colors(mesh)
+    domain_relations = {
+        domain: _relation_targets(relations, domain) for domain in ("VERTEX", "EDGE", "FACE")
+    }
+    for layer in evidence["layers"]:
+        target = mesh.color_attributes.new(
+            name=layer["name"],
+            type=layer["data_type"],
+            domain=layer["domain"],
+        )
+        domain = str(layer["domain"])
+        values = layer["values"]
+        if domain in {"POINT", "EDGE", "FACE"}:
+            relation_domain = {"POINT": "VERTEX", "EDGE": "EDGE", "FACE": "FACE"}[domain]
+            assigned: set[int] = set()
+            for source_index, targets in sorted(domain_relations[relation_domain].items()):
+                for target_index in targets:
+                    if target_index not in assigned and target_index < len(target.data):
+                        target.data[target_index].color = values[source_index]
+                        assigned.add(target_index)
+            continue
+        if domain != "CORNER":
+            _error(
+                "MESH_WELD_ATTRIBUTE_CONFLICT",
+                f"Unsupported Color Attribute domain during weld: {domain}",
+            )
+        face_targets = domain_relations["FACE"]
+        vertex_targets = domain_relations["VERTEX"]
+        for source_face, face in enumerate(evidence["faces"]):
+            target_faces = face_targets.get(source_face, ())
+            if len(target_faces) != 1:
+                continue
+            target_polygon = mesh.polygons[target_faces[0]]
+            available: dict[int, list[int]] = {}
+            for loop_index in target_polygon.loop_indices:
+                vertex_index = int(mesh.loops[loop_index].vertex_index)
+                available.setdefault(vertex_index, []).append(int(loop_index))
+            for source_vertex, source_loop in zip(
+                face["vertices"], face["loops"], strict=True
+            ):
+                mapped = vertex_targets.get(int(source_vertex), ())
+                if len(mapped) != 1 or not available.get(mapped[0]):
+                    continue
+                target_loop = available[mapped[0]].pop(0)
+                target.data[target_loop].color = values[source_loop]
+    active = evidence["active"]
+    default = evidence["default"]
+    if active and mesh.color_attributes.get(active) is not None:
+        mesh.color_attributes.active_color_name = active
+    if default and mesh.color_attributes.get(default) is not None:
+        mesh.color_attributes.default_color_name = default
+
+
+def _restore_weld_uv(
+    mesh: Any,
+    evidence: dict[str, Any],
+    relations: dict[str, tuple[ComponentRelation, ...]],
+) -> None:
+    _remove_weld_uv(mesh)
+    face_targets = _relation_targets(relations, "FACE")
+    vertex_targets = _relation_targets(relations, "VERTEX")
+    for layer in evidence["layers"]:
+        target = mesh.uv_layers.new(name=layer["name"], do_init=True)
+        values = layer["values"]
+        for source_face, face in enumerate(evidence["faces"]):
+            mapped_faces = face_targets.get(source_face, ())
+            if len(mapped_faces) != 1:
+                continue
+            target_polygon = mesh.polygons[mapped_faces[0]]
+            available: dict[int, list[int]] = {}
+            for loop_index in target_polygon.loop_indices:
+                vertex_index = int(mesh.loops[loop_index].vertex_index)
+                available.setdefault(vertex_index, []).append(int(loop_index))
+            for source_vertex, source_loop in zip(
+                face["vertices"], face["loops"], strict=True
+            ):
+                mapped_vertices = vertex_targets.get(int(source_vertex), ())
+                if len(mapped_vertices) != 1 or not available.get(mapped_vertices[0]):
+                    continue
+                target_loop = available[mapped_vertices[0]].pop(0)
+                target_item = target.data[target_loop]
+                source_item = values[source_loop]
+                target_item.uv = source_item["uv"]
+                if hasattr(target_item, "pin_uv"):
+                    target_item.pin_uv = source_item["pin_uv"]
+        target.active_render = layer["active_render"]
+        target.active_clone = layer["active_clone"]
+    active_index = int(evidence["active_index"])
+    if evidence["layers"] and 0 <= active_index < len(mesh.uv_layers):
+        mesh.uv_layers.active_index = active_index
+
+
 def weld_mesh_vertices(
     transaction: Transaction,
     book: MeshResourceBook,
@@ -1088,27 +1369,47 @@ def weld_mesh_vertices(
         }
 
     transaction.ensure_capacity()
-    guard = transaction.mesh_snapshot_guard(
-        initial_mesh.name, session_identity("mesh", initial_mesh)
+    created_join_output = any(
+        delta.kind == "mesh_join"
+        and delta.action == "create_resource"
+        and delta.payload.get("resource") is obj
+        for delta in transaction.structural_deltas()
     )
-    new_guard = guard is None
-    if guard is None:
-        guard = _create_guard(transaction, obj, initial_mesh, data_scope)
-    else:
-        _validate_guard(guard)
-        if guard.data_scope != data_scope:
-            _error(
-                "MESH_WELD_SELECTION_INVALID",
-                "data_scope must remain stable in one transaction",
-            )
-    mesh = bpy.data.meshes.get(guard.mesh_name)
+    guard = None
+    new_guard = False
+    if not created_join_output:
+        guard = transaction.mesh_snapshot_guard(
+            initial_mesh.name, session_identity("mesh", initial_mesh)
+        )
+        new_guard = guard is None
+        if guard is None:
+            guard = _create_guard(transaction, obj, initial_mesh, data_scope)
+        else:
+            _validate_guard(guard)
+            if guard.data_scope != data_scope:
+                _error(
+                    "MESH_WELD_SELECTION_INVALID",
+                    "data_scope must remain stable in one transaction",
+                )
+    mesh = initial_mesh if guard is None else bpy.data.meshes.get(guard.mesh_name)
     if mesh is None:
         _error("MESH_JOIN_DATA_CONFLICT", "Guarded weld Mesh no longer exists", kind="conflict")
-    attribute_evidence = prepare_topology_attributes(obj, mesh, operation)
+    before_mesh_reference = _mesh_reference(initial_mesh)
+    original_mesh_name = str(initial_mesh.name)
+    published_working_copy = False
+    if created_join_output:
+        # Build the welded result on an unlinked Mesh ID.  Blender 4.2 may keep
+        # evaluated pointers to a linked Mesh's CustomData until a later UI
+        # refresh; mutating that ID through BMesh and then redrawing can fault
+        # inside dependency-graph copy expansion.  Publishing one fully built
+        # replacement is both atomic and avoids exposing intermediate layers.
+        mesh = initial_mesh.copy()
+        mesh.name = f"{original_mesh_name}.MCP-Weld"
+    attribute_evidence = prepare_topology_attributes(obj, initial_mesh, operation)
     weight_guard = None
     new_weight_guard = False
     weight_call_state = None
-    if attribute_evidence["weight_present"]:
+    if attribute_evidence["weight_present"] and not created_join_output:
         from .mesh_weight_ops import (
             _capture_weights,
             _create_weight_guard,
@@ -1128,24 +1429,48 @@ def weld_mesh_vertices(
             {item.name: _group_schema(item, identities=False) for item in weight_objects},
             _capture_weights(mesh),
         )
-    before_map = _map_evidence(obj, mesh)
-    call_snapshot = mesh.copy()
-    call_snapshot.name = f"{mesh.name}.MCP-Weld-Call"
+    before_map = _map_evidence(obj, initial_mesh)
+    color_evidence = _capture_weld_colors(initial_mesh)
+    uv_evidence = _capture_weld_uv(initial_mesh)
+    reuses_guard_snapshot = bool(
+        guard is not None and new_guard and guard.snapshot is not None
+    )
+    call_snapshot = None
+    if not created_join_output:
+        call_snapshot = guard.snapshot if reuses_guard_snapshot else mesh.copy()
+    if call_snapshot is not None and not reuses_guard_snapshot:
+        call_snapshot.name = f"{mesh.name}.MCP-Weld-Call"
     bm = bmesh.new()
+    source_weights: dict[int, dict[int, float]] = {}
     component_map = None
     rebound_ids: list[str] = []
     lineage = None
+    relations = None
     try:
+        _remove_weld_colors(mesh)
+        _remove_weld_uv(mesh)
         bm.from_mesh(mesh)
         bm.verts.ensure_lookup_table()
         lineage = _start_lineage(bm)
-        deform = bm.verts.layers.deform.verify()
+        deform = bm.verts.layers.deform.active
+        source_weights = {
+            int(vert.index): dict(vert[deform]) if deform is not None else {}
+            for vert in bm.verts
+        }
+        # Do not ask BMesh to interpolate the deform CustomData layer during a
+        # many-to-one weld.  Blender 4.2 can leave that layer in a state which
+        # only faults on the following dependency-graph refresh.  We have exact
+        # source lineage, so rebuild deform weights deterministically after the
+        # topology write instead.
+        if deform is not None:
+            bm.verts.layers.deform.remove(deform)
         merged_target_sources: dict[int, tuple[int, ...]] = {}
+        merged_source_weights: dict[int, dict[int, float]] = {}
         target_map = {}
         for group in groups:
             target_source = group[0]
             verts = [bm.verts[index] for index in group]
-            values = [dict(vert[deform]) for vert in verts]
+            values = [source_weights[index] for index in group]
             target = bm.verts[target_source]
             if operation.get("destination", "LOWEST_INDEX") == "CENTER":
                 center = Vector((0.0, 0.0, 0.0))
@@ -1155,11 +1480,8 @@ def weld_mesh_vertices(
             target_weights = _merge_weight_values(
                 values, str(operation.get("weight_merge", "MAX"))
             )
-            target_deform = target[deform]
-            for key in list(target_deform.keys()):
-                del target_deform[key]
-            for key, value in target_weights.items():
-                target_deform[key] = value
+            for source_index in group:
+                merged_source_weights[source_index] = target_weights
             target_map.update({vert: target for vert in verts if vert is not target})
             merged_target_sources[target_source] = group
         bmesh.ops.weld_verts(bm, targetmap=target_map)
@@ -1189,8 +1511,42 @@ def weld_mesh_vertices(
             index for index in deleted["VERTEX"] if index not in merged_sources
         )
         bm.to_mesh(mesh)
+        _restore_weld_uv(mesh, uv_evidence, relations)
+        _restore_weld_colors(mesh, color_evidence, relations)
+        if created_join_output:
+            initial_mesh.name = f".MCP-Join-PreWeld-{uuid.uuid4().hex}"
+            mesh.name = original_mesh_name
+            obj.data = mesh
+            published_working_copy = True
+        if source_weights:
+            vertex_indices = list(range(len(mesh.vertices)))
+            for vertex_group in obj.vertex_groups:
+                if vertex_indices:
+                    vertex_group.remove(vertex_indices)
+            output_weights: dict[int, dict[int, float]] = {}
+            for relation in relations["VERTEX"]:
+                if len(relation.target_indices) != 1:
+                    continue
+                output_weights[int(relation.target_indices[0])] = (
+                    merged_source_weights.get(
+                        int(relation.source_index),
+                        source_weights.get(int(relation.source_index), {}),
+                    )
+                )
+            for vertex_index, assignments in output_weights.items():
+                for group_index, value in assignments.items():
+                    if value > 0 and group_index < len(obj.vertex_groups):
+                        obj.vertex_groups[group_index].add(
+                            [vertex_index], float(value), "REPLACE"
+                        )
         mesh.update(calc_edges=True, calc_edges_loose=True)
         attribute_effects = finish_topology_attributes(obj, mesh, attribute_evidence)
+        if created_join_output:
+            # Publish all dependent UV/deform state before recording the
+            # after-revision.  Blender may materialize internal UV role data on
+            # the first dependency-graph refresh; the ComponentMap must bind to
+            # that stable live revision, not the pre-refresh representation.
+            bpy.context.view_layer.update()
         component_map = make_component_map(
             transaction_id=transaction.transaction_id,
             operation="weld_vertices",
@@ -1216,12 +1572,35 @@ def weld_mesh_vertices(
             )
             rebound_ids.append(str(result["selection"]["selection_id"]))
             rebound.append(result["selection"])
+        if created_join_output:
+            join_delta = next(
+                delta
+                for delta in transaction.structural_deltas()
+                if delta.kind == "mesh_join"
+                and delta.action == "create_resource"
+                and delta.payload.get("resource") is obj
+            )
+            join_delta.payload["owned_resources"] = (
+                ("mesh", mesh),
+                ("mesh", initial_mesh),
+            )
+            join_delta.after = (
+                make_structure_guard("object", obj),
+                make_structure_guard("mesh", mesh),
+                make_structure_guard("mesh", initial_mesh),
+            )
     except (MeshJoinError, MeshResourceError, MeshOperationError) as exc:
         if component_map is not None:
             book.release_component_map(component_map.component_map_id)
         for selection_id in rebound_ids:
             book.release_selection(selection_id)
-        _restore_failed_edit(mesh, call_snapshot, before_fingerprint, exc)
+        if created_join_output:
+            if published_working_copy and obj.data is mesh:
+                obj.data = initial_mesh
+            mesh.name = f".MCP-Weld-Failed-{uuid.uuid4().hex}"
+            initial_mesh.name = original_mesh_name
+        else:
+            _restore_failed_edit(mesh, call_snapshot, before_fingerprint, exc)
         if weight_call_state is not None:
             from .mesh_weight_ops import _restore_call_state
 
@@ -1236,7 +1615,13 @@ def weld_mesh_vertices(
             book.release_component_map(component_map.component_map_id)
         for selection_id in rebound_ids:
             book.release_selection(selection_id)
-        _restore_failed_edit(mesh, call_snapshot, before_fingerprint, exc)
+        if created_join_output:
+            if published_working_copy and obj.data is mesh:
+                obj.data = initial_mesh
+            mesh.name = f".MCP-Weld-Failed-{uuid.uuid4().hex}"
+            initial_mesh.name = original_mesh_name
+        else:
+            _restore_failed_edit(mesh, call_snapshot, before_fingerprint, exc)
         if weight_call_state is not None:
             from .mesh_weight_ops import _restore_call_state
 
@@ -1257,14 +1642,16 @@ def weld_mesh_vertices(
                 with contextlib.suppress(Exception):
                     state.sequence.layers.int.remove(state.layer)
         bm.free()
-        _remove_temporary_mesh(call_snapshot)
+        if call_snapshot is not None and not reuses_guard_snapshot:
+            _remove_temporary_mesh(call_snapshot)
 
     after_fingerprint = mesh_fingerprint(mesh)
     after_counts = mesh_counts(mesh)
     after_boundary = _boundary_summary(mesh)
-    guard.expected_fingerprint = after_fingerprint
-    guard.expected_users = int(mesh.users)
-    guard.expected_user_objects = mesh_user_refs(mesh)
+    if guard is not None:
+        guard.expected_fingerprint = after_fingerprint
+        guard.expected_users = int(mesh.users)
+        guard.expected_user_objects = mesh_user_refs(mesh)
     if weight_guard is not None:
         from .mesh_weight_ops import _schema_fingerprints, weights_fingerprint
 
@@ -1291,7 +1678,7 @@ def weld_mesh_vertices(
         "operation": "weld_vertices",
         "data_scope": data_scope,
         "object": object_summary(obj),
-        "before_mesh": _mesh_reference(initial_mesh),
+        "before_mesh": before_mesh_reference,
         "after_mesh": _mesh_reference(mesh),
         "before_mesh_fingerprint": before_fingerprint,
         "after_mesh_fingerprint": after_fingerprint,
@@ -1311,7 +1698,11 @@ def weld_mesh_vertices(
         "component_map": component_map.summary() if component_map is not None else None,
         "rebound_selections": rebound,
         "attribute_effects": attribute_effects,
-        "delta": {"type": "mesh_edit", "recorded": True, "snapshot_reused": not new_guard},
+        "delta": {
+            "type": "mesh_edit",
+            "recorded": True,
+            "snapshot_reused": created_join_output or not new_guard,
+        },
     }
 
 

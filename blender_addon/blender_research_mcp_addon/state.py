@@ -486,13 +486,17 @@ class AddonState:
             self.scene_generation += 1
 
     @contextlib.contextmanager
-    def suppress_generation(self) -> Iterator[None]:
+    def suppress_generation(self, *, defer_view_update: bool = False) -> Iterator[None]:
         self._suppress_generation += 1
         try:
             yield
         finally:
             try:
-                if self._suppress_generation == 1 and self.active_command in MUTATION_COMMANDS:
+                if (
+                    self._suppress_generation == 1
+                    and self.active_command in MUTATION_COMMANDS
+                    and not defer_view_update
+                ):
                     view_layer = getattr(bpy.context, "view_layer", None)
                     if view_layer is not None:
                         view_layer.update()
@@ -1837,7 +1841,10 @@ class AddonState:
             self._validate_transaction_guards(transaction)
             result = self._transaction_result(transaction)
             finalized: list[dict[str, Any]] = []
-            with self.suppress_generation():
+            contains_join = any(
+                delta.kind == "mesh_join" for delta in transaction.structural_deltas()
+            )
+            with self.suppress_generation(defer_view_update=contains_join):
                 for delta in transaction.deltas:
                     item = finalize_modifier_delta(delta)
                     if item is not None:
@@ -1881,7 +1888,10 @@ class AddonState:
         self._validate_transaction_guards(transaction)
         result = self._transaction_result(transaction)
         finalized: list[dict[str, Any]] = []
-        with self.suppress_generation():
+        contains_join = any(
+            delta.kind == "mesh_join" for delta in transaction.structural_deltas()
+        )
+        with self.suppress_generation(defer_view_update=contains_join):
             for delta in transaction.deltas:
                 item = finalize_modifier_delta(delta)
                 if item is not None:
@@ -2309,7 +2319,19 @@ class AddonState:
         validate_modifier_stack_guards(transaction)
         validate_mesh_snapshot_guards(transaction)
         validate_weight_snapshot_guards(transaction)
-        validate_structural_transaction(transaction)
+        try:
+            validate_structural_transaction(transaction)
+        except TransactionModelError as exc:
+            if exc.code == "STRUCTURE_CONFLICT" and any(
+                delta.kind == "mesh_join" for delta in transaction.structural_deltas()
+            ):
+                raise ContextOperationError(
+                    "MESH_JOIN_DATA_CONFLICT",
+                    "Joined output or guarded source structure changed outside the transaction",
+                    kind="conflict",
+                    details={"cause_code": exc.code, "cause": str(exc)},
+                ) from exc
+            raise
 
     def _set_object_settings(
         self,

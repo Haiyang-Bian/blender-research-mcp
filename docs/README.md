@@ -8,7 +8,9 @@ in this order when starting a new implementation task:
    - [Post-0.16 model-editing completeness direction](requirements/model-editing-completeness.md)
      — accepted 0.17–0.20 capability sequence.
    - [0.17.0 cross-object Mesh composition roadmap](roadmap/0.17.0-cross-object-mesh-composition.md)
-     — implemented exact join, lineage branches, seam welding, and pending live gate.
+     — implemented exact join, lineage branches, seam welding, and bounded live gate.
+   - [0.17.0 cross-object Mesh composition validation](validation/2026-09-01-cross-object-mesh-composition.md)
+     — deterministic pass plus explicit aggregate-stress and character-cage gaps.
    - [Cross-object Mesh composition decision](decisions/0019-cross-object-mesh-composition.md)
      — implemented transaction-v13 Mesh-domain authority.
 2. [0.16.0 controlled Library and template coverage roadmap](roadmap/0.16.0-library-template-coverage.md)
@@ -111,14 +113,17 @@ coverage composition. See the
 deterministic Blender, and `test-model.blend` coverage gates are recorded in
 [the 0.16 validation record](validation/2026-09-01-library-template-coverage.md).
 
-Version 0.17.0 is implemented with automated acceptance complete and its isolated
-Blender release gate pending. It adds read-only join preflight,
+Version 0.17.0 is implemented with automated acceptance and its deterministic Blender
+commit/save/reload gate complete. The aggregate same-process rollback stress and the
+real-character cage-composition gate remain pending. It adds read-only join preflight,
 transactional independent Mesh composition, one exact JOIN_BRANCH map per source,
 explicit SelectionSet-based seam welding, and batch v5. It deliberately precedes
 Shape-Key, bone-authoring, and Modifier-Apply authority. See the
 [0.17 roadmap](roadmap/0.17.0-cross-object-mesh-composition.md),
 [decision 0019](decisions/0019-cross-object-mesh-composition.md), and the
-[post-0.16 completeness direction](requirements/model-editing-completeness.md).
+[post-0.16 completeness direction](requirements/model-editing-completeness.md). Exact
+evidence and the remaining limitation are recorded in
+[the 0.17 validation record](validation/2026-09-01-cross-object-mesh-composition.md).
 
 Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
 SurfaceRefs, topology-preserving surface deformation, and quantitative Mesh validation;

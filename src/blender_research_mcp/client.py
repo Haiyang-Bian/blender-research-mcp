@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
+import sys
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -73,9 +73,22 @@ class BridgeClient:
         self._manifest = None
         self._handshake = None
         if writer is not None:
-            writer.close()
-            with suppress(ConnectionError, OSError):
-                await writer.wait_closed()
+            try:
+                writer.close()
+                # CPython's Proactor transport can report an expected peer
+                # reset from ``wait_closed`` after Blender reloads the file,
+                # even when the transport exception is otherwise handled.
+                # Closing the writer is sufficient to release this client's
+                # reference; the next call always creates a fresh connection.
+                if sys.platform != "win32":
+                    await writer.wait_closed()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Project open/reload intentionally tears down the socket from
+                # Blender's side.  Windows Proactor transports can surface that
+                # expected reset from either ``close`` or ``wait_closed``.
+                pass
 
     async def connect(self) -> HandshakeResult:
         async with self._lock:
@@ -111,6 +124,12 @@ class BridgeClient:
                 )
             )
             result = HandshakeResult.model_validate(response.result or {})
+        except (asyncio.IncompleteReadError, ConnectionError, OSError, FramingError) as exc:
+            await self.close()
+            raise transport_error(
+                "CONNECT_FAILED",
+                f"Blender closed the handshake connection at {manifest.host}:{manifest.port}",
+            ) from exc
         except Exception:
             await self.close()
             raise

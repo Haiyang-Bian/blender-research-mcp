@@ -2421,6 +2421,7 @@ def touch_mesh_for_test(params: dict[str, Any]) -> dict[str, Any]:
             raise MeshOperationError("TEST_MESH_TOUCH_INVALID", "Mesh has no vertices")
         mesh.vertices[0].co.x += 0.125
         mesh.update()
+        bpy.context.view_layer.update()
     elif action == "topology":
         bm = bmesh.new()
         try:
@@ -2428,6 +2429,7 @@ def touch_mesh_for_test(params: dict[str, Any]) -> dict[str, Any]:
             bm.verts.new((0.0, 0.0, 0.0))
             bm.to_mesh(mesh)
             mesh.update()
+            bpy.context.view_layer.update()
         finally:
             bm.free()
     elif action == "shared_user":
