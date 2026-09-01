@@ -17,31 +17,33 @@ in this order when starting a new implementation task:
    — validated one-revision topology lineage and acceptance gate.
 7. [0.12.0 SelectionSet and surface-fitting roadmap](roadmap/0.12.0-selection-surface-fitting.md)
    — validated selection, surface resource, and deformation baseline.
-8. [General Mesh authoring requirements](requirements/general-mesh-authoring.md) —
+8. [Modular character surface requirements](requirements/modular-character-surface.md)
+   — accepted materialize, disconnected extraction, rig binding, and template direction.
+9. [General Mesh authoring requirements](requirements/general-mesh-authoring.md) —
    long-term selection, topology, attribute, Shape-Key, and validation direction.
-9. [Using Blender Research MCP](usage.md) — current operator workflow and error
+10. [Using Blender Research MCP](usage.md) — current operator workflow and error
    recovery.
-10. [Topology lineage decision](decisions/0013-revision-aware-topology-lineage.md) —
+11. [Topology lineage decision](decisions/0013-revision-aware-topology-lineage.md) —
    one-revision ComponentMap and transaction-v7 boundary.
-11. [Selection and evaluated-surface decision](decisions/0012-revision-bound-selection-and-surface-resources.md)
+12. [Selection and evaluated-surface decision](decisions/0012-revision-bound-selection-and-surface-resources.md)
    — revision resource and transaction-v6 boundary.
-12. [Collaborative UI and native-save authority](decisions/0011-collaborative-ui-and-native-save-authority.md)
+13. [Collaborative UI and native-save authority](decisions/0011-collaborative-ui-and-native-save-authority.md)
    — transaction-v5 user intent and main-thread ordering.
-13. [0.11.0 semantic Mesh editing roadmap](roadmap/0.11.0-semantic-mesh-editing.md) —
+14. [0.11.0 semantic Mesh editing roadmap](roadmap/0.11.0-semantic-mesh-editing.md) —
    exact base-Mesh pages, snapshot guards, shared scopes, and bounded topology edits.
-14. [0.10.0 Modifier authoring roadmap](roadmap/0.10.0-modifier-authoring.md) — typed
+15. [0.10.0 Modifier authoring roadmap](roadmap/0.10.0-modifier-authoring.md) — typed
    inspection, stack guards, four Modifier families, and comparison.
-15. [0.9.0 unified object settings roadmap](roadmap/0.9.0-unified-object-settings.md) —
+16. [0.9.0 unified object settings roadmap](roadmap/0.9.0-unified-object-settings.md) —
    typed object, Light, Camera, and comparison settings.
-16. [0.8.0 semantic scene authoring roadmap](roadmap/0.8.0-semantic-scene-authoring.md) —
+17. [0.8.0 semantic scene authoring roadmap](roadmap/0.8.0-semantic-scene-authoring.md) —
    structural transactions, objects, materials, local images, World/Camera, and renders.
-17. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
+18. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
    launch, project switching, implementation, and completed live evidence.
-18. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
+19. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
    implemented and live-validated comparison contract.
-19. [Architecture decisions](decisions/README.md) — accepted protocol and authority
+20. [Architecture decisions](decisions/README.md) — accepted protocol and authority
    decisions.
-20. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
+21. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
 
 ## Current release
 
@@ -65,6 +67,12 @@ transaction capability 9. Its automated and Blender 4.2.23 gates have passed. Se
 [0.14 roadmap](roadmap/0.14.0-uv-and-skin-weights.md) and
 [decision 0015](decisions/0015-uv-and-skin-weight-authority.md), plus the
 [0.14 validation record](validation/2026-08-31-uv-and-skin-weights.md).
+
+The accepted next direction is a 0.15 P0 chain that creates an independent editable
+Mesh from BASE, current Shape Keys, or final evaluated geometry; extracts disconnected
+face regions; and binds the resulting object to an exact Armature. This direction does
+not authorize Shape-Key structure editing or Modifier Apply. See the
+[modular character surface requirements](requirements/modular-character-surface.md).
 
 Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
 SurfaceRefs, topology-preserving surface deformation, and quantitative Mesh validation;

@@ -430,6 +430,22 @@ rebind. Transaction capability 9 makes both attribute domains participate in com
 rollback, disconnect recovery, and native-save adoption. See
 `docs/roadmap/0.14.0-uv-and-skin-weights.md` and decision 0015.
 
+The accepted 0.15 direction closes a different gap: create a new editable Mesh from
+BASE, current Shape-Key-only, or final evaluated geometry; extract a disconnected FACE
+SelectionSet as one object; and bind an exact weighted Mesh to an Armature. Materialize
+creates a new resource and never applies or removes a source Modifier or Shape Key.
+The Shape-Key-only mode excludes Modifiers so a result can be rigged without silently
+baking and then repeating Armature deformation. Final evaluated output records that
+all current deformation is baked and is not assumed to be a reusable rest mesh.
+
+Character-specific completion remains a workflow over generic tools. Missing surface
+under hair or clothing is underdetermined and requires an explicit template or cage;
+the bridge does not claim to reconstruct undisclosed source geometry. Component
+catalogs, Collection organization, and cross-object batches follow in 0.15.1; bounded
+library append and template workflows follow in 0.16. Shape-Key structure writes and
+Modifier Apply remain separate later authorities. See
+`docs/requirements/modular-character-surface.md`.
+
 Tool count is not a success metric. A small composable surface with precise
 preconditions is preferable to dozens of overlapping convenience tools.
 
@@ -600,6 +616,19 @@ hiding either responsibility in Modifier tools.
 - Keep material surface detail, Modifier effects, Mesh structure, UV, and weight
   authority as separate decisions.
 
+### Phase 10 — materialized Mesh modules and rig assembly
+
+Status: accepted 0.15.0 direction; implementation follows the merged 0.14 baseline.
+
+- Materialize BASE, current Shape-Key-only, or final evaluated geometry into a new
+  independent object with explicit material/UV/weight copy policy.
+- Extract one or more disconnected face components into one exact object branch.
+- Inspect and bind existing deform groups to an exact Armature without generating or
+  rewriting weights implicitly.
+- Keep the source object, Shape Keys, Modifier stack, and binding unchanged.
+- Validate the complete materialize → extract → bind chain with rollback, native-save
+  adoption, save/reload, and a real modular-character fixture.
+
 ## 10. Acceptance criteria for the first milestone
 
 Completed on Blender 4.2.23 LTS; see the validation record under `docs/validation`.
@@ -644,6 +673,8 @@ research scenarios.
   drivers/startup scripts; arbitrary inline Python remains out of scope.
 - Which bounded retopology and custom-normal operations can preserve the 0.14 attribute
   evidence without exposing arbitrary Mesh arrays.
+- How a later Shape-Key migration authority should preserve relative-key graphs,
+  drivers, masks, and animation without being conflated with 0.15 materialization.
 - Blender 5.x capability policy and the project license; decide both before publishing.
 
 ## 13. Guidance for a new Codex task
