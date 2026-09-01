@@ -1,8 +1,8 @@
 # Blender MCP：角色缺失表面补全与可拆装模块需求
 
-- Status: accepted product requirements and staged roadmap
+- Status: accepted requirements; P0 implemented in 0.15.0 and P1 implemented in 0.15.1
 - Evidence baseline: Blender Research MCP 0.14.0, audited 2026-09-01
-- First implementation milestone: 0.15.0 materialize, extract, and rig binding
+- Implemented milestones: 0.15.0 materialize/extract/rig binding; 0.15.1 catalog/assembly
 
 ## 1. 文档目的
 

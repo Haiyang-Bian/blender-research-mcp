@@ -51,6 +51,10 @@ Group schema、稀疏蒙皮权重、属性传递和 UV/权重验证。拓扑与�
 0.15.0 新增显式 BASE / SHAPE_KEYS_CURRENT / FINAL_EVALUATED 实体化、非连通 FACE
 区域提取，以及精确 Armature 检查与绑定。三项能力可在同一 transaction-v10 中
 组合为独立工作副本、逻辑模块和骨架装配链，不修改、Apply 或替换源对象。
+0.15.1 新增 revision-bound ComponentCatalog、精确 Collection 创建/链接、通用对象
+父级设置，以及跨对象 `mesh.batch.execute` v3。批处理可将 materialize、连通片目录、
+extract、场景组织和 rig.bind 串成一次 transaction-v11 原子装配，并返回带 SHA-256
+的会话级 assembly manifest，而不向 `.blend` 写入项目专用元数据。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -83,6 +87,8 @@ SelectionSet 与求值曲面拟合见
 角色实体化见
 [0.15.0 路线图](docs/roadmap/0.15.0-modular-character-materialization.md)和
 [0.15.0 验收记录](docs/validation/2026-09-01-modular-character-materialization.md)。
+0.15.1 跨对象装配见
+[0.15.1 路线图](docs/roadmap/0.15.1-component-catalog-assembly.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -266,6 +272,24 @@ Modifier，创建或更新一个 Armature Modifier，并按显式策略设置对
 详细契约见
 [0.15.0 路线图](docs/roadmap/0.15.0-modular-character-materialization.md)。
 
+## 0.15.1 ComponentCatalog 与跨对象装配
+
+`mesh.component_catalog.prepare/inspect/select/release` 将一个实时 FACE
+SelectionSet 按共享边划分为紧凑、可分页的连通片目录；只有选中的组件才物化为新
+SelectionSet。Catalog 与对象、Mesh、用户集、revision 和完整指纹绑定，不受用户
+视图或真实选择影响，Mesh 改变后会明确 stale。
+
+`collection.inspect/create/link_object/unlink_object` 和
+`object.parent.set/clear` 提供精确、可回退的场景组织。移动对象需先链接目标
+Collection 再取消旧链接；最后一个 Collection 链接不会被隐式移除。父级操作显式
+选择 KEEP_WORLD 或 KEEP_LOCAL，并拒绝父级循环。
+
+`mesh.batch.execute` v3 可用别名在一次主线程调用中编排 materialize、Catalog、
+extract、Collection、父级和 rig.bind。运行期失败回退完整活动事务，成功写入只推进
+一次 generation；响应中的 `assembly_manifest` 汇总最终资源和证据并计算 SHA-256，
+但不持久写入项目属性。详细边界见
+[0.15.1 路线图](docs/roadmap/0.15.1-component-catalog-assembly.md)。
+
 ## 目录
 
 ~~~text
@@ -296,7 +320,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.15.0
+uv run --no-sync python scripts/build_addon.py --version 0.15.1
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认

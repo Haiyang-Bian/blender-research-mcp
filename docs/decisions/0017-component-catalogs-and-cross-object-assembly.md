@@ -1,6 +1,6 @@
 # 0017 — Revision-bound component catalogs and cross-object assembly
 
-- Status: accepted for 0.15.1 implementation
+- Status: implemented in 0.15.1
 - Date: 2026-09-01
 
 ## Context

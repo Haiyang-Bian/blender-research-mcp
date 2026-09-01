@@ -76,7 +76,7 @@ transaction capability 9. Its automated and Blender 4.2.23 gates have passed. Se
 [decision 0015](decisions/0015-uv-and-skin-weight-authority.md), plus the
 [0.14 validation record](validation/2026-08-31-uv-and-skin-weights.md).
 
-Version 0.15.0 is the current implementation milestone. It creates independent Mesh
+Version 0.15.0 is the previous implementation milestone. It creates independent Mesh
 outputs from explicit BASE, SHAPE_KEYS_CURRENT, or FINAL_EVALUATED evidence, extracts
 one or more disconnected FACE regions with exact branch lineage, and binds existing
 weights to an exact Armature under transaction capability 10. The deterministic and
@@ -85,7 +85,7 @@ full `test-model.blend` gates passed; see the
 It does not authorize Shape-Key structure editing or Modifier Apply. See the
 [modular character surface requirements](requirements/modular-character-surface.md).
 
-Version 0.15.1 is the active implementation milestone. It adds compact revision-bound
+Version 0.15.1 is the current implementation milestone. It adds compact revision-bound
 ComponentCatalogs, exact Collection/object-parent organization, and cross-object
 `mesh.batch.execute` v3 without adding persistent project metadata. See the
 [0.15.1 roadmap](roadmap/0.15.1-component-catalog-assembly.md) and

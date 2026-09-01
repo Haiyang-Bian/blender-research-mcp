@@ -32,9 +32,12 @@
    Independent evaluated/base outputs, disconnected extraction, and exact Armature
    assembly require `mesh_materialization: 1`, `mesh_extraction: 1`,
    `rig_binding: 1`, `mesh_component_map: 3`, and `transactions: 10`.
+   Compact connected-component evidence and cross-object assembly require
+   `mesh_component_catalog: 1`, `collection_authoring: 1`,
+   `object_parenting: 1`, `mesh_batch: 3`, and `transactions: 11`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.15.0.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.15.1.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -385,6 +388,38 @@ drops custom split normals and unsupported generic attributes because 0.15 has n
 authority for those domains. Missing body surface beneath clothes or hair still needs an
 explicit template or cage; these tools do not reconstruct geometry that is absent from
 the source.
+
+## Catalog components and assemble objects declaratively
+
+Use this transaction-v11 workflow when one semantic FACE region contains many shells,
+or when materialization, extraction, organization, and binding must succeed atomically:
+
+1. Build a live non-empty FACE SelectionSet. Call `mesh.component_catalog.prepare`
+   with only the metrics needed for review, then inspect catalog pages. Components are
+   ordered by minimum face index and identified only inside the exact catalog revision.
+2. Choose one or more exact component identities and call
+   `mesh.component_catalog.select`. The resulting FACE SelectionSet preserves source
+   weights. Rebuild a stale catalog after any Mesh revision change; do not infer a
+   component from an old identity or bounds.
+3. Inspect the Scene root or exact Collection before `collection.create`. Move an
+   object by linking the destination first, then unlinking the old Collection; the API
+   refuses to remove an object's last link. Use `object.parent.set/clear` with explicit
+   KEEP_WORLD or KEEP_LOCAL semantics and exact current parent evidence.
+4. Prefer `mesh.batch.execute` v3 when materialize → catalog → extract → organize →
+   bind is one logical unit. Bind each input once, define aliases before use, and give
+   every produced object, map, selection, catalog, Collection, and binding report a
+   unique alias.
+5. Review ordered step reports and `assembly_manifest`. The manifest is response-only
+   SHA-256 evidence; it is not a persistent `.blend` registry. A repeated identical
+   idempotency UUID returns the cached manifest without creating another resource.
+6. Static preflight errors write nothing. Any runtime or validation failure rolls the
+   complete active transaction back, including writes made before the batch. Stop on
+   `MESH_BATCH_RESTORE_FAILED`; native Blender save still accepts the visible state in
+   main-thread order.
+
+Catalogs are session resources and are cleared on file load or add-on restart. They
+do not replace ComponentMaps: use Catalogs to choose connected shells in one revision,
+then use branch Maps and SelectionSet remapping after topology or extraction changes.
 
 ## Select, fit, and validate a Mesh region
 

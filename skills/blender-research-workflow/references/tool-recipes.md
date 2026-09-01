@@ -375,9 +375,12 @@ Use this recipe with `mesh_component_map: 2`, `mesh_topology: 3`,
 With `mesh_batch: 2`, the batch language also accepts typed `uv_edit`, `weights_edit`,
 `attribute_transfer`, and UV/weight validation steps. UV revision changes automatically
 rebind current SelectionSet aliases; weight-only changes refresh weight evidence without
-invalidating geometry selections. It remains Mesh-only: do not place object settings,
-materials, World, rendering, arbitrary operators, Shape Keys, Modifier Apply, RNA, or
-Python into it.
+invalidating geometry selections.
+
+With `mesh_batch: 3`, bind exact Object, Armature, Collection, and ComponentCatalog
+inputs and use the typed materialize, catalog, extract, Collection, parent, and rig-bind
+steps. The batch still does not accept general object settings, materials, World,
+rendering, arbitrary operators, Shape-Key writes, Modifier Apply, RNA, or Python.
 
 ## UV and skin-weight authoring
 
@@ -443,6 +446,42 @@ Materialize may discard custom split normals and unsupported generic attributes 
 they are outside its declared copy domains. Missing body surface under clothing or hair
 cannot be reconstructed from absent data; use an explicit template or cage in a later
 authorized workflow rather than claiming recovery.
+
+## Component catalogs and cross-object assembly
+
+Use this recipe with `mesh_component_catalog: 1`, `collection_authoring: 1`,
+`object_parenting: 1`, `mesh_batch: 3`, and `transactions >= 11`:
+
+1. Start from one live non-empty FACE SelectionSet. Prepare a ComponentCatalog with the
+   required metrics only, then inspect pages before choosing component identities.
+   Components are sorted by minimum face index; bounds and areas are evidence, not
+   replacement identities.
+2. Select at most 4,096 exact catalog component identities. The returned SelectionSet
+   preserves source weights. A Mesh revision or user-set change makes the catalog stale;
+   prepare a new catalog instead of reusing identities. Release no-longer-needed catalogs
+   when approaching the 16-resource or aggregate reference limits.
+3. Inspect the Scene root or exact parent Collection before creating a Collection.
+   Move an object by linking the destination first and unlinking the source second; the
+   final object link is protected. Choose KEEP_WORLD or KEEP_LOCAL explicitly for parent
+   set/clear, and never infer an existing BONE parent when clearing it.
+4. For a coherent modular assembly, bind exact initial Object/Mesh/Armature/Collection/
+   Catalog evidence to unique aliases. Define every output alias before any later step
+   references it. Materialized and extracted outputs become new targets immediately;
+   SOURCE and EXTRACTED Maps remain separate branches.
+5. Catalogs expire when their target revision changes, but SelectionSets already
+   materialized from them continue through the existing exact ComponentMap remapping.
+   Do not attempt to remap a Catalog or choose a shell from spatial similarity.
+6. Review ordered step reports plus the final `assembly_manifest`: objects, Meshes,
+   Collections, parents, rigs, Maps, selections, catalogs, validations, resource counts,
+   and SHA-256. The manifest is invocation evidence only and is not stored in `.blend`
+   custom properties.
+7. Replaying the exact payload and idempotency UUID returns the cached result without
+   allocating resources. A new UUID with an existing output name is a preflight conflict,
+   not permission to accept Blender's automatic suffix.
+8. A preflight failure writes nothing. Any runtime or assertion failure rolls back the
+   whole active transaction, including earlier writes outside the batch. Stop on
+   `MESH_BATCH_RESTORE_FAILED`; native save still accepts the complete visible state in
+   actual Blender main-thread order.
 
 ## Revision-bound selection and evaluated-surface fitting
 
