@@ -280,6 +280,8 @@ def context_summary() -> dict[str, Any]:
 
 def inspect_object(object_name: str) -> dict[str, Any]:
     from .object_settings_ops import object_data_summary
+    from .scene_organization_ops import object_collection_fingerprint
+    from .structural_ops import structure_fingerprint
 
     obj = bpy.data.objects.get(object_name)
     if obj is None:
@@ -290,6 +292,7 @@ def inspect_object(object_name: str) -> dict[str, Any]:
         )
     evaluated = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
     world_bounds = [list(evaluated.matrix_world @ Vector(corner)) for corner in evaluated.bound_box]
+    parent = obj.parent
     return {
         "name": obj.name,
         "name_full": obj.name_full,
@@ -311,6 +314,25 @@ def inspect_object(object_name: str) -> dict[str, Any]:
             "hide_render": bool(obj.hide_render),
         },
         "data": object_data_summary(obj),
+        "parent": (
+            {
+                "name": parent.name,
+                "session_identity": f"object:{parent.as_pointer():x}",
+                "type": str(obj.parent_type),
+                "bone": str(obj.parent_bone),
+            }
+            if parent is not None
+            else None
+        ),
+        "collections": [
+            {
+                "name": collection.name,
+                "session_identity": f"collection:{collection.as_pointer():x}",
+            }
+            for collection in obj.users_collection
+        ],
+        "structure_fingerprint": structure_fingerprint("object", obj),
+        "collections_fingerprint": object_collection_fingerprint(obj),
         "selected": obj.select_get(),
         "world_bounds": world_bounds,
     }

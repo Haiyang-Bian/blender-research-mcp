@@ -23,7 +23,6 @@ from .mesh_deform_ops import DEFORM_OPERATIONS, edit_mesh_deform
 from .mesh_materialization_ops import materialize_mesh
 from .mesh_ops import (
     MeshOperationError,
-    _validate_mesh_target,
     mesh_fingerprint,
     mesh_revision_id,
     mesh_user_refs,
@@ -125,7 +124,51 @@ def _attribute_target(target: dict[str, Any], *, data_scope: str = "OBJECT") -> 
 
 
 def _validate_target(target: dict[str, Any]) -> tuple[Any, Any]:
-    obj, mesh, _scope, _refs = _validate_mesh_target(_target_params(target))
+    object_name = target.get("object_name")
+    obj = bpy.data.objects.get(object_name) if isinstance(object_name, str) else None
+    if obj is None or obj.type != "MESH" or obj.data is None:
+        _batch_error(
+            "MESH_BATCH_TARGET_MISMATCH",
+            f"Mesh batch target does not exist: {object_name}",
+        )
+    mesh = obj.data
+    actual_refs = mesh_user_refs(mesh)
+    expected_raw = target.get("expected_mesh_user_objects")
+    if not isinstance(expected_raw, list):
+        _batch_error(
+            "MESH_BATCH_TARGET_MISMATCH",
+            f"Mesh batch target has invalid user evidence: {object_name}",
+        )
+    expected_refs = tuple(
+        sorted(
+            (
+                str(item.get("object_name")),
+                str(item.get("expected_object_identity")),
+            )
+            for item in expected_raw
+            if isinstance(item, dict)
+        )
+    )
+    expected = {
+        "object_identity": target.get("expected_object_identity"),
+        "mesh_identity": target.get("expected_mesh_identity"),
+        "mesh_users": target.get("expected_mesh_users"),
+        "mesh_user_objects": expected_refs,
+        "mesh_fingerprint": target.get("expected_mesh_fingerprint"),
+    }
+    actual = {
+        "object_identity": session_identity("object", obj),
+        "mesh_identity": session_identity("mesh", mesh),
+        "mesh_users": int(mesh.users),
+        "mesh_user_objects": actual_refs,
+        "mesh_fingerprint": mesh_fingerprint(mesh),
+    }
+    if expected != actual:
+        _batch_error(
+            "MESH_BATCH_TARGET_MISMATCH",
+            f"Mesh batch target evidence changed: {object_name}",
+            details={"expected": expected, "actual": actual},
+        )
     return obj, mesh
 
 
@@ -523,7 +566,7 @@ def _preflight(
                         "MESH_BATCH_TARGET_MISMATCH", "Materialization source disappeared"
                     )
                 if evaluation.get("type") == "SHAPE_KEYS_CURRENT" and (
-                    shape_key_state_fingerprint(source_obj.data)
+                    shape_key_state_fingerprint(source_obj)
                     != evaluation.get("expected_shape_key_state_fingerprint")
                 ):
                     _batch_error(
@@ -794,6 +837,8 @@ def _remap_target_selections(
     selections: dict[str, dict[str, Any]],
     target_alias: str,
     component_map_id: str,
+    *,
+    destination_alias: str | None = None,
 ) -> list[dict[str, Any]]:
     reports = []
     for alias, binding in selections.items():
@@ -809,6 +854,8 @@ def _remap_target_selections(
             },
         )
         binding["selection_id"] = result["selection"]["selection_id"]
+        if destination_alias is not None:
+            binding["target_alias"] = destination_alias
         reports.append({"alias": alias, **result})
     return reports
 
@@ -1143,8 +1190,16 @@ def execute_mesh_batch(
                 }
                 component_map = result.get("component_map")
                 composed = None
+                automatic_selection_remaps: list[dict[str, Any]] = []
                 if isinstance(component_map, dict):
                     component_map_id = str(component_map["component_map_id"])
+                    automatic_selection_remaps = _remap_target_selections(
+                        book,
+                        selections,
+                        source_alias,
+                        component_map_id,
+                        destination_alias=output_alias,
+                    )
                     composed = _append_map(book, branches[output_alias], component_map_id)
                     if step.get("map_alias") is not None:
                         maps[str(step["map_alias"])] = component_map_id
@@ -1154,7 +1209,11 @@ def execute_mesh_batch(
                         "Materialization changed topology and did not produce an exact "
                         "ComponentMap",
                     )
-                report = {**result, "composed_component_map": composed}
+                report = {
+                    **result,
+                    "automatic_selection_remaps": automatic_selection_remaps,
+                    "composed_component_map": composed,
+                }
             elif step_type == "mesh_extract":
                 target_alias = str(step["target_alias"])
                 selection_alias = str(step["selection_alias"])

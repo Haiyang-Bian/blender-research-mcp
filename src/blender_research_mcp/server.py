@@ -2385,6 +2385,10 @@ def create_server(
                     payload.pop("source_attribute_policy", None)
                 else:
                     requires_batch_v2 = True
+                if separated_policy == default_policy:
+                    payload.pop("separated_attribute_policy", None)
+                else:
+                    requires_batch_v2 = True
             elif step_type in {
                 "component_catalog_prepare",
                 "component_catalog_select",
@@ -2412,10 +2416,6 @@ def create_server(
             elif step_type == "rig_bind":
                 await require_capability(client, "rig_binding")
                 requires_batch_v3 = True
-                if separated_policy == default_policy:
-                    payload.pop("separated_attribute_policy", None)
-                else:
-                    requires_batch_v2 = True
         if requires_batch_v2:
             client.require_capability("mesh_batch", 2)
             client.require_capability("mesh_topology", 4)

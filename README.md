@@ -88,7 +88,8 @@ SelectionSet 与求值曲面拟合见
 [0.15.0 路线图](docs/roadmap/0.15.0-modular-character-materialization.md)和
 [0.15.0 验收记录](docs/validation/2026-09-01-modular-character-materialization.md)。
 0.15.1 跨对象装配见
-[0.15.1 路线图](docs/roadmap/0.15.1-component-catalog-assembly.md)。
+[0.15.1 路线图](docs/roadmap/0.15.1-component-catalog-assembly.md)和
+[0.15.1 验收记录](docs/validation/2026-09-01-component-catalog-assembly.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见

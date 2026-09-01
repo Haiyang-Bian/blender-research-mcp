@@ -633,7 +633,8 @@ Status: implemented and validated in 0.15.0 on the merged 0.14 baseline.
 
 ### Phase 11 — component catalogs and cross-object assembly
 
-Status: implemented in 0.15.1; Blender release evidence is recorded separately.
+Status: implemented and validated in 0.15.1; see
+`docs/validation/2026-09-01-component-catalog-assembly.md`.
 
 - Partition a FACE SelectionSet into a compact revision-bound ComponentCatalog without
   eagerly consuming SelectionSet resources.

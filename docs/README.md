@@ -89,7 +89,9 @@ Version 0.15.1 is the current implementation milestone. It adds compact revision
 ComponentCatalogs, exact Collection/object-parent organization, and cross-object
 `mesh.batch.execute` v3 without adding persistent project metadata. See the
 [0.15.1 roadmap](roadmap/0.15.1-component-catalog-assembly.md) and
-[decision 0017](decisions/0017-component-catalogs-and-cross-object-assembly.md).
+[decision 0017](decisions/0017-component-catalogs-and-cross-object-assembly.md). The
+automated and Blender 4.2.23 gates are recorded in
+[the 0.15.1 validation record](validation/2026-09-01-component-catalog-assembly.md).
 
 Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
 SurfaceRefs, topology-preserving surface deformation, and quantitative Mesh validation;

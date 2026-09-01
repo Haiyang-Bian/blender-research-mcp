@@ -3,6 +3,7 @@ import asyncio
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+import blender_research_mcp.server as server_module
 from blender_research_mcp.server import MaterialInputValue, create_server
 
 
@@ -308,6 +309,8 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     material_inspect = tools_by_name["material.inspect"]
     assert material_inspect.annotations is not None
     assert material_inspect.annotations.readOnlyHint is True
+
+
     assert material_inspect.inputSchema["properties"]["material_slot_index"]["maximum"] == 63
     raycast = tools_by_name["viewport.raycast"]
     assert raycast.annotations is not None
@@ -492,6 +495,82 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert render_save.annotations is not None
     assert render_save.annotations.destructiveHint is True
     assert render_save.inputSchema["properties"]["transparent"]["default"] is False
+
+
+def test_batch_v3_rig_bind_does_not_depend_on_separation_policy(monkeypatch) -> None:
+    class FakeClient:
+        def __init__(self, *, port: int) -> None:
+            self.port = port
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        async def connect(self) -> object:
+            return object()
+
+        def require_capability(self, _name: str, _version: int = 1) -> None:
+            return None
+
+        async def call(self, command: str, params=None, **_kwargs):
+            payload = {} if params is None else params
+            self.calls.append((command, payload))
+            return {"command": command, "steps": payload.get("steps", [])}
+
+        async def close(self) -> None:
+            return None
+
+    fake = FakeClient(port=9877)
+    monkeypatch.setattr(server_module, "BridgeClient", lambda **_kwargs: fake)
+    server = server_module.create_server()
+    asyncio.run(
+        server.call_tool(
+            "mesh.batch.execute",
+            {
+                "transaction_id": "tx-1",
+                "targets": [
+                    {
+                        "alias": "mesh",
+                        "object_name": "Mesh",
+                        "expected_object_identity": "object:1",
+                        "expected_mesh_identity": "mesh:1",
+                        "expected_mesh_users": 1,
+                        "expected_mesh_user_objects": [
+                            {
+                                "object_name": "Mesh",
+                                "expected_object_identity": "object:1",
+                            }
+                        ],
+                        "expected_mesh_fingerprint": "a" * 64,
+                    }
+                ],
+                "inputs": [
+                    {
+                        "type": "armature",
+                        "alias": "rig",
+                        "target": {
+                            "object_name": "Rig",
+                            "expected_object_identity": "object:2",
+                            "expected_data_identity": "armature:1",
+                            "expected_bone_schema_fingerprint": "b" * 64,
+                        },
+                    }
+                ],
+                "steps": [
+                    {
+                        "type": "rig_bind",
+                        "mesh_target_alias": "mesh",
+                        "armature_alias": "rig",
+                        "modifier": {"name": "Armature", "expected_existing": None},
+                        "parenting": "KEEP_WORLD",
+                        "group_scope": {"type": "ALL_MATCHED"},
+                        "output_binding_alias": "binding",
+                    }
+                ],
+                "expected_scene_generation": 4,
+                "idempotency_key": "123e4567-e89b-12d3-a456-426614174000",
+            },
+        )
+    )
+    assert fake.calls[-1][0] == "mesh.batch.execute"
+    assert fake.calls[-1][1]["steps"][0]["type"] == "rig_bind"
 
 
 def test_material_input_value_preserves_json_types() -> None:
