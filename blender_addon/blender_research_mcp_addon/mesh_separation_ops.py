@@ -9,7 +9,12 @@ from typing import Any
 import bmesh
 import bpy
 
-from .authoring_ops import AuthoringOperationError, duplicate_object, object_summary
+from .authoring_ops import (
+    AuthoringOperationError,
+    duplicate_object,
+    object_summary,
+    require_collection,
+)
 from .lookdev_ops import session_identity
 from .mesh_component_map import remap_selection
 from .mesh_component_map_model import DOMAINS, ComponentMapRecord, make_component_map
@@ -74,7 +79,7 @@ def _selection(
     return selection
 
 
-def _validate_connected(mesh: Any, indices: tuple[int, ...]) -> None:
+def _component_count(mesh: Any, indices: tuple[int, ...]) -> int:
     face_edges = tuple(
         tuple(
             int(mesh.loops[loop_index].edge_index)
@@ -86,12 +91,16 @@ def _validate_connected(mesh: Any, indices: tuple[int, ...]) -> None:
         for polygon in mesh.polygons
     )
     try:
-        component_count = face_region_component_count(face_edges, indices)
+        return face_region_component_count(face_edges, indices)
     except ValueError as exc:
         raise MeshOperationError(
             "MESH_SEPARATION_SELECTION_INVALID",
             "SelectionSet contains a face outside the current Mesh",
         ) from exc
+
+
+def _validate_connected(mesh: Any, indices: tuple[int, ...]) -> int:
+    component_count = _component_count(mesh, indices)
     if component_count != 1:
         raise MeshOperationError(
             "MESH_SEPARATION_DISCONNECTED",
@@ -101,6 +110,7 @@ def _validate_connected(mesh: Any, indices: tuple[int, ...]) -> None:
                 "connected_components": component_count,
             },
         )
+    return component_count
 
 
 def _validate_separation_attributes(obj: Any, mesh: Any) -> None:
@@ -173,10 +183,11 @@ def _branch_map(
     relations: dict[str, tuple[Any, ...]],
     created: dict[str, tuple[int, ...]],
     deleted: dict[str, tuple[int, ...]],
+    operation: str = "separate",
 ) -> ComponentMapRecord:
     return make_component_map(
         transaction_id=transaction.transaction_id,
-        operation="separate",
+        operation=operation,
         before=before,
         after=_map_evidence(obj, mesh),
         after_users=int(mesh.users),
@@ -274,11 +285,15 @@ def separate_mesh(
     book: MeshResourceBook,
     params: dict[str, Any],
 ) -> dict[str, Any]:
+    operation_name = str(params.get("_operation", "separate"))
+    is_extract = operation_name == "extract"
     target_params = {**params, "data_scope": "OBJECT"}
     obj, initial_mesh, _scope, _refs = _validate_mesh_target(target_params)
     _validate_separation_attributes(obj, initial_mesh)
     selection = _selection(book, params.get("selection_id"), obj, initial_mesh)
-    _validate_connected(initial_mesh, selection.indices)
+    component_count = _component_count(initial_mesh, selection.indices)
+    if not is_extract:
+        _validate_connected(initial_mesh, selection.indices)
 
     new_name = params.get("new_object_name")
     if not isinstance(new_name, str) or not new_name:
@@ -384,6 +399,14 @@ def separate_mesh(
             transform=None,
         )
         duplicate_mesh = duplicate.data
+        output_policy = params.get("output_policy", {}) if is_extract else {}
+        if output_policy.get("parent") == "CLEAR_KEEP_WORLD":
+            matrix_world = duplicate.matrix_world.copy()
+            duplicate.parent = None
+            duplicate.matrix_world = matrix_world
+        if output_policy.get("modifiers") == "DROP":
+            for modifier in list(duplicate.modifiers):
+                duplicate.modifiers.remove(modifier)
         separated_attribute_evidence = prepare_topology_attributes(
             duplicate, duplicate_mesh, separated_policy
         )
@@ -404,6 +427,25 @@ def separate_mesh(
         separated_migration = finish_topology_attributes(
             duplicate, duplicate_mesh, separated_attribute_evidence
         )
+        compacted_materials = None
+        if output_policy.get("material_slots") == "COMPACT":
+            old_materials = list(duplicate_mesh.materials)
+            used = (
+                sorted({int(face.material_index) for face in duplicate_mesh.polygons})
+                if old_materials
+                else []
+            )
+            remap = {old_index: new_index for new_index, old_index in enumerate(used)}
+            for face in duplicate_mesh.polygons:
+                face.material_index = remap[int(face.material_index)]
+            duplicate_mesh.materials.clear()
+            for old_index in used:
+                duplicate_mesh.materials.append(old_materials[old_index])
+            compacted_materials = {
+                "before_slots": len(old_materials),
+                "after_slots": len(duplicate_mesh.materials),
+                "old_to_new": {str(old): new for old, new in remap.items()},
+            }
         if len(source_mesh.polygons) == 0:
             raise MeshOperationError(
                 "MESH_SEPARATION_EMPTY_SOURCE", "Separation left the source Mesh empty"
@@ -444,6 +486,7 @@ def separate_mesh(
             relations=source_relations,
             created=source_created,
             deleted=source_deleted,
+            operation=operation_name,
         )
         separated_map = _branch_map(
             transaction=transaction,
@@ -455,6 +498,7 @@ def separate_mesh(
             relations=separated_relations,
             created=separated_created,
             deleted=separated_deleted,
+            operation=operation_name,
         )
         book.add_component_map(source_map)
         maps.append(source_map)
@@ -506,7 +550,7 @@ def separate_mesh(
                 object_identity=session_identity("object", obj),
                 mesh_name=source_mesh.name,
                 mesh_identity=session_identity("mesh", source_mesh),
-                operation="separate",
+                operation=operation_name,
                 before_fingerprint=before_fingerprint,
                 after_fingerprint=source_after,
                 data_scope="OBJECT",
@@ -587,7 +631,7 @@ def separate_mesh(
     return {
         "transaction_id": transaction.transaction_id,
         "changed": True,
-        "operation": "separate",
+        "operation": operation_name,
         "data_scope": "OBJECT",
         "separation_id": maps[0].separation_id,
         "source_object": object_summary(obj),
@@ -609,6 +653,9 @@ def separate_mesh(
         "separated_component_map": maps[1].summary(),
         "source_rebound_selection": source_rebound,
         "separated_selection": separated_selection,
+        "connected_components": component_count,
+        "output_policy": params.get("output_policy") if is_extract else None,
+        "material_slot_compaction": compacted_materials,
         "component_effects": {
             "duplicated_boundary": _duplicated_boundary_counts(maps[0], maps[1]),
             "source_deleted": {domain: len(maps[0].deleted.get(domain, ())) for domain in DOMAINS},
@@ -625,3 +672,110 @@ def separate_mesh(
         },
         "delta": {"types": ["mesh_edit", "object_duplicate"], "recorded": True},
     }
+
+
+_EXTRACTION_ERROR_CODES = {
+    "MESH_SEPARATION_SELECTION_INVALID": "MESH_EXTRACTION_SELECTION_INVALID",
+    "MESH_SEPARATION_EMPTY_SOURCE": "MESH_EXTRACTION_EMPTY_SOURCE",
+    "MESH_SEPARATION_NAME_CONFLICT": "MESH_EXTRACTION_NAME_CONFLICT",
+    "MESH_SEPARATION_ATTRIBUTE_UNSUPPORTED": "MESH_EXTRACTION_ATTRIBUTE_UNSUPPORTED",
+    "MESH_SEPARATION_RESTORE_FAILED": "MESH_EXTRACTION_RESTORE_FAILED",
+    "MESH_SEPARATION_FAILED": "MESH_EXTRACTION_FAILED",
+}
+
+
+def _validate_output_policy(params: dict[str, Any]) -> None:
+    output_policy = params.get("output_policy")
+    if not isinstance(output_policy, dict) or set(output_policy) != {
+        "parent",
+        "modifiers",
+        "material_slots",
+    }:
+        raise MeshOperationError(
+            "MESH_EXTRACTION_SELECTION_INVALID",
+            "output_policy must declare parent, modifiers, and material_slots",
+        )
+    if output_policy["parent"] not in {"COPY", "CLEAR_KEEP_WORLD"}:
+        raise MeshOperationError(
+            "MESH_EXTRACTION_SELECTION_INVALID", "Unsupported extraction parent policy"
+        )
+    if output_policy["modifiers"] not in {"COPY", "DROP"}:
+        raise MeshOperationError(
+            "MESH_EXTRACTION_SELECTION_INVALID", "Unsupported extraction Modifier policy"
+        )
+    if output_policy["material_slots"] not in {"PRESERVE_INDICES", "COMPACT"}:
+        raise MeshOperationError(
+            "MESH_EXTRACTION_SELECTION_INVALID", "Unsupported material-slot policy"
+        )
+
+
+def extract_preflight(book: MeshResourceBook, params: dict[str, Any]) -> dict[str, Any]:
+    _validate_output_policy(params)
+    target_params = {**params, "data_scope": "OBJECT"}
+    obj, mesh, _scope, _refs = _validate_mesh_target(target_params)
+    _validate_separation_attributes(obj, mesh)
+    selection = _selection(book, params.get("selection_id"), obj, mesh)
+    component_count = _component_count(mesh, selection.indices)
+    new_name = params.get("new_object_name")
+    if not isinstance(new_name, str) or not new_name:
+        raise MeshOperationError(
+            "MESH_EXTRACTION_NAME_CONFLICT", "new_object_name must be non-empty"
+        )
+    if bpy.data.objects.get(new_name) is not None:
+        raise MeshOperationError(
+            "MESH_EXTRACTION_NAME_CONFLICT",
+            f"An object already uses the exact name: {new_name}",
+            kind="conflict",
+        )
+    collection_name = params.get("collection_name")
+    collection_identity = params.get("expected_collection_identity")
+    if (collection_name is None) != (collection_identity is None):
+        raise MeshOperationError(
+            "MESH_EXTRACTION_SELECTION_INVALID",
+            "collection_name and expected_collection_identity must be supplied together",
+        )
+    if collection_name is not None:
+        require_collection(str(collection_name), str(collection_identity))
+    return {
+        "writable": True,
+        "object": object_summary(obj),
+        "selection_id": selection.selection_id,
+        "selected_faces": len(selection.indices),
+        "connected_components": component_count,
+        "source_faces_after": len(mesh.polygons) - len(selection.indices),
+        "output_faces": len(selection.indices),
+        "new_object_name": new_name,
+        "output_policy": params.get("output_policy"),
+        "source_attribute_policy": params.get("source_attribute_policy", {}),
+        "extracted_attribute_policy": params.get("extracted_attribute_policy", {}),
+    }
+
+
+def extract_mesh(
+    transaction: Transaction,
+    book: MeshResourceBook,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    _validate_output_policy(params)
+    try:
+        result = separate_mesh(
+            transaction,
+            book,
+            {
+                **params,
+                "_operation": "extract",
+                "separated_attribute_policy": params.get("extracted_attribute_policy", {}),
+            },
+        )
+    except MeshOperationError as exc:
+        code = _EXTRACTION_ERROR_CODES.get(exc.code, exc.code)
+        if code == exc.code:
+            raise
+        raise MeshOperationError(code, str(exc), kind=exc.kind, details=exc.details) from exc
+    result["extracted_object"] = result.pop("separated_object")
+    result["extracted_mesh"] = result.pop("separated_mesh")
+    result["extracted_mesh_fingerprint"] = result.pop("separated_mesh_fingerprint")
+    result["extracted_counts"] = result.pop("separated_counts")
+    result["extracted_component_map"] = result.pop("separated_component_map")
+    result["extracted_selection"] = result.pop("separated_selection")
+    return result

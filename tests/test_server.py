@@ -8,7 +8,7 @@ from blender_research_mcp.server import MaterialInputValue, create_server
 
 def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     server = create_server()
-    assert server._mcp_server.version == "0.14.0"
+    assert server._mcp_server.version == "0.15.0"
     tools = asyncio.run(server.list_tools())
     assert [tool.name for tool in tools] == [
         "application.status",
@@ -63,6 +63,11 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "mesh.uv.edit",
         "mesh.weights.edit",
         "mesh.attribute.transfer",
+        "rig.inspect",
+        "rig.bind",
+        "mesh.extract.preflight",
+        "mesh.extract",
+        "mesh.materialize",
         "mesh.separate",
         "mesh.batch.execute",
         "shape_key.set_value",
@@ -162,6 +167,30 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert mesh_separate.annotations.openWorldHint is False
     assert "data_scope" not in mesh_separate.inputSchema["properties"]
     assert mesh_separate.inputSchema["properties"]["new_object_name"]["maxLength"] == 255
+    materialize = tools_by_name["mesh.materialize"]
+    assert materialize.annotations is not None
+    assert materialize.annotations.destructiveHint is True
+    evaluation_schema = materialize.inputSchema["properties"]["evaluation"]
+    assert evaluation_schema["discriminator"]["propertyName"] == "type"
+    assert len(evaluation_schema["oneOf"]) == 3
+    extract_preflight = tools_by_name["mesh.extract.preflight"]
+    assert extract_preflight.annotations is not None
+    assert extract_preflight.annotations.readOnlyHint is True
+    extract = tools_by_name["mesh.extract"]
+    assert extract.annotations is not None
+    assert extract.annotations.destructiveHint is True
+    assert "data_scope" not in extract.inputSchema["properties"]
+    rig_inspect = tools_by_name["rig.inspect"]
+    assert rig_inspect.annotations is not None
+    assert rig_inspect.annotations.readOnlyHint is True
+    rig_bind = tools_by_name["rig.bind"]
+    assert rig_bind.annotations is not None
+    assert rig_bind.annotations.destructiveHint is True
+    assert rig_bind.inputSchema["properties"]["parenting"]["enum"] == [
+        "NONE",
+        "KEEP_WORLD",
+        "KEEP_LOCAL",
+    ]
     mesh_batch = tools_by_name["mesh.batch.execute"]
     assert mesh_batch.annotations is not None
     assert mesh_batch.annotations.readOnlyHint is False

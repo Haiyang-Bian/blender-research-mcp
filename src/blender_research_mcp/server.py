@@ -72,6 +72,17 @@ from blender_research_mcp.mesh_authoring import (
     MeshUserObject,
 )
 from blender_research_mcp.mesh_batch import BatchInputs, BatchSteps, BatchTargets
+from blender_research_mcp.mesh_modular import (
+    ArmatureTarget,
+    ExtractMeshTarget,
+    ExtractOutputPolicy,
+    MaterializeCopyPolicy,
+    MaterializeEvaluation,
+    MaterializeSource,
+    RigGroupScope,
+    RigMeshTarget,
+    RigModifierPolicy,
+)
 from blender_research_mcp.mesh_resources import (
     MeshDomain,
     MeshRevisionId,
@@ -1701,6 +1712,199 @@ def create_server(
                 "source": source.model_dump(exclude_none=True),
                 "target": target.model_dump(exclude_none=True),
                 "transfer": transfer.model_dump(exclude_none=True),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="rig.inspect",
+        description=(
+            "Inspect exact Mesh parenting, Armature Modifiers, bones, matching Vertex "
+            "Groups, sparse weight coverage, and paged binding evidence."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def rig_inspect(
+        object_name: ObjectName,
+        armature_object_name: ObjectName | None = None,
+        offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=512)] = 256,
+    ) -> dict[str, Any]:
+        await require_capability(client, "rig_binding")
+        return await client.call(
+            "rig.inspect",
+            {
+                "object_name": object_name,
+                "armature_object_name": armature_object_name,
+                "offset": offset,
+                "limit": limit,
+            },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="rig.bind",
+        description=(
+            "Create or update one exact Armature Modifier and optional object parent in "
+            "an active transaction without transferring or changing weights."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def rig_bind(
+        transaction_id: TransactionId,
+        mesh_target: RigMeshTarget,
+        armature_target: ArmatureTarget,
+        modifier: RigModifierPolicy,
+        parenting: Literal["NONE", "KEEP_WORLD", "KEEP_LOCAL"],
+        group_scope: RigGroupScope,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "rig_binding")
+        client.require_capability("transactions", 10)
+        return await client.call(
+            "rig.bind",
+            {
+                "transaction_id": transaction_id,
+                "mesh_target": mesh_target.model_dump(),
+                "armature_target": armature_target.model_dump(),
+                "modifier": modifier.model_dump(),
+                "parenting": parenting,
+                "group_scope": group_scope.model_dump(),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="mesh.extract.preflight",
+        description=(
+            "Validate a bounded, possibly disconnected proper-subset FACE SelectionSet "
+            "and report exact extraction size and policy evidence without changing Blender."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_extract_preflight(
+        target: ExtractMeshTarget,
+        selection_id: SelectionId,
+        new_object_name: MeshObjectName,
+        output_policy: ExtractOutputPolicy,
+        source_attribute_policy: MeshAttributePolicy,
+        extracted_attribute_policy: MeshAttributePolicy,
+        collection_name: MeshObjectName | None = None,
+        expected_collection_identity: SessionIdentity | None = None,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_extraction")
+        client.require_capability("mesh_component_map", 3)
+        if (collection_name is None) != (expected_collection_identity is None):
+            raise ValueError(
+                "collection_name and expected_collection_identity must be supplied together"
+            )
+        return await client.call(
+            "mesh.extract.preflight",
+            {
+                **target.model_dump(),
+                "selection_id": selection_id,
+                "new_object_name": new_object_name,
+                "output_policy": output_policy.model_dump(),
+                "source_attribute_policy": source_attribute_policy.model_dump(),
+                "extracted_attribute_policy": extracted_attribute_policy.model_dump(),
+                "collection_name": collection_name,
+                "expected_collection_identity": expected_collection_identity,
+            },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.extract",
+        description=(
+            "Transactionally extract one or more FACE components into one exact object "
+            "branch with explicit parent, Modifier, material-slot, UV, and weight policies."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def mesh_extract(
+        transaction_id: TransactionId,
+        target: ExtractMeshTarget,
+        selection_id: SelectionId,
+        new_object_name: MeshObjectName,
+        output_policy: ExtractOutputPolicy,
+        source_attribute_policy: MeshAttributePolicy,
+        extracted_attribute_policy: MeshAttributePolicy,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        collection_name: MeshObjectName | None = None,
+        expected_collection_identity: SessionIdentity | None = None,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_extraction")
+        client.require_capability("mesh_component_map", 3)
+        client.require_capability("transactions", 10)
+        if (collection_name is None) != (expected_collection_identity is None):
+            raise ValueError(
+                "collection_name and expected_collection_identity must be supplied together"
+            )
+        return await client.call(
+            "mesh.extract",
+            {
+                "transaction_id": transaction_id,
+                **target.model_dump(),
+                "selection_id": selection_id,
+                "new_object_name": new_object_name,
+                "output_policy": output_policy.model_dump(),
+                "source_attribute_policy": source_attribute_policy.model_dump(),
+                "extracted_attribute_policy": extracted_attribute_policy.model_dump(),
+                "collection_name": collection_name,
+                "expected_collection_identity": expected_collection_identity,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="mesh.materialize",
+        description=(
+            "Create one independent no-Shape-Key, no-Modifier Mesh object from exact "
+            "BASE, current Shape-Key-only, or live final-evaluated evidence."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def mesh_materialize(
+        transaction_id: TransactionId,
+        source: MaterializeSource,
+        evaluation: MaterializeEvaluation,
+        new_object_name: MeshObjectName,
+        copy: MaterializeCopyPolicy,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+        collection_name: MeshObjectName | None = None,
+        expected_collection_identity: SessionIdentity | None = None,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_materialization")
+        client.require_capability("mesh_component_map", 3)
+        client.require_capability("transactions", 10)
+        if (collection_name is None) != (expected_collection_identity is None):
+            raise ValueError(
+                "collection_name and expected_collection_identity must be supplied together"
+            )
+        return await client.call(
+            "mesh.materialize",
+            {
+                "transaction_id": transaction_id,
+                "source": source.model_dump(),
+                "evaluation": evaluation.model_dump(),
+                "new_object_name": new_object_name,
+                "copy": copy.model_dump(),
+                "collection_name": collection_name,
+                "expected_collection_identity": expected_collection_identity,
             },
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,

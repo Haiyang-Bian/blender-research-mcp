@@ -74,6 +74,7 @@ from .mesh_component_map import (
     remap_selection,
 )
 from .mesh_deform_ops import DEFORM_OPERATIONS, edit_mesh_deform
+from .mesh_materialization_ops import materialize_mesh
 from .mesh_ops import (
     MeshOperationError,
     adopt_mesh_snapshots_for_native_save,
@@ -91,7 +92,7 @@ from .mesh_query_ops import (
     release_selection,
 )
 from .mesh_resource_model import MeshResourceBook, MeshResourceError
-from .mesh_separation_ops import separate_mesh
+from .mesh_separation_ops import extract_mesh, extract_preflight, separate_mesh
 from .mesh_surface_ops import prepare_surface, query_surface, validate_mesh
 from .mesh_topology_ops import TOPOLOGY_OPERATIONS, edit_mesh_topology
 from .mesh_uv_ops import edit_uv, inspect_uv
@@ -130,6 +131,7 @@ from .project_ops import (
     validate_open_path,
     validate_save_path,
 )
+from .rig_ops import bind_rig, inspect_rig
 from .runtime import ADDON_VERSION, ListenerRuntime
 from .structural_ops import (
     adopt_structural_delta_for_native_save,
@@ -209,8 +211,13 @@ CAPABILITIES = [
     "mesh.uv.edit",
     "mesh.weights.edit",
     "mesh.attribute.transfer",
+    "mesh.extract.preflight",
+    "mesh.extract",
+    "mesh.materialize",
     "mesh.separate",
     "mesh.batch.execute",
+    "rig.inspect",
+    "rig.bind",
     "shape_key.set_value",
     "material.set_input",
     "material.create",
@@ -235,7 +242,7 @@ CAPABILITY_VERSIONS = {
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 9,
+    "transactions": 10,
     "object_transform_scale": 1,
     "object_transform": 1,
     "object_settings": 1,
@@ -254,12 +261,15 @@ CAPABILITY_VERSIONS = {
     "mesh_surface_query": 1,
     "mesh_deformation": 1,
     "mesh_validation": 2,
-    "mesh_component_map": 2,
+    "mesh_component_map": 3,
     "mesh_separation": 2,
     "mesh_batch": 2,
     "mesh_uv": 1,
     "mesh_weights": 1,
     "mesh_attribute_transfer": 1,
+    "mesh_materialization": 1,
+    "mesh_extraction": 1,
+    "rig_binding": 1,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -284,8 +294,11 @@ MUTATION_COMMANDS = {
     "mesh.uv.edit",
     "mesh.weights.edit",
     "mesh.attribute.transfer",
+    "mesh.extract",
+    "mesh.materialize",
     "mesh.separate",
     "mesh.batch.execute",
+    "rig.bind",
     "shape_key.set_value",
     "material.set_input",
     "material.create",
@@ -1348,6 +1361,76 @@ class AddonState:
             previous_count = len(transaction.deltas)
             with self.suppress_generation():
                 result = transfer_attribute(transaction, self.mesh_resources, params)
+                bpy.context.view_layer.update()
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
+        if command == "rig.inspect":
+            return inspect_rig(
+                str(params.get("object_name", "")),
+                (
+                    str(params["armature_object_name"])
+                    if params.get("armature_object_name") is not None
+                    else None
+                ),
+                int(params.get("offset", 0)),
+                int(params.get("limit", 256)),
+            )
+        if command == "rig.bind":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            with self.suppress_generation():
+                result = bind_rig(transaction, params)
+                bpy.context.view_layer.update()
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
+        if command == "mesh.extract.preflight":
+            return extract_preflight(self.mesh_resources, params)
+        if command == "mesh.extract":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            with self.suppress_generation():
+                result = extract_mesh(transaction, self.mesh_resources, params)
+                bpy.context.view_layer.update()
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
+        if command == "mesh.materialize":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            with self.suppress_generation():
+                result = materialize_mesh(transaction, self.mesh_resources, params)
                 bpy.context.view_layer.update()
             if len(transaction.deltas) > previous_count:
                 self.scene_generation += 1
