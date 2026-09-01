@@ -2453,8 +2453,32 @@ def create_server(
         client.require_capability("mesh_topology", 3)
         client.require_capability("transactions", 8)
         step_payloads = [item.model_dump(exclude_none=True, by_alias=True) for item in steps]
+        input_payloads = [item.model_dump() for item in inputs]
         requires_batch_v2 = False
         requires_batch_v3 = False
+        requires_batch_v4 = False
+        for payload in input_payloads:
+            if payload["type"] != "library":
+                continue
+            await require_capability(client, "library_inspection")
+            evidence = await asyncio.to_thread(inspect_local_library_file, payload["path"])
+            if (
+                evidence["file_sha256"] != payload["expected_file_sha256"]
+                or evidence["size_bytes"] != payload["expected_size_bytes"]
+            ):
+                raise bridge_error(
+                    ErrorKind.CONFLICT,
+                    "LIBRARY_FILE_CHANGED",
+                    "Batch Library input differs from inspected source evidence",
+                    details={
+                        "alias": payload["alias"],
+                        "actual_file_sha256": evidence["file_sha256"],
+                        "actual_size_bytes": evidence["size_bytes"],
+                    },
+                )
+            payload["path"] = evidence["path"]
+            payload["expected_modified_ns"] = evidence["modified_ns"]
+            requires_batch_v4 = True
         for payload in step_payloads:
             step_type = payload["type"]
             if step_type == "uv_edit":
@@ -2524,6 +2548,15 @@ def create_server(
             elif step_type == "rig_bind":
                 await require_capability(client, "rig_binding")
                 requires_batch_v3 = True
+            elif step_type == "library_append":
+                await require_capability(client, "library_append")
+                requires_batch_v4 = True
+            elif step_type == "object_set":
+                await require_capability(client, "object_settings")
+                requires_batch_v4 = True
+            elif step_type == "mesh_surface_prepare":
+                await require_capability(client, "mesh_surface_query")
+                requires_batch_v4 = True
         if requires_batch_v2:
             client.require_capability("mesh_batch", 2)
             client.require_capability("mesh_topology", 4)
@@ -2531,12 +2564,15 @@ def create_server(
         if requires_batch_v3:
             client.require_capability("mesh_batch", 3)
             client.require_capability("transactions", 11)
+        if requires_batch_v4:
+            client.require_capability("mesh_batch", 4)
+            client.require_capability("transactions", 12)
         return await client.call(
             "mesh.batch.execute",
             {
                 "transaction_id": transaction_id,
                 "targets": [item.model_dump() for item in targets],
-                "inputs": [item.model_dump() for item in inputs],
+                "inputs": input_payloads,
                 "steps": step_payloads,
                 "on_error": on_error,
             },

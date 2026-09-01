@@ -4,6 +4,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 import blender_research_mcp.server as server_module
+from blender_research_mcp.library_assets import library_entry_identity
 from blender_research_mcp.server import MaterialInputValue, create_server
 
 
@@ -256,10 +257,10 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert mesh_batch.inputSchema["properties"]["steps"]["maxItems"] == 32
     step_schema = mesh_batch.inputSchema["properties"]["steps"]["items"]
     assert step_schema["discriminator"]["propertyName"] == "type"
-    assert len(step_schema["oneOf"]) == 17
+    assert len(step_schema["oneOf"]) == 20
     input_schema = mesh_batch.inputSchema["properties"]["inputs"]["items"]
     assert input_schema["discriminator"]["propertyName"] == "type"
-    assert len(input_schema["oneOf"]) == 6
+    assert len(input_schema["oneOf"]) == 7
     selection_query = tools_by_name["mesh.selection.query"]
     assert selection_query.annotations is not None
     assert selection_query.annotations.readOnlyHint is True
@@ -587,6 +588,114 @@ def test_batch_v3_rig_bind_does_not_depend_on_separation_policy(monkeypatch) -> 
     )
     assert fake.calls[-1][0] == "mesh.batch.execute"
     assert fake.calls[-1][1]["steps"][0]["type"] == "rig_bind"
+
+
+def test_batch_v4_rechecks_and_enriches_library_file_evidence(monkeypatch) -> None:
+    digest = "a" * 64
+
+    class FakeClient:
+        def __init__(self, *, port: int) -> None:
+            self.port = port
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        async def connect(self) -> object:
+            return object()
+
+        def require_capability(self, _name: str, _version: int = 1) -> None:
+            return None
+
+        async def call(self, command: str, params=None, **_kwargs):
+            payload = {} if params is None else params
+            self.calls.append((command, payload))
+            return {"command": command}
+
+        async def close(self) -> None:
+            return None
+
+    fake = FakeClient(port=9877)
+    monkeypatch.setattr(server_module, "BridgeClient", lambda **_kwargs: fake)
+    monkeypatch.setattr(
+        server_module,
+        "inspect_local_library_file",
+        lambda _path: {
+            "path": "C:\\fixtures\\templates.blend",
+            "file_sha256": digest,
+            "size_bytes": 4096,
+            "modified_ns": 123456789,
+            "blend_header": {"version": "420"},
+        },
+    )
+    server = server_module.create_server()
+    asyncio.run(
+        server.call_tool(
+            "mesh.batch.execute",
+            {
+                "transaction_id": "tx-1",
+                "targets": [
+                    {
+                        "alias": "source",
+                        "object_name": "Mesh",
+                        "expected_object_identity": "object:1",
+                        "expected_mesh_identity": "mesh:1",
+                        "expected_mesh_users": 1,
+                        "expected_mesh_user_objects": [
+                            {
+                                "object_name": "Mesh",
+                                "expected_object_identity": "object:1",
+                            }
+                        ],
+                        "expected_mesh_fingerprint": "b" * 64,
+                    }
+                ],
+                "inputs": [
+                    {
+                        "type": "collection",
+                        "alias": "templates_collection",
+                        "collection_name": "Templates",
+                        "expected_collection_identity": "collection:1",
+                        "expected_collection_structure_fingerprint": "c" * 64,
+                    },
+                    {
+                        "type": "library",
+                        "alias": "templates",
+                        "path": "C:\\fixtures\\templates.blend",
+                        "expected_file_sha256": digest,
+                        "expected_size_bytes": 4096,
+                    },
+                ],
+                "steps": [
+                    {
+                        "type": "library_append",
+                        "library_alias": "templates",
+                        "entry": {
+                            "type": "OBJECT",
+                            "name": "HeadCage",
+                            "expected_entry_identity": library_entry_identity(
+                                digest, "OBJECT", "HeadCage"
+                            ),
+                        },
+                        "output": {
+                            "type": "OBJECT",
+                            "new_object_name": "HeadCageInstance",
+                            "collection_alias": "templates_collection",
+                        },
+                        "output_root_alias": "head",
+                        "root_alias_kind": "MESH_TARGET",
+                    },
+                    {
+                        "type": "mesh_surface_prepare",
+                        "target_alias": "head",
+                        "output_surface_alias": "head_surface",
+                    },
+                ],
+                "expected_scene_generation": 4,
+                "idempotency_key": "123e4567-e89b-12d3-a456-426614174001",
+            },
+        )
+    )
+    payload = fake.calls[-1][1]
+    assert payload["inputs"][1]["expected_modified_ns"] == 123456789
+    assert payload["steps"][0]["type"] == "library_append"
 
 
 def test_material_input_value_preserves_json_types() -> None:

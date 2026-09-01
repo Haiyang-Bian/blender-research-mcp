@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
 from blender_research_mcp.authoring import FiniteNumber, Vector3
+from blender_research_mcp.library_assets import LibraryEntry
 from blender_research_mcp.mesh_attributes import (
     AttributeComponentMapIds,
     GroupMapping,
@@ -44,6 +45,7 @@ from blender_research_mcp.mesh_resources import (
     MeshDomain,
     SelectionId,
     SelectionQuery,
+    SurfaceGeometry,
     SurfaceId,
     ValidationCheck,
 )
@@ -52,6 +54,7 @@ from blender_research_mcp.mesh_topology import (
     SelectionRemapMode,
     WeightMergeMode,
 )
+from blender_research_mcp.object_settings import ObjectSettingPatches
 from blender_research_mcp.scene_organization import (
     ParentTransformMode,
     SceneRootCollectionParent,
@@ -143,13 +146,26 @@ class BatchComponentCatalogInput(BaseModel):
     target_alias: BatchAlias
 
 
+class BatchLibraryInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["library"]
+    alias: BatchAlias
+    path: str = Field(min_length=1, max_length=32767)
+    expected_file_sha256: str = Field(
+        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    expected_size_bytes: Annotated[StrictInt, Field(ge=12)]
+
+
 BatchInput = Annotated[
     BatchSelectionInput
     | BatchSurfaceInput
     | BatchObjectInput
     | BatchArmatureInput
     | BatchCollectionInput
-    | BatchComponentCatalogInput,
+    | BatchComponentCatalogInput
+    | BatchLibraryInput,
     Field(discriminator="type"),
 ]
 
@@ -581,6 +597,102 @@ class BatchRigBindStep(BaseModel):
     output_binding_alias: BatchAlias
 
 
+class BatchLibraryObjectOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["OBJECT"]
+    new_object_name: str = Field(min_length=1, max_length=255)
+    collection_alias: BatchAlias
+
+
+class BatchLibraryCollectionOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["COLLECTION"]
+    new_collection_name: str = Field(min_length=1, max_length=255)
+    parent: BatchCollectionParent
+
+
+class BatchLibraryMeshOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["MESH"]
+    new_mesh_name: str = Field(min_length=1, max_length=255)
+    new_object_name: str = Field(min_length=1, max_length=255)
+    collection_alias: BatchAlias
+
+    @model_validator(mode="after")
+    def distinct_names(self) -> BatchLibraryMeshOutput:
+        if self.new_mesh_name == self.new_object_name:
+            raise ValueError("new_mesh_name and new_object_name must be distinct")
+        return self
+
+
+BatchLibraryOutput = Annotated[
+    BatchLibraryObjectOutput | BatchLibraryCollectionOutput | BatchLibraryMeshOutput,
+    Field(discriminator="type"),
+]
+BatchLibraryRootKind = Literal["OBJECT", "MESH_TARGET", "ARMATURE", "COLLECTION"]
+
+
+class BatchLibraryExport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_object_name: str = Field(min_length=1, max_length=255)
+    expected_entry_identity: str = Field(
+        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    output_alias: BatchAlias
+    alias_kind: Literal["OBJECT", "MESH_TARGET", "ARMATURE"]
+
+
+class BatchLibraryAppendStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["library_append"]
+    library_alias: BatchAlias
+    entry: LibraryEntry
+    output: BatchLibraryOutput
+    output_root_alias: BatchAlias
+    root_alias_kind: BatchLibraryRootKind
+    exports: Annotated[tuple[BatchLibraryExport, ...], Field(max_length=64)] = ()
+
+    @model_validator(mode="after")
+    def output_contract(self) -> BatchLibraryAppendStep:
+        if self.entry.type != self.output.type:
+            raise ValueError("entry.type and output.type must match")
+        expected_kind = {
+            "COLLECTION": "COLLECTION",
+            "MESH": "MESH_TARGET",
+        }.get(self.entry.type)
+        if expected_kind is not None and self.root_alias_kind != expected_kind:
+            raise ValueError(f"{self.entry.type} root requires {expected_kind} alias kind")
+        if self.entry.type != "COLLECTION" and self.exports:
+            raise ValueError("exports are only valid for a COLLECTION root")
+        names = [item.source_object_name for item in self.exports]
+        aliases = [item.output_alias for item in self.exports]
+        if len(set(names)) != len(names) or len(set(aliases)) != len(aliases):
+            raise ValueError("Library export names and aliases must be unique")
+        return self
+
+
+class BatchObjectSetStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["object_set"]
+    object_alias: BatchAlias
+    patches: ObjectSettingPatches
+
+
+class BatchMeshSurfacePrepareStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["mesh_surface_prepare"]
+    target_alias: BatchAlias
+    geometry: SurfaceGeometry = "EVALUATED"
+    output_surface_alias: BatchAlias
+
+
 class BatchUVSeamSetOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["seam_set"]
@@ -858,7 +970,10 @@ BatchStep = Annotated[
     | BatchCollectionLinkStep
     | BatchObjectParentSetStep
     | BatchObjectParentClearStep
-    | BatchRigBindStep,
+    | BatchRigBindStep
+    | BatchLibraryAppendStep
+    | BatchObjectSetStep
+    | BatchMeshSurfacePrepareStep,
     Field(discriminator="type"),
 ]
 

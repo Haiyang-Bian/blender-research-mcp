@@ -93,6 +93,82 @@ def test_batch_inputs_cover_objects_armatures_collections_and_catalogs() -> None
     ]
 
 
+def test_batch_v4_library_input_and_template_steps_are_closed() -> None:
+    inputs = TypeAdapter(BatchInputs).validate_python(
+        [
+            {
+                "type": "library",
+                "alias": "templates",
+                "path": "C:/fixtures/templates.blend",
+                "expected_file_sha256": "a" * 64,
+                "expected_size_bytes": 1024,
+            }
+        ]
+    )
+    assert inputs[0].type == "library"
+
+    steps = TypeAdapter(BatchSteps).validate_python(
+        [
+            {
+                "type": "library_append",
+                "library_alias": "templates",
+                "entry": {
+                    "type": "COLLECTION",
+                    "name": "HeadTemplate",
+                    "expected_entry_identity": "b" * 64,
+                },
+                "output": {
+                    "type": "COLLECTION",
+                    "new_collection_name": "HeadTemplateInstance",
+                    "parent": {
+                        "type": "SCENE_ROOT",
+                        "scene_name": "Scene",
+                        "expected_scene_identity": "scene:1",
+                        "expected_scene_structure_fingerprint": "c" * 64,
+                    },
+                },
+                "output_root_alias": "template_collection",
+                "root_alias_kind": "COLLECTION",
+                "exports": [
+                    {
+                        "source_object_name": "HeadCage",
+                        "expected_entry_identity": "d" * 64,
+                        "output_alias": "head",
+                        "alias_kind": "MESH_TARGET",
+                    }
+                ],
+            },
+            {
+                "type": "object_set",
+                "object_alias": "head",
+                "patches": [
+                    {
+                        "type": "transform",
+                        "location": {"x": 1.0},
+                        "scale": {"x": 1.1, "y": 1.1, "z": 1.1},
+                    }
+                ],
+            },
+            {
+                "type": "mesh_surface_prepare",
+                "target_alias": "head",
+                "geometry": "EVALUATED",
+                "output_surface_alias": "head_surface",
+            },
+        ]
+    )
+    assert [step.type for step in steps] == [
+        "library_append",
+        "object_set",
+        "mesh_surface_prepare",
+    ]
+
+    invalid = steps[0].model_dump()
+    invalid["root_alias_kind"] = "OBJECT"
+    with pytest.raises(ValidationError):
+        TypeAdapter(BatchSteps).validate_python([invalid])
+
+
 def test_batch_steps_cover_catalog_materialization_assembly_and_binding() -> None:
     steps = TypeAdapter(BatchSteps).validate_python(
         [

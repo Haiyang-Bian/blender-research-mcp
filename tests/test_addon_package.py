@@ -161,7 +161,7 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
         '"mesh_component_map": 3',
         '"mesh_component_catalog": 1',
         '"mesh_separation": 2',
-        '"mesh_batch": 3',
+        '"mesh_batch": 4',
         '"mesh_uv": 1',
         '"mesh_weights": 1',
         '"mesh_attribute_transfer": 1',

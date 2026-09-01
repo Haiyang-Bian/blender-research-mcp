@@ -12,6 +12,12 @@ import bpy
 
 from .authoring_ops import AuthoringOperationError, object_summary
 from .capture_model import CaptureBook
+from .library_ops import (
+    append_library,
+    library_entry_identity,
+    library_entry_names,
+    validate_library_source,
+)
 from .mesh_attribute_transfer_ops import transfer_attribute
 from .mesh_component_catalog_ops import (
     prepare_component_catalog,
@@ -35,7 +41,7 @@ from .mesh_resource_model import (
     MeshResourceError,
 )
 from .mesh_separation_ops import extract_mesh, extract_preflight, separate_mesh
-from .mesh_surface_ops import validate_mesh, validate_surface
+from .mesh_surface_ops import prepare_surface, validate_mesh, validate_surface
 from .mesh_topology_ops import TOPOLOGY_OPERATIONS, edit_mesh_topology
 from .mesh_uv_ops import edit_uv, uv_fingerprint
 from .mesh_weight_ops import (
@@ -43,6 +49,7 @@ from .mesh_weight_ops import (
     group_schema_fingerprint,
     weights_fingerprint,
 )
+from .object_settings_ops import apply_object_settings
 from .rig_ops import bind_rig, bone_schema_fingerprint
 from .scene_organization_ops import (
     change_collection_link,
@@ -283,6 +290,64 @@ def _collection_for_alias(alias: str, collections: dict[str, dict[str, Any]]) ->
     return collection
 
 
+def _library_output_params(
+    output: dict[str, Any], collections: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    result = {key: value for key, value in output.items() if key != "collection_alias"}
+    if output["type"] in {"OBJECT", "MESH"}:
+        collection = _collection_for_alias(str(output["collection_alias"]), collections)
+        result["collection"] = _live_collection(collection)
+    elif output["parent"]["type"] == "COLLECTION_ALIAS":
+        collection = _collection_for_alias(
+            str(output["parent"]["collection_alias"]), collections
+        )
+        result["parent"] = {"type": "COLLECTION", **_live_collection(collection)}
+    return result
+
+
+def _live_armature(obj: Any) -> dict[str, Any]:
+    if obj.type != "ARMATURE" or obj.data is None:
+        _batch_error(
+            "MESH_BATCH_LIBRARY_REFERENCE_INVALID",
+            f"Library Object is not an Armature: {obj.name}",
+        )
+    return {
+        "object_name": obj.name,
+        "expected_object_identity": session_identity("object", obj),
+        "expected_data_identity": session_identity("armature", obj.data),
+        "expected_bone_schema_fingerprint": bone_schema_fingerprint(obj.data),
+    }
+
+
+def _register_library_object(
+    alias: str,
+    alias_kind: str,
+    obj: Any,
+    *,
+    targets: dict[str, dict[str, Any]],
+    objects: dict[str, dict[str, Any]],
+    armatures: dict[str, dict[str, Any]],
+    branches: dict[str, dict[str, Any]],
+) -> None:
+    if alias_kind == "MESH_TARGET":
+        if obj.type != "MESH" or obj.data is None:
+            _batch_error(
+                "MESH_BATCH_LIBRARY_REFERENCE_INVALID",
+                f"Library Object is not a Mesh target: {obj.name}",
+            )
+        targets[alias] = _live_target(alias, obj)
+        branches[alias] = {
+            "direct_component_map_ids": [],
+            "composed_component_map_id": None,
+            "composed_component_map": None,
+        }
+    elif alias_kind == "ARMATURE":
+        armatures[alias] = _live_armature(obj)
+        objects[alias] = _live_object(obj)
+    else:
+        objects[alias] = _live_object(obj)
+
+
 def _selection_refs(operation: dict[str, Any]) -> tuple[str, ...]:
     if operation.get("type") == "combine":
         values = operation.get("selection_aliases")
@@ -326,6 +391,7 @@ def _preflight(
     input_armatures: dict[str, dict[str, Any]] = {}
     input_collections: dict[str, dict[str, Any]] = {}
     input_catalogs: dict[str, dict[str, str]] = {}
+    input_libraries: dict[str, dict[str, Any]] = {}
     for raw in inputs:
         if not isinstance(raw, dict):
             _batch_error("MESH_BATCH_INVALID", "Each input must be an object")
@@ -453,6 +519,16 @@ def _preflight(
                 "component_catalog_id": catalog_id,
                 "target_alias": target_alias,
             }
+        elif kind == "library":
+            alias = _reserve(alias_kinds, raw.get("alias"), "library")
+            validate_library_source(raw)
+            digest = raw.get("expected_file_sha256")
+            if not isinstance(digest, str) or len(digest) != 64:
+                _batch_error(
+                    "MESH_BATCH_LIBRARY_REFERENCE_INVALID",
+                    "Library input requires exact SHA-256 evidence",
+                )
+            input_libraries[alias] = dict(raw)
         else:
             _batch_error("MESH_BATCH_INVALID", f"Unsupported input type: {kind}")
 
@@ -461,6 +537,7 @@ def _preflight(
     capacity = 0
     reserved_object_names = {obj.name for obj in bpy.data.objects}
     reserved_collection_names = {collection.name for collection in bpy.data.collections}
+    reserved_mesh_names = {mesh.name for mesh in bpy.data.meshes}
     for index, step in enumerate(steps):
         if not isinstance(step, dict) or not isinstance(step.get("type"), str):
             _batch_error("MESH_BATCH_INVALID", f"Step {index} must be a typed object")
@@ -636,6 +713,185 @@ def _preflight(
                 )
             topology_steps += 1
             capacity += 2
+        elif step_type == "library_append":
+            library_alias = _require_alias(
+                alias_kinds, step.get("library_alias"), "library"
+            )
+            source = input_libraries[library_alias]
+            entry = step.get("entry")
+            output = step.get("output")
+            if not isinstance(entry, dict) or not isinstance(output, dict):
+                _batch_error(
+                    "MESH_BATCH_LIBRARY_REFERENCE_INVALID",
+                    "library_append requires exact entry and output evidence",
+                )
+            entry_type = entry.get("type")
+            entry_name = entry.get("name")
+            if entry_type not in {"OBJECT", "COLLECTION", "MESH"} or not isinstance(
+                entry_name, str
+            ):
+                _batch_error(
+                    "MESH_BATCH_LIBRARY_REFERENCE_INVALID",
+                    "library_append entry is invalid",
+                )
+            names = library_entry_names(source, str(entry_type))
+            if entry_name not in names:
+                _batch_error(
+                    "LIBRARY_ENTRY_NOT_FOUND",
+                    f"Library entry does not exist: {entry_type} {entry_name}",
+                )
+            actual_identity = library_entry_identity(
+                str(source["expected_file_sha256"]), str(entry_type), entry_name
+            )
+            if entry.get("expected_entry_identity") != actual_identity:
+                _batch_error(
+                    "LIBRARY_ENTRY_IDENTITY_MISMATCH",
+                    f"Library entry identity changed: {entry_type} {entry_name}",
+                )
+            if output.get("type") != entry_type:
+                _batch_error(
+                    "MESH_BATCH_LIBRARY_REFERENCE_INVALID",
+                    "Library entry and output types must match",
+                )
+            if entry_type in {"OBJECT", "MESH"}:
+                _require_alias(alias_kinds, output.get("collection_alias"), "collection")
+            else:
+                parent = output.get("parent")
+                if not isinstance(parent, dict):
+                    _batch_error(
+                        "MESH_BATCH_LIBRARY_REFERENCE_INVALID",
+                        "Collection Library output requires a parent",
+                    )
+                if parent.get("type") == "COLLECTION_ALIAS":
+                    _require_alias(
+                        alias_kinds, parent.get("collection_alias"), "collection"
+                    )
+                elif parent.get("type") == "SCENE_ROOT":
+                    scene_name = parent.get("scene_name")
+                    scene = (
+                        bpy.data.scenes.get(scene_name)
+                        if isinstance(scene_name, str)
+                        else None
+                    )
+                    actual_parent = (
+                        {
+                            "expected_scene_identity": session_identity("scene", scene),
+                            "expected_scene_structure_fingerprint": structure_fingerprint(
+                                "scene", scene
+                            ),
+                        }
+                        if scene is not None
+                        else None
+                    )
+                    expected_parent = {
+                        "expected_scene_identity": parent.get("expected_scene_identity"),
+                        "expected_scene_structure_fingerprint": parent.get(
+                            "expected_scene_structure_fingerprint"
+                        ),
+                    }
+                    if actual_parent != expected_parent:
+                        _batch_error(
+                            "MESH_BATCH_TARGET_MISMATCH",
+                            f"Library Scene-root evidence changed: {scene_name}",
+                            details={"expected": expected_parent, "actual": actual_parent},
+                        )
+                else:
+                    _batch_error(
+                        "MESH_BATCH_LIBRARY_REFERENCE_INVALID",
+                        "Unsupported Collection Library parent",
+                    )
+            root_kind = step.get("root_alias_kind")
+            root_alias_kind = {
+                "OBJECT": "object",
+                "MESH_TARGET": "target",
+                "ARMATURE": "armature",
+                "COLLECTION": "collection",
+            }.get(root_kind)
+            if root_alias_kind is None:
+                _batch_error(
+                    "MESH_BATCH_LIBRARY_REFERENCE_INVALID",
+                    "Library root alias kind is invalid",
+                )
+            _reserve(alias_kinds, step.get("output_root_alias"), root_alias_kind)
+            if entry_type == "OBJECT":
+                new_name = output.get("new_object_name")
+                if not isinstance(new_name, str) or new_name in reserved_object_names:
+                    _batch_error(
+                        "LIBRARY_NAME_CONFLICT",
+                        f"Batch Library Object output name is not unique: {new_name}",
+                    )
+                reserved_object_names.add(new_name)
+            elif entry_type == "MESH":
+                object_name = output.get("new_object_name")
+                mesh_name = output.get("new_mesh_name")
+                if (
+                    not isinstance(object_name, str)
+                    or object_name in reserved_object_names
+                    or not isinstance(mesh_name, str)
+                    or mesh_name in reserved_mesh_names
+                ):
+                    _batch_error(
+                        "LIBRARY_NAME_CONFLICT",
+                        "Batch Library Mesh or carrier Object name is not unique",
+                    )
+                reserved_object_names.add(object_name)
+                reserved_mesh_names.add(mesh_name)
+            else:
+                new_name = output.get("new_collection_name")
+                if not isinstance(new_name, str) or new_name in reserved_collection_names:
+                    _batch_error(
+                        "LIBRARY_NAME_CONFLICT",
+                        f"Batch Library Collection output name is not unique: {new_name}",
+                    )
+                reserved_collection_names.add(new_name)
+            exports = step.get("exports", [])
+            export_names = (
+                set(library_entry_names(source, "OBJECT")) if exports else set()
+            )
+            for export in exports:
+                source_name = export.get("source_object_name")
+                expected_identity = export.get("expected_entry_identity")
+                if source_name not in export_names:
+                    _batch_error(
+                        "MESH_BATCH_LIBRARY_REFERENCE_INVALID",
+                        f"Collection export Object is not in the Library: {source_name}",
+                    )
+                if expected_identity != library_entry_identity(
+                    str(source["expected_file_sha256"]), "OBJECT", str(source_name)
+                ):
+                    _batch_error(
+                        "LIBRARY_ENTRY_IDENTITY_MISMATCH",
+                        f"Collection export identity changed: {source_name}",
+                    )
+                if source_name in reserved_object_names:
+                    _batch_error(
+                        "LIBRARY_NAME_CONFLICT",
+                        f"Collection export Object name is not unique: {source_name}",
+                    )
+                reserved_object_names.add(str(source_name))
+                export_kind = {
+                    "OBJECT": "object",
+                    "MESH_TARGET": "target",
+                    "ARMATURE": "armature",
+                }.get(export.get("alias_kind"))
+                if export_kind is None:
+                    _batch_error(
+                        "MESH_BATCH_LIBRARY_REFERENCE_INVALID",
+                        "Collection export alias kind is invalid",
+                    )
+                _reserve(alias_kinds, export.get("output_alias"), export_kind)
+            capacity += 1
+        elif step_type == "object_set":
+            _require_alias_any(
+                alias_kinds, step.get("object_alias"), ("target", "object", "armature")
+            )
+            patches = step.get("patches")
+            if not isinstance(patches, list) or not patches:
+                _batch_error("MESH_BATCH_INVALID", "object_set requires typed patches")
+            capacity += len(patches)
+        elif step_type == "mesh_surface_prepare":
+            _require_alias(alias_kinds, step.get("target_alias"), "target")
+            _reserve(alias_kinds, step.get("output_surface_alias"), "surface")
         elif step_type == "collection_create":
             parent = step.get("parent")
             if not isinstance(parent, dict):
@@ -740,6 +996,7 @@ def _preflight(
         "armatures": input_armatures,
         "collections": input_collections,
         "catalogs": input_catalogs,
+        "libraries": input_libraries,
         "alias_kinds": alias_kinds,
         "topology_steps": topology_steps,
         "reserved_deltas": capacity,
@@ -934,9 +1191,11 @@ def execute_mesh_batch(
     armatures: dict[str, dict[str, Any]] = prepared["armatures"]
     collections: dict[str, dict[str, Any]] = prepared["collections"]
     catalogs: dict[str, dict[str, str]] = prepared["catalogs"]
+    libraries: dict[str, dict[str, Any]] = prepared["libraries"]
     maps: dict[str, str] = {}
     validations: dict[str, dict[str, Any]] = {}
     bindings: dict[str, dict[str, Any]] = {}
+    library_appends: dict[str, dict[str, Any]] = {}
     resources_before = _resource_counts(book)
     branches = {
         alias: {
@@ -1288,6 +1547,106 @@ def execute_mesh_batch(
                     "source_composed_component_map": source_composed,
                     "extracted_composed_component_map": extracted_composed,
                 }
+            elif step_type == "library_append":
+                library_alias = str(step["library_alias"])
+                source = libraries[library_alias]
+                output = _library_output_params(step["output"], collections)
+                result, delta = append_library(
+                    transaction,
+                    {
+                        "transaction_id": transaction.transaction_id,
+                        "source": source,
+                        "entry": step["entry"],
+                        "output": output,
+                    },
+                )
+                transaction.record(delta)
+                changed = True
+                root_alias = str(step["output_root_alias"])
+                root_kind = str(step["root_alias_kind"])
+                if root_kind == "COLLECTION":
+                    root_name = str(step["output"]["new_collection_name"])
+                    root_collection = bpy.data.collections.get(root_name)
+                    if root_collection is None:
+                        _batch_error(
+                            "LIBRARY_APPEND_FAILED",
+                            "Appended root Collection disappeared",
+                        )
+                    collections[root_alias] = _live_collection(root_collection)
+                    root_members = tuple(root_collection.all_objects)
+                    for export in step.get("exports", []):
+                        source_name = str(export["source_object_name"])
+                        obj = bpy.data.objects.get(source_name)
+                        if obj is None or obj not in root_members:
+                            _batch_error(
+                                "MESH_BATCH_LIBRARY_REFERENCE_INVALID",
+                                f"Exported Object is not in appended Collection: {source_name}",
+                            )
+                        _register_library_object(
+                            str(export["output_alias"]),
+                            str(export["alias_kind"]),
+                            obj,
+                            targets=targets,
+                            objects=objects,
+                            armatures=armatures,
+                            branches=branches,
+                        )
+                else:
+                    object_name = str(step["output"]["new_object_name"])
+                    obj = bpy.data.objects.get(object_name)
+                    if obj is None:
+                        _batch_error(
+                            "LIBRARY_APPEND_FAILED", "Appended root Object disappeared"
+                        )
+                    _register_library_object(
+                        root_alias,
+                        root_kind,
+                        obj,
+                        targets=targets,
+                        objects=objects,
+                        armatures=armatures,
+                        branches=branches,
+                    )
+                library_appends[root_alias] = {
+                    "library_alias": library_alias,
+                    "source": result["source"],
+                    "entry": result["entry"],
+                    "created_ids": result["created_ids"],
+                    "dependency_counts": result["dependency_counts"],
+                }
+                report = result
+            elif step_type == "object_set":
+                object_alias = str(step["object_alias"])
+                obj = _object_for_alias(object_alias, targets, objects)
+                result = apply_object_settings(
+                    transaction,
+                    {
+                        "transaction_id": transaction.transaction_id,
+                        "object_name": obj.name,
+                        "expected_object_identity": session_identity("object", obj),
+                        "patches": step["patches"],
+                    },
+                )
+                changed = changed or bool(result.get("changed"))
+                if object_alias in targets:
+                    targets[object_alias] = _live_target(object_alias, obj)
+                else:
+                    objects[object_alias] = _live_object(obj)
+                report = result
+            elif step_type == "mesh_surface_prepare":
+                target_alias = str(step["target_alias"])
+                target = targets[target_alias]
+                result = prepare_surface(
+                    book,
+                    {
+                        "object_name": target["object_name"],
+                        "expected_object_identity": target["expected_object_identity"],
+                        "expected_mesh_revision_id": target["mesh_revision_id"],
+                        "geometry": step.get("geometry", "EVALUATED"),
+                    },
+                )
+                surfaces[str(step["output_surface_alias"])] = str(result["surface_id"])
+                report = result
             elif step_type == "collection_create":
                 parent = step["parent"]
                 if parent["type"] == "COLLECTION_ALIAS":
@@ -1616,6 +1975,17 @@ def execute_mesh_batch(
             for alias, value in sorted(bindings.items())
         }
     )
+    final_aliases.update(
+        {
+            alias: {
+                "kind": "library",
+                "path": value["path"],
+                "file_sha256": value["expected_file_sha256"],
+                "size_bytes": value["expected_size_bytes"],
+            }
+            for alias, value in sorted(libraries.items())
+        }
+    )
     manifest_objects: dict[str, Any] = {}
     for alias in sorted(set(targets) | set(objects)):
         obj = _object_for_alias(alias, targets, objects)
@@ -1636,6 +2006,19 @@ def execute_mesh_batch(
         "rig_bindings": bindings,
         "component_maps": maps,
         "selection_sets": selections,
+        "surface_refs": {
+            alias: book.surface(surface_id).summary()
+            for alias, surface_id in sorted(surfaces.items())
+        },
+        "libraries": {
+            alias: {
+                "path": value["path"],
+                "file_sha256": value["expected_file_sha256"],
+                "size_bytes": value["expected_size_bytes"],
+            }
+            for alias, value in sorted(libraries.items())
+        },
+        "library_appends": library_appends,
         "component_catalogs": {
             alias: book.component_catalog(value["component_catalog_id"]).summary()
             for alias, value in sorted(catalogs.items())
