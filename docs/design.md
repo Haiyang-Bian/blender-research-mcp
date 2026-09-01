@@ -3,7 +3,7 @@
 - Status: 0.16.0 controlled Library and template coverage implementation
 - Current milestone: 0.16.0 transaction-v12 local Library append and batch v4
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.15.1
+- Package and add-on version: 0.16.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,7 +12,7 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.15.1 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.16.0 now covers
 the validated observation/lifecycle/static-authoring path, unified typed object,
 Light, and Camera settings, four bounded non-destructive Modifier families, and exact
 base-Mesh component editing with transaction snapshots; the older bridge is no longer
@@ -451,7 +451,7 @@ the bridge does not claim to reconstruct undisclosed source geometry. Component
 catalogs, Collection organization, and cross-object batches are the implemented 0.15.1
 authority. Catalogs are session-local revision evidence, and batch manifests are
 returned to callers rather than stored as project custom properties. Bounded
-library append and template workflows follow in 0.16. Shape-Key structure writes and
+controlled Library append and template workflows are implemented in 0.16. Shape-Key structure writes and
 Modifier Apply remain separate later authorities. See
 `docs/requirements/modular-character-surface.md`.
 
@@ -651,6 +651,16 @@ Status: implemented and validated in 0.15.1; see
   and rig-binding aliases while preserving v1/v2 requests.
 - Return a hashed assembly manifest as response evidence without writing persistent
   project-specific metadata.
+
+### Phase 12 — controlled Library and template coverage
+
+- Inspect exact absolute `.blend` catalogs under streamed SHA/size evidence.
+- Append one bounded Object, Collection, or Mesh root as local editable data.
+- Reject scripted, animated, linked, override, constraint and Geometry-Nodes closures.
+- Compose append, typed object alignment, dynamic SurfaceRefs, fitting, attribute
+  transfer, organization, rig binding and validation through batch v4.
+- Retain hidden-region template/cage priors instead of claiming reconstruction of
+  geometry that the evaluated source does not contain.
 
 ## 10. Acceptance criteria for the first milestone
 

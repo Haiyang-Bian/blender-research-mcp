@@ -55,6 +55,10 @@ Group schema、稀疏蒙皮权重、属性传递和 UV/权重验证。拓扑与�
 父级设置，以及跨对象 `mesh.batch.execute` v3。批处理可将 materialize、连通片目录、
 extract、场景组织和 rig.bind 串成一次 transaction-v11 原子装配，并返回带 SHA-256
 的会话级 assembly manifest，而不向 `.blend` 写入项目专用元数据。
+0.16.0 新增 SHA-bound `library.inspect`、事务型单根 `library.append` 和
+`mesh.batch.execute` v4。外部静态 Object/Collection/Mesh 模板可在精确文件与条目
+证据下成为本地可编辑数据，再接入对象对齐、动态 SurfaceRef、拟合、权重和绑定；
+Library Link/Override、脚本/驱动、Action、约束与 Geometry Nodes 继续拒绝。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -90,6 +94,8 @@ SelectionSet 与求值曲面拟合见
 0.15.1 跨对象装配见
 [0.15.1 路线图](docs/roadmap/0.15.1-component-catalog-assembly.md)和
 [0.15.1 验收记录](docs/validation/2026-09-01-component-catalog-assembly.md)。
+0.16 受控 Library 与模板覆盖面见
+[0.16.0 路线图](docs/roadmap/0.16.0-library-template-coverage.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -291,6 +297,21 @@ extract、Collection、父级和 rig.bind。运行期失败回退完整活动事
 但不持久写入项目属性。详细边界见
 [0.15.1 路线图](docs/roadmap/0.15.1-component-catalog-assembly.md)。
 
+## 0.16.0 受控 Library 与模板覆盖面
+
+`library.inspect` 在服务端流式计算本地绝对 `.blend` 的 SHA-256 和文件头证据，
+并由 Blender 只读枚举精确 Object、Collection、Mesh 条目。`library.append` 每次只
+追加一个检查所得根条目，以本地副本语义创建受事务闭包 guard 保护的数据；根输出
+名称必须精确可用，文件或条目漂移、脚本化/动画化数据、不支持依赖和预算越界均在
+保留当前场景的前提下拒绝。
+
+`mesh.batch.execute` v4 新增 Library alias、Library append、`object_set` 和动态
+`mesh_surface_prepare` 步骤。追加的 Mesh/Armature/Collection 可在同一主线程批次中
+继续完成对齐、SelectionSet 拟合、UV/权重传递、Collection/父级组织、rig.bind 和
+距离/穿透/相交验证；任一步失败仍回退完整活动事务，manifest 只作为响应证据。
+模板只提供不存在几何的先验形体，不宣称恢复遮挡下不存在的原始人体数据。详细边界见
+[0.16.0 路线图](docs/roadmap/0.16.0-library-template-coverage.md)。
+
 ## 目录
 
 ~~~text
@@ -321,7 +342,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.15.1
+uv run --no-sync python scripts/build_addon.py --version 0.16.0
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认

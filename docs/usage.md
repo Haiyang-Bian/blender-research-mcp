@@ -37,7 +37,7 @@
    `object_parenting: 1`, `mesh_batch: 3`, and `transactions: 11`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.15.1.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.16.0.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -420,6 +420,33 @@ or when materialization, extraction, organization, and binding must succeed atom
 Catalogs are session resources and are cleared on file load or add-on restart. They
 do not replace ComponentMaps: use Catalogs to choose connected shells in one revision,
 then use branch Maps and SelectionSet remapping after topology or extraction changes.
+
+## Inspect and append a controlled local Library
+
+Use `library.inspect` with an absolute `.blend` path before importing anything. Retain
+the returned file SHA-256, size, entry type/name and `entry_identity`; do not rebuild an
+identity from a different inspection or accept a Blender `.001` suffix as the requested
+root output. `library.inspect` reads the file catalog only and must not alter the active
+scene, generation, selection or viewport.
+
+Begin or continue a transaction before `library.append`. Append exactly one inspected
+Object, Collection or Mesh root and provide exact destination Collection/Scene evidence.
+The result is a local editable copy plus a bounded dependency-closure report. Reject and
+re-inspect on file, entry, destination or name drift. Scripted/animated data, constraints,
+Geometry Nodes, nested libraries, Link/Override and unsupported ID types remain outside
+the 0.16 authority.
+
+Use `mesh.batch.execute` v4 when a template must be appended and immediately aligned,
+queried, fitted, assigned weights, organized or rigged. Bind the SHA/size as a `library`
+input, append through a `library_append` step, align an Object alias with `object_set`,
+and prepare a dynamic `BASE/EVALUATED` SurfaceRef with `mesh_surface_prepare`. Validate
+seams, distances, penetration and intersections using existing generic checks. The
+response manifest is evidence only; it is not stored in `.blend` custom properties.
+
+Prefer `mesh.materialize` for a working copy of an object already in the current scene.
+Use a Library only for an external reusable template. Fit visible high-confidence anchor
+regions to the evaluated target and preserve the template/cage prior where source
+geometry is hidden; do not claim that an occluded original surface was reconstructed.
 
 ## Select, fit, and validate a Mesh region
 
