@@ -120,6 +120,18 @@ def _exact_mesh_fingerprint(resource: Any) -> str | None:
     return mesh_fingerprint(resource)
 
 
+def _exact_weights_fingerprint(resource: Any) -> str | None:
+    """Return exact deform weights without making structural stubs import Blender math."""
+
+    try:
+        from .mesh_weight_ops import weights_fingerprint
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"bmesh", "mathutils"}:
+            raise
+        return None
+    return weights_fingerprint(resource)
+
+
 def structure_summary(kind: str, resource: Any) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "kind": kind,
@@ -166,9 +178,7 @@ def structure_summary(kind: str, resource: Any) -> dict[str, Any]:
         if str(getattr(resource, "type", "")) == "MESH" and getattr(
             resource, "data", None
         ) is not None:
-            from .mesh_weight_ops import weights_fingerprint
-
-            summary["weights_fingerprint"] = weights_fingerprint(resource.data)
+            summary["weights_fingerprint"] = _exact_weights_fingerprint(resource.data)
     elif kind == "mesh":
         summary.update(
             {
