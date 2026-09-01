@@ -25,6 +25,9 @@ extraction; and defines exact transaction-v10 Armature binding.
 Decision 0017 adds revision-bound ComponentCatalogs, exact Collection/object-parent
 organization, response-only assembly manifests, and transaction-v11 cross-object
 batch composition.
+Decision 0018 defines SHA-bound local Library inspection, guarded local-data append,
+template-derived hidden coverage, and transaction-v12 batch composition without a
+role-specific fitting command.
 
 Each record should include context, decision, alternatives, consequences, and
 status. Do not use decision records for routine implementation details.

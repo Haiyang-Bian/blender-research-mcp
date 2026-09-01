@@ -1,6 +1,6 @@
 # Blender MCP：角色缺失表面补全与可拆装模块需求
 
-- Status: accepted requirements; P0 implemented in 0.15.0 and P1 implemented in 0.15.1
+- Status: accepted requirements; P0 implemented in 0.15.0, P1 in 0.15.1, P2 in progress for 0.16
 - Evidence baseline: Blender Research MCP 0.14.0, audited 2026-09-01
 - Implemented milestones: 0.15.0 materialize/extract/rig binding; 0.15.1 catalog/assembly
 
@@ -549,6 +549,12 @@ Character_Coverage
 2. 标准拓扑模板与形体笼；
 3. 更强的接缝、距离和模块组合验证；
 4. 形态键迁移的独立研究方案。
+
+0.16 采用 SHA-bound `library.inspect`、事务型单根 `library.append` 和
+`mesh.batch.execute` v4。模板提供显式形体先验；可见区域使用求值 SurfaceRef
+拟合，衣物或头发遮挡区域保留模板笼形态。0.16 不新增角色专用拟合命令，也不将
+模板结果描述为从输入文件中恢复出来的原始人体数据。形态键迁移继续作为独立研究，
+不进入本阶段写入权限。
 
 Shape Key 结构写入和 Modifier Apply 不进入 0.15；两者需要独立的快照、映射和回归
 设计，不能借 materialize 的“创建新输出”语义绕过。

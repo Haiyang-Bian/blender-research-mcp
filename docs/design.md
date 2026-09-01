@@ -1,7 +1,7 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.15.1 ComponentCatalog and cross-object modular assembly
-- Current milestone: 0.15.1 transaction-v11 catalog, organization, and batch v3
+- Status: 0.16.0 controlled Library and template coverage implementation
+- Current milestone: 0.16.0 transaction-v12 local Library append and batch v4
 - Primary Blender target: 4.2.23 LTS
 - Package and add-on version: 0.15.1
 - Protocol version: 1
@@ -17,6 +17,13 @@ the validated observation/lifecycle/static-authoring path, unified typed object,
 Light, and Camera settings, four bounded non-destructive Modifier families, and exact
 base-Mesh component editing with transaction snapshots; the older bridge is no longer
 the primary interface for this repository.
+
+The 0.16 direction adds exact local Library inspection and guarded append as the final
+general asset-ingress primitive needed by template-based coverage. A template supplies
+geometry which is absent from the evaluated source; it is not evidence that hidden
+original anatomy was reconstructed. Fitting remains an explicit composition of
+SelectionSets, SurfaceRefs, bounded deformation, attribute transfer, rig binding, and
+validation rather than a role-specific character command.
 
 That shape creates a poor long-running LookDev loop:
 
