@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import math
@@ -52,7 +53,15 @@ from blender_research_mcp.comparison import (
     ObjectSettingTarget,
     run_lookdev_comparison,
 )
-from blender_research_mcp.constants import DEFAULT_PORT, PACKAGE_VERSION
+from blender_research_mcp.constants import DEFAULT_PORT, MAX_DEADLINE_MS, PACKAGE_VERSION
+from blender_research_mcp.errors import ErrorKind, bridge_error
+from blender_research_mcp.library_assets import (
+    LibraryEntry,
+    LibraryKind,
+    LibraryOutput,
+    LibrarySource,
+    inspect_local_library_file,
+)
 from blender_research_mcp.lifecycle import (
     DEFAULT_LAUNCH_TIMEOUT_SECONDS,
     ApplicationManager,
@@ -1295,6 +1304,105 @@ def create_server(
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,
             read_only=False,
+        )
+
+    @server.tool(
+        name="library.inspect",
+        description=(
+            "List SHA-bound Object, Collection, and Mesh entries from one exact local "
+            ".blend Library without appending data to the current project."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def library_inspect(
+        path: ProjectPath,
+        kinds: Annotated[tuple[LibraryKind, ...], Field(min_length=1, max_length=3)] = (
+            "OBJECT",
+            "COLLECTION",
+            "MESH",
+        ),
+        name_filter: Annotated[str, Field(min_length=1, max_length=255)] | None = None,
+        offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=256)] = 256,
+    ) -> dict[str, Any]:
+        if len(set(kinds)) != len(kinds):
+            raise ValueError("kinds must be unique")
+        await require_capability(client, "library_inspection")
+        evidence = await asyncio.to_thread(inspect_local_library_file, path)
+        return await client.call(
+            "library.inspect",
+            {
+                "source": {
+                    "path": evidence["path"],
+                    "expected_file_sha256": evidence["file_sha256"],
+                    "expected_size_bytes": evidence["size_bytes"],
+                    "expected_modified_ns": evidence["modified_ns"],
+                },
+                "blend_header": evidence["blend_header"],
+                "kinds": list(kinds),
+                "name_filter": name_filter,
+                "offset": offset,
+                "limit": limit,
+            },
+            read_only=True,
+            deadline_ms=MAX_DEADLINE_MS,
+        )
+
+    @server.tool(
+        name="library.append",
+        description=(
+            "Append one inspected static Object, Collection, or Mesh root as local data "
+            "with exact output naming inside the active transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def library_append(
+        transaction_id: TransactionId,
+        source: LibrarySource,
+        entry: LibraryEntry,
+        output: LibraryOutput,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "library_append")
+        client.require_capability("transactions", 12)
+        if entry.type != output.type:
+            raise ValueError("entry.type and output.type must match")
+        evidence = await asyncio.to_thread(inspect_local_library_file, source.path)
+        if (
+            evidence["file_sha256"] != source.expected_file_sha256
+            or evidence["size_bytes"] != source.expected_size_bytes
+        ):
+            raise bridge_error(
+                ErrorKind.CONFLICT,
+                "LIBRARY_FILE_CHANGED",
+                "Library file differs from the inspected source evidence",
+                details={
+                    "expected_file_sha256": source.expected_file_sha256,
+                    "actual_file_sha256": evidence["file_sha256"],
+                    "expected_size_bytes": source.expected_size_bytes,
+                    "actual_size_bytes": evidence["size_bytes"],
+                },
+            )
+        return await client.call(
+            "library.append",
+            {
+                "transaction_id": transaction_id,
+                "source": {
+                    "path": evidence["path"],
+                    "expected_file_sha256": evidence["file_sha256"],
+                    "expected_size_bytes": evidence["size_bytes"],
+                    "expected_modified_ns": evidence["modified_ns"],
+                },
+                "entry": entry.model_dump(),
+                "output": output.model_dump(),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+            deadline_ms=MAX_DEADLINE_MS,
         )
 
     async def _collection_link_call(

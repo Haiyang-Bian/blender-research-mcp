@@ -58,6 +58,8 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "object.duplicate",
         "object.delete",
         "collection.create",
+        "library.inspect",
+        "library.append",
         "collection.link_object",
         "collection.unlink_object",
         "object.parent.set",
@@ -206,6 +208,20 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert collection_inspect.annotations is not None
     assert collection_inspect.annotations.readOnlyHint is True
     assert collection_inspect.inputSchema["properties"]["limit"]["maximum"] == 256
+    library_inspect = tools_by_name["library.inspect"]
+    assert library_inspect.annotations is not None
+    assert library_inspect.annotations.readOnlyHint is True
+    assert library_inspect.inputSchema["properties"]["limit"]["maximum"] == 256
+    assert library_inspect.inputSchema["properties"]["kinds"]["maxItems"] == 3
+    library_append = tools_by_name["library.append"]
+    assert library_append.annotations is not None
+    assert library_append.annotations.readOnlyHint is False
+    assert library_append.annotations.destructiveHint is True
+    assert library_append.annotations.idempotentHint is True
+    assert library_append.annotations.openWorldHint is False
+    assert library_append.inputSchema["properties"]["output"]["discriminator"][
+        "propertyName"
+    ] == "type"
     collection_create = tools_by_name["collection.create"]
     parent_schema = collection_create.inputSchema["properties"]["parent"]
     assert parent_schema["discriminator"]["propertyName"] == "type"

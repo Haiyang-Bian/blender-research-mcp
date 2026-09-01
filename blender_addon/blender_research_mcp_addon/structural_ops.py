@@ -19,6 +19,7 @@ _DATA_COLLECTIONS = {
     "light": "lights",
     "material": "materials",
     "mesh": "meshes",
+    "node_group": "node_groups",
     "object": "objects",
     "scene": "scenes",
     "world": "worlds",
@@ -162,6 +163,12 @@ def structure_summary(kind: str, resource: Any) -> dict[str, Any]:
                 "vertex_groups": _vertex_group_schema(resource),
             }
         )
+        if str(getattr(resource, "type", "")) == "MESH" and getattr(
+            resource, "data", None
+        ) is not None:
+            from .mesh_weight_ops import weights_fingerprint
+
+            summary["weights_fingerprint"] = weights_fingerprint(resource.data)
     elif kind == "mesh":
         summary.update(
             {
@@ -178,6 +185,8 @@ def structure_summary(kind: str, resource: Any) -> dict[str, Any]:
     elif kind in {"material", "world"}:
         summary["use_nodes"] = bool(resource.use_nodes)
         summary["node_tree"] = _node_tree_summary(resource.node_tree)
+    elif kind == "node_group":
+        summary["node_tree"] = _node_tree_summary(resource)
     elif kind == "image":
         summary.update(
             {
@@ -362,6 +371,10 @@ def restore_structural_delta(delta: StructuralDelta) -> dict[str, Any]:
                 _remove_data_block(str(owned_kind), owned_resource)
                 removed.append(f"{owned_kind}:{owned_name}")
         return {"kind": delta.kind, "action": delta.action, "removed": removed}
+    if delta.action == "library_append":
+        from .library_ops import restore_library_append
+
+        return restore_library_append(delta)
     if delta.action == "rig_binding":
         from .rig_ops import restore_rig_binding
 

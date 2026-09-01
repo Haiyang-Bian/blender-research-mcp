@@ -100,10 +100,12 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
     for command in (
         "scene.inspect",
         "collection.inspect",
+        "library.inspect",
         "object.create",
         "object.duplicate",
         "object.delete",
         "collection.create",
+        "library.append",
         "collection.link_object",
         "collection.unlink_object",
         "object.parent.set",
@@ -150,7 +152,7 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
     ):
         assert command in state
     for capability in (
-        '"transactions": 11',
+        '"transactions": 12',
         '"scene_inspection": 1',
         '"object_authoring": 1',
         '"object_settings": 1',
@@ -168,6 +170,8 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
         '"rig_binding": 1',
         '"collection_authoring": 1',
         '"object_parenting": 1',
+        '"library_inspection": 1',
+        '"library_append": 1',
         '"mesh_selection": 1',
         '"mesh_surface_query": 1',
         '"mesh_deformation": 1',
