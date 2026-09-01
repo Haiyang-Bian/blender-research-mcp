@@ -19,7 +19,9 @@ lifecycle. Decision 0013 defines exact one-revision topology lineage, ComponentM
 resources, and transaction-v7 remapping. Decision 0014 defines composed lineage,
 two-branch object separation, and transaction-v8 declarative Mesh batches. Decision
 0015 defines isolated UV authoring, object/Mesh skin-weight ownership, verified
-attribute migration, and transaction-v9 recovery.
+attribute migration, and transaction-v9 recovery. Decision 0016 separates stored,
+Shape-Key-only, and final evaluated materialization; generalizes disconnected region
+extraction; and defines exact transaction-v10 Armature binding.
 
 Each record should include context, decision, alternatives, consequences, and
 status. Do not use decision records for routine implementation details.

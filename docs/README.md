@@ -5,45 +5,49 @@ in this order when starting a new implementation task:
 
 1. [Design and handoff](design.md) — architecture, safety boundaries, implemented
    phases, and open decisions.
-2. [0.14.0 UV and skin-weight roadmap](roadmap/0.14.0-uv-and-skin-weights.md)
+2. [0.15.0 modular character materialization roadmap](roadmap/0.15.0-modular-character-materialization.md)
+   — accepted materialize, extract, and rig-binding authority.
+3. [Materialized Mesh modules and rig binding decision](decisions/0016-materialized-mesh-modules-and-rig-binding.md)
+   — explicit evaluation modes and transaction-v10 assembly boundary.
+4. [0.14.0 UV and skin-weight roadmap](roadmap/0.14.0-uv-and-skin-weights.md)
    — current implementation target, attribute ownership, migration, and validation.
-3. [UV and skin-weight decision](decisions/0015-uv-and-skin-weight-authority.md)
+5. [UV and skin-weight decision](decisions/0015-uv-and-skin-weight-authority.md)
    — isolated unwrap, deform-data ownership, and transaction-v9 semantics.
-4. [0.13.1 separation and Mesh-batch roadmap](roadmap/0.13.1-mesh-separation-batches.md)
+6. [0.13.1 separation and Mesh-batch roadmap](roadmap/0.13.1-mesh-separation-batches.md)
    — validated branch lineage and declarative execution boundary.
-5. [Separated-branch and batch decision](decisions/0014-separated-mesh-branches-and-declarative-batches.md)
+7. [Separated-branch and batch decision](decisions/0014-separated-mesh-branches-and-declarative-batches.md)
    — composed maps, transaction-v8 separation, and all-or-nothing batch semantics.
-6. [0.13.0 topology and ComponentMap roadmap](roadmap/0.13.0-topology-component-maps.md)
+8. [0.13.0 topology and ComponentMap roadmap](roadmap/0.13.0-topology-component-maps.md)
    — validated one-revision topology lineage and acceptance gate.
-7. [0.12.0 SelectionSet and surface-fitting roadmap](roadmap/0.12.0-selection-surface-fitting.md)
+9. [0.12.0 SelectionSet and surface-fitting roadmap](roadmap/0.12.0-selection-surface-fitting.md)
    — validated selection, surface resource, and deformation baseline.
-8. [Modular character surface requirements](requirements/modular-character-surface.md)
+10. [Modular character surface requirements](requirements/modular-character-surface.md)
    — accepted materialize, disconnected extraction, rig binding, and template direction.
-9. [General Mesh authoring requirements](requirements/general-mesh-authoring.md) —
+11. [General Mesh authoring requirements](requirements/general-mesh-authoring.md) —
    long-term selection, topology, attribute, Shape-Key, and validation direction.
-10. [Using Blender Research MCP](usage.md) — current operator workflow and error
+12. [Using Blender Research MCP](usage.md) — current operator workflow and error
    recovery.
-11. [Topology lineage decision](decisions/0013-revision-aware-topology-lineage.md) —
+13. [Topology lineage decision](decisions/0013-revision-aware-topology-lineage.md) —
    one-revision ComponentMap and transaction-v7 boundary.
-12. [Selection and evaluated-surface decision](decisions/0012-revision-bound-selection-and-surface-resources.md)
+14. [Selection and evaluated-surface decision](decisions/0012-revision-bound-selection-and-surface-resources.md)
    — revision resource and transaction-v6 boundary.
-13. [Collaborative UI and native-save authority](decisions/0011-collaborative-ui-and-native-save-authority.md)
+15. [Collaborative UI and native-save authority](decisions/0011-collaborative-ui-and-native-save-authority.md)
    — transaction-v5 user intent and main-thread ordering.
-14. [0.11.0 semantic Mesh editing roadmap](roadmap/0.11.0-semantic-mesh-editing.md) —
+16. [0.11.0 semantic Mesh editing roadmap](roadmap/0.11.0-semantic-mesh-editing.md) —
    exact base-Mesh pages, snapshot guards, shared scopes, and bounded topology edits.
-15. [0.10.0 Modifier authoring roadmap](roadmap/0.10.0-modifier-authoring.md) — typed
+17. [0.10.0 Modifier authoring roadmap](roadmap/0.10.0-modifier-authoring.md) — typed
    inspection, stack guards, four Modifier families, and comparison.
-16. [0.9.0 unified object settings roadmap](roadmap/0.9.0-unified-object-settings.md) —
+18. [0.9.0 unified object settings roadmap](roadmap/0.9.0-unified-object-settings.md) —
    typed object, Light, Camera, and comparison settings.
-17. [0.8.0 semantic scene authoring roadmap](roadmap/0.8.0-semantic-scene-authoring.md) —
+19. [0.8.0 semantic scene authoring roadmap](roadmap/0.8.0-semantic-scene-authoring.md) —
    structural transactions, objects, materials, local images, World/Camera, and renders.
-18. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
+20. [0.7.0 managed lifecycle roadmap](roadmap/0.7.0-managed-lifecycle.md) — application
    launch, project switching, implementation, and completed live evidence.
-19. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
+21. [0.6.0 comparative preview roadmap](roadmap/0.6.0-comparative-previews.md) — the
    implemented and live-validated comparison contract.
-20. [Architecture decisions](decisions/README.md) — accepted protocol and authority
+22. [Architecture decisions](decisions/README.md) — accepted protocol and authority
    decisions.
-21. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
+23. [Validation records](validation/) — evidence from real Blender 4.2.23 smoke tests.
 
 ## Current release
 
