@@ -2344,8 +2344,9 @@ def create_server(
         client.require_capability("mesh_component_map", 2)
         client.require_capability("mesh_topology", 3)
         client.require_capability("transactions", 8)
-        step_payloads = [item.model_dump(exclude_none=True) for item in steps]
+        step_payloads = [item.model_dump(exclude_none=True, by_alias=True) for item in steps]
         requires_batch_v2 = False
+        requires_batch_v3 = False
         for payload in step_payloads:
             step_type = payload["type"]
             if step_type == "uv_edit":
@@ -2384,6 +2385,33 @@ def create_server(
                     payload.pop("source_attribute_policy", None)
                 else:
                     requires_batch_v2 = True
+            elif step_type in {
+                "component_catalog_prepare",
+                "component_catalog_select",
+            }:
+                await require_capability(client, "mesh_component_catalog")
+                requires_batch_v3 = True
+            elif step_type == "mesh_materialize":
+                await require_capability(client, "mesh_materialization")
+                client.require_capability("mesh_component_map", 3)
+                requires_batch_v3 = True
+            elif step_type == "mesh_extract":
+                await require_capability(client, "mesh_extraction")
+                client.require_capability("mesh_component_map", 3)
+                requires_batch_v3 = True
+            elif step_type in {
+                "collection_create",
+                "collection_link_object",
+                "collection_unlink_object",
+            }:
+                await require_capability(client, "collection_authoring")
+                requires_batch_v3 = True
+            elif step_type in {"object_parent_set", "object_parent_clear"}:
+                await require_capability(client, "object_parenting")
+                requires_batch_v3 = True
+            elif step_type == "rig_bind":
+                await require_capability(client, "rig_binding")
+                requires_batch_v3 = True
                 if separated_policy == default_policy:
                     payload.pop("separated_attribute_policy", None)
                 else:
@@ -2392,6 +2420,9 @@ def create_server(
             client.require_capability("mesh_batch", 2)
             client.require_capability("mesh_topology", 4)
             client.require_capability("transactions", 9)
+        if requires_batch_v3:
+            client.require_capability("mesh_batch", 3)
+            client.require_capability("transactions", 11)
         return await client.call(
             "mesh.batch.execute",
             {
