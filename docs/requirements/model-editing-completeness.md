@@ -1,8 +1,8 @@
 # Blender Research MCP：0.16 之后的模型编辑完整性方向
 
-- Status: accepted direction after the validated 0.16.0 milestone
-- Current implementation baseline: 0.16.0 / protocol 1 / transactions 12
-- Next implementation milestone: 0.17.0 cross-object Mesh composition
+- Status: active direction after the validated 0.16.0 milestone
+- Current implementation baseline: 0.17.0 / protocol 1 / transactions 13; live gate pending
+- Next implementation milestone: 0.18.0 Shape Key structure and migration
 
 ## 1. 目的
 
@@ -25,7 +25,7 @@ RNA、Operator 或脚本。目标是让 Agent 能通过封闭、可检查、可�
 | 模块化 | 已验证 | materialize、extract、separate、Library append、batch v4 |
 | 绑定 | 已验证 | 检查并绑定到现有 Armature |
 | 证据与恢复 | 已验证 | 定量验证、视口证据、事务、断连恢复、原生保存接管 |
-| 跨对象几何合成 | 未实现 | 对象可组织但不能合为一个连续 Mesh |
+| 跨对象几何合成 | 0.17 已实现 | 精确 BASE join 与显式 SelectionSet weld；实机门待记录 |
 | Shape Key 结构 | 未实现 | 只能设置既有值或实体化当前结果 |
 | 骨架创作 | 未实现 | 不能创建/编辑骨骼、姿态或动画 |
 | Modifier 最终化 | 未实现 | 可编辑四类栈，但不能 Apply |
@@ -34,6 +34,8 @@ RNA、Operator 或脚本。目标是让 Agent 能通过封闭、可检查、可�
 ## 3. 版本顺序
 
 ### 0.17：跨对象 Mesh 合成与接缝焊接
+
+实现状态：代码、schema、事务与自动门禁完成；Blender 4.2.23 隔离实机发布门待记录。
 
 - 将多个精确 Mesh 对象合成为一个独立输出；
 - 统一材质槽、UV Layer 与 Vertex Group schema；

@@ -520,6 +520,42 @@ Use `mesh.materialize`, not Library append, for an object already present in the
 scene. A template supplies prior geometry; it is never evidence that an occluded source
 surface was recovered.
 
+## Exact Mesh join and explicit seam weld
+
+Use this recipe with `mesh_join: 1`, `mesh_component_map: 4`, `mesh_topology: 5`,
+`mesh_batch: 5`, and `transactions >= 13`:
+
+1. Inspect every source BASE Mesh and the destination Collection. Retain object structure,
+   Mesh identity/users/revision/fingerprint, UV, weight, Shape-Key state, and Modifier
+   stack evidence. Materialize first if evaluated geometry is intended.
+2. Call `mesh.join.preflight` with sources in the intended output-schema order. Choose
+   WORLD or one exact source-object coordinate frame and explicit material, UV, weight,
+   color, generic-attribute, custom-normal, Shape-Key, and Modifier policies. Preflight
+   must not allocate data or session resources.
+3. Begin or continue a transaction and call `mesh.join` with unchanged evidence. Inspect
+   the independent output, attribute schema, common `join_id`, every JOIN_BRANCH map,
+   source-domain selections, and mapped boundary selection. KEEP sources by default;
+   use DELETE_ON_COMMIT only when the user intends replacement.
+4. Do not assume coincident shells are connected. Review the mapped boundary sets and
+   run validation before welding. Call `mesh.edit(weld_vertices)` with two or more
+   disjoint sets in CROSS_SELECTIONS mode for module seams. ALL_SELECTED authorizes
+   same-union merging. Set an explicit finite maximum distance and weight merge rule.
+5. A no-match weld is a no-op. On change, retain the ordinary topology ComponentMap,
+   rebound SelectionSets, MERGED lineage, vertex reduction, boundary delta, and
+   attribute effects. Revalidate degeneracy, non-manifold structure, UV and weights.
+6. In batch v5, give every source a Map and boundary alias. The output is a new target;
+   later weld/topology maps compose independently after each JOIN_BRANCH. Review
+   `assembly_manifest.mesh_joins` and each source branch rather than treating the output
+   as one synthetic lineage.
+7. Rollback or disconnect removes only an unchanged Agent output and restores deferred
+   sources. Stop on `MESH_JOIN_DATA_CONFLICT` or `MESH_JOIN_RESTORE_FAILED`; never
+   overwrite user-edited output. Native save accepts the visible joined/welded state and
+   terminates later Agent writes.
+
+The session may retain up to 192 SelectionSets and 128 ComponentMaps so a 32-source
+join can return complete branch evidence. Aggregate component-reference and relation
+budgets still apply; release old resources during long workflows.
+
 ## Revision-bound selection and evaluated-surface fitting
 
 Use this recipe with `mesh_selection: 1`, `mesh_surface_query: 1`,

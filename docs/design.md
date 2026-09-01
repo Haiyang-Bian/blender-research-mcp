@@ -1,10 +1,10 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.16.0 controlled Library and template coverage validated
-- Current milestone: 0.16.0 transaction-v12 local Library append and batch v4 accepted
-- Next milestone: 0.17.0 exact cross-object Mesh composition and seam welding
+- Status: 0.17.0 cross-object Mesh composition implemented; live release gate pending
+- Current milestone: 0.17.0 transaction-v13 Mesh join, explicit weld, and batch v5
+- Next milestone: 0.18.0 bounded Shape-Key structure authoring
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.16.0
+- Package and add-on version: 0.17.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -13,7 +13,7 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.16.0 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.17.0 now covers
 the validated observation/lifecycle/static-authoring path, unified typed object,
 Light, and Camera settings, four bounded non-destructive Modifier families, and exact
 base-Mesh component editing with transaction snapshots; the older bridge is no longer
@@ -672,7 +672,7 @@ Completed on Blender 4.2.23 LTS with deterministic Library fixtures and a tempor
 
 ### Phase 13 — cross-object Mesh composition
 
-Status: accepted for 0.17.0 planning; implementation not started.
+Status: implemented for 0.17.0; isolated Blender 4.2.23 release evidence pending.
 
 - Preflight and join 2–32 exact BASE Mesh-object inputs into one independent output.
 - Reconcile material, UV, color and weight schemas only through explicit policies.
@@ -681,6 +681,9 @@ Status: accepted for 0.17.0 planning; implementation not started.
 - Weld revision-bound boundary SelectionSets as a separate deterministic topology
   operation.
 - Compose join and weld through batch v5 with guarded source retention or deletion.
+- Keep up to 192 SelectionSets and 128 ComponentMaps so one 32-source join can return
+  all promised branch/domain/boundary evidence without self-evicting; aggregate component
+  and relation budgets remain unchanged.
 
 See `docs/roadmap/0.17.0-cross-object-mesh-composition.md` and decision 0019.
 

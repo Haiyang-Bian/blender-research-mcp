@@ -1,6 +1,6 @@
 # Blender MCP：角色缺失表面补全与可拆装模块需求
 
-- Status: accepted requirements; P0 implemented in 0.15.0, P1 in 0.15.1, P2 validated in 0.16.0, P3 planned for 0.17.0
+- Status: accepted requirements; P0 implemented in 0.15.0, P1 in 0.15.1, P2 validated in 0.16.0, P3 implemented in 0.17.0 with live evidence pending
 - Evidence baseline: Blender Research MCP 0.14.0, audited 2026-09-01
 - Implemented milestones: 0.15.0 materialize/extract/rig binding; 0.15.1 catalog/assembly; 0.16.0 controlled Library/template coverage
 
@@ -562,7 +562,7 @@ Character_Coverage
 覆盖面回归；量化证据与源文件哈希保护记录在
 `docs/validation/2026-09-01-library-template-coverage.md`。
 
-### P3：0.17 合并模块并闭合真实接缝
+### P3：0.17 合并模块并闭合真实接缝（已实现，实机发布门待记录）
 
 1. 对多个精确 Mesh 对象执行只读合并预检；
 2. 创建一个独立输出并返回每个输入到输出的 JOIN_BRANCH ComponentMap；

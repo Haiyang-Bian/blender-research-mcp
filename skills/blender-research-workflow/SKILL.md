@@ -158,6 +158,15 @@ source geometry is hidden. Keep weight transfer and `rig.bind` as separately ver
 steps. Prefer batch v4 when append, alignment, dynamic surfaces, fitting, organization,
 weights and binding must succeed or roll back as one chain.
 
+When several reviewed Mesh modules must become one editable base Mesh, use
+`mesh.join.preflight` and `mesh.join`, not Blender's selection-dependent Object Join.
+Materialize evaluated inputs first, choose WORLD or one exact source-object frame, and
+keep join separate from seam welding. Weld only revision-bound source boundary
+SelectionSets with an explicit distance; prefer `CROSS_SELECTIONS` for module seams.
+Use batch v5 when per-source JOIN_BRANCH lineage must continue through weld, weights,
+binding, and validation. Keep modules separate when independent transforms, modifiers,
+or interchange are still the user's intent.
+
 ## Ground image evidence
 
 Use a successful capture's own `capture_id` when mapping normalized top-left image

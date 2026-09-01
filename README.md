@@ -59,6 +59,10 @@ extract、场景组织和 rig.bind 串成一次 transaction-v11 原子装配，�
 `mesh.batch.execute` v4。外部静态 Object/Collection/Mesh 模板可在精确文件与条目
 证据下成为本地可编辑数据，再接入对象对齐、动态 SurfaceRef、拟合、权重和绑定；
 Library Link/Override、脚本/驱动、Action、约束与 Geometry Nodes 继续拒绝。
+0.17.0 新增只读 `mesh.join.preflight`、事务型 `mesh.join`、显式
+`mesh.edit(weld_vertices)` 和 `mesh.batch.execute` v5。跨对象合成会创建独立 BASE
+Mesh 输出、为每个来源保留 JOIN_BRANCH lineage，并且只有调用方明确提交边界
+SelectionSet 和距离规则时才焊接接缝；自动门禁已通过，Blender 实机发布门仍待记录。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -97,7 +101,7 @@ SelectionSet 与求值曲面拟合见
 0.16 受控 Library 与模板覆盖面见
 [0.16.0 路线图](docs/roadmap/0.16.0-library-template-coverage.md)和
 [0.16.0 验收记录](docs/validation/2026-09-01-library-template-coverage.md)。
-0.17 跨对象 Mesh 合成与接缝焊接计划见
+0.17 跨对象 Mesh 合成与接缝焊接见
 [0.17.0 路线图](docs/roadmap/0.17.0-cross-object-mesh-composition.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
@@ -315,9 +319,9 @@ extract、Collection、父级和 rig.bind。运行期失败回退完整活动事
 模板只提供不存在几何的先验形体，不宣称恢复遮挡下不存在的原始人体数据。详细边界见
 [0.16.0 路线图](docs/roadmap/0.16.0-library-template-coverage.md)。
 
-## 0.17.0 跨对象 Mesh 合成与接缝焊接（下一阶段）
+## 0.17.0 跨对象 Mesh 合成与接缝焊接
 
-0.17 计划新增只读 `mesh.join.preflight` 和事务型 `mesh.join`：将 2–32 个精确
+0.17 新增只读 `mesh.join.preflight` 和事务型 `mesh.join`：将 2–32 个精确
 BASE Mesh 对象转换到明确坐标系，按显式策略统一材质、UV、颜色和 Vertex Group，
 创建一个独立输出，并为每个输入返回一条 JOIN_BRANCH ComponentMap。输入对象是保留
 还是在 commit 时删除由请求直接声明。
@@ -325,7 +329,10 @@ BASE Mesh 对象转换到明确坐标系，按显式策略统一材质、UV、�
 join 不会自动按距离焊接。新的 `mesh.edit(weld_vertices)` 只处理同一 revision 上
 显式 SelectionSet 接受的顶点组，并返回 MERGED lineage、属性影响和新的边界证据。
 Batch v5 将 Library append、拟合、join、weld、权重、绑定和验证组合为一次原子流程。
-这一步完成后再按 0.18 Shape Key、0.19 骨架创作、0.20 Modifier 最终化推进。详细
+Batch v5 会为每个来源维护 JOIN_BRANCH → Weld/Topology 的独立组合 Map，并在
+assembly manifest 中记录 Join schema 与边界证据。会话资源上限相应扩展为 192 个
+SelectionSet 和 128 张 ComponentMap，组件/关系总预算不变。实机发布门通过后再按
+0.18 Shape Key、0.19 骨架创作、0.20 Modifier 最终化推进。详细
 接口、事务语义和实机验收计划见
 [0.17.0 路线图](docs/roadmap/0.17.0-cross-object-mesh-composition.md)和
 [0.16 后模型编辑完整性方向](docs/requirements/model-editing-completeness.md)。
@@ -360,7 +367,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.16.0
+uv run --no-sync python scripts/build_addon.py --version 0.17.0
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认

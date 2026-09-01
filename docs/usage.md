@@ -35,9 +35,13 @@
    Compact connected-component evidence and cross-object assembly require
    `mesh_component_catalog: 1`, `collection_authoring: 1`,
    `object_parenting: 1`, `mesh_batch: 3`, and `transactions: 11`.
+   Controlled local Library ingress requires `library_inspection: 1`,
+   `library_append: 1`, `mesh_batch: 4`, and `transactions: 12`. Exact cross-object
+   composition and seam welding require `mesh_join: 1`, `mesh_component_map: 4`,
+   `mesh_topology: 5`, `mesh_batch: 5`, and `transactions: 13`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.16.0.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.17.0.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -447,6 +451,36 @@ Prefer `mesh.materialize` for a working copy of an object already in the current
 Use a Library only for an external reusable template. Fit visible high-confidence anchor
 regions to the evaluated target and preserve the template/cage prior where source
 geometry is hidden; do not claim that an occluded original surface was reconstructed.
+
+## Join exact Mesh objects and weld only reviewed boundaries
+
+Use `mesh.join.preflight` before joining 2–32 BASE Mesh objects. Retain every source
+object/Mesh identity, user set, revision, Mesh/UV/weight/Shape-Key/Modifier fingerprint,
+the exact output Collection, coordinate frame, and explicit attribute/dependency policy.
+`WORLD` writes world coordinates under an identity output transform;
+`SOURCE_OBJECT` writes all sources into one inspected source object's local frame. If
+evaluated Shape Keys or Modifiers are intended, first use `mesh.materialize`; join never
+silently evaluates them.
+
+Begin or continue a transaction and repeat the exact preflight evidence with `mesh.join`.
+The result is a new independent object plus one JOIN_BRANCH ComponentMap per source,
+source-domain SelectionSets, and one boundary-vertex SelectionSet per source. `KEEP`
+preserves sources; `DELETE_ON_COMMIT` only hides/unlinks them until commit and restores
+them on rollback. Join itself deliberately leaves coincident shells disconnected.
+
+After reviewing mapped boundaries, call `mesh.edit` with `type="weld_vertices"` on the
+joined revision. Prefer `CROSS_SELECTIONS` for seams so accepted pairs cross source
+groups; use `ALL_SELECTED` only when same-set welding is intended. Supply a positive
+maximum distance, deterministic LOWEST_INDEX/CENTER destination, and weight merge
+policy. A no-match call is a true no-op. A changed response reports MERGED lineage,
+vertex reduction, boundary deltas, rebound selections, and attribute effects.
+
+Use batch v5 when append/alignment/fitting/join/weld/weight/bind/validation is one atomic
+workflow. Each source declares its branch Map and boundary aliases; subsequent weld or
+topology maps are composed separately along every source lineage. Review
+`assembly_manifest.mesh_joins`, source disposition, attribute schema, boundary evidence,
+and branch maps before commit. Runtime failure rolls back the complete active
+transaction; native save accepts the visible complete batch in Blender main-thread order.
 
 ## Select, fit, and validate a Mesh region
 

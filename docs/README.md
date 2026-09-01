@@ -8,9 +8,9 @@ in this order when starting a new implementation task:
    - [Post-0.16 model-editing completeness direction](requirements/model-editing-completeness.md)
      — accepted 0.17–0.20 capability sequence.
    - [0.17.0 cross-object Mesh composition roadmap](roadmap/0.17.0-cross-object-mesh-composition.md)
-     — next implementation plan for exact join, lineage branches, and seam welding.
+     — implemented exact join, lineage branches, seam welding, and pending live gate.
    - [Cross-object Mesh composition decision](decisions/0019-cross-object-mesh-composition.md)
-     — planned transaction-v13 Mesh-domain authority.
+     — implemented transaction-v13 Mesh-domain authority.
 2. [0.16.0 controlled Library and template coverage roadmap](roadmap/0.16.0-library-template-coverage.md)
    — accepted local Library evidence, transactional append, and batch-v4 direction.
 3. [Controlled Library and template coverage decision](decisions/0018-controlled-library-template-coverage.md)
@@ -103,7 +103,7 @@ ComponentCatalogs, exact Collection/object-parent organization, and cross-object
 automated and Blender 4.2.23 gates are recorded in
 [the 0.15.1 validation record](validation/2026-09-01-component-catalog-assembly.md).
 
-Version 0.16.0 is the current validated milestone. It adds SHA-bound local
+Version 0.16.0 is the latest fully live-validated milestone. It adds SHA-bound local
 Library inspection, transactionally guarded local-data append, and batch-v4 template
 coverage composition. See the
 [0.16 roadmap](roadmap/0.16.0-library-template-coverage.md) and
@@ -111,7 +111,8 @@ coverage composition. See the
 deterministic Blender, and `test-model.blend` coverage gates are recorded in
 [the 0.16 validation record](validation/2026-09-01-library-template-coverage.md).
 
-Version 0.17.0 is the next planned milestone. It will add read-only join preflight,
+Version 0.17.0 is implemented with automated acceptance complete and its isolated
+Blender release gate pending. It adds read-only join preflight,
 transactional independent Mesh composition, one exact JOIN_BRANCH map per source,
 explicit SelectionSet-based seam welding, and batch v5. It deliberately precedes
 Shape-Key, bone-authoring, and Modifier-Apply authority. See the
