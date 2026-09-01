@@ -1,6 +1,6 @@
 ---
 name: blender-research-workflow
-description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects, revision-aware Mesh topology, UV layouts, skin weights, separated Mesh branches and surface fits, typed Modifier stacks, and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, semantic Mesh modeling, evaluated-surface fitting, UV/weight authoring, non-destructive Modifier modeling, or static scene delivery; do not use for arbitrary Python, arbitrary BMesh/RNA, arbitrary node graphs, animation, Modifier apply, generic attributes, or retopology.
+description: Launch Blender, manage .blend projects, inspect and diagnose scenes, author bounded static objects, revision-aware Mesh topology, UV layouts, skin weights, materialized or extracted Mesh modules, exact Armature bindings, separated Mesh branches and surface fits, typed Modifier stacks, and Principled materials, and produce reviewed Eevee renders through Blender Research MCP. Use for application/project lifecycle, scene evidence, reversible LookDev, local textures, World/Camera setup, semantic Mesh modeling, evaluated-surface fitting, UV/weight authoring, modular Mesh assembly, non-destructive Modifier modeling, or static scene delivery; do not use for arbitrary Python, arbitrary BMesh/RNA, arbitrary node graphs, animation, Modifier apply, generic attributes, or retopology.
 ---
 
 # Blender Research Workflow
@@ -134,6 +134,14 @@ or a bounded nearest mapping is better than authoring values directly, then vali
 UV or weight evidence before commit. Shape-Key Meshes may receive topology-stable UV or
 weight edits, but not topology changes.
 
+When a source must remain intact, use `mesh.materialize` to create an independent
+working object from explicit BASE, SHAPE_KEYS_CURRENT, or FINAL_EVALUATED evidence.
+Use `mesh.extract` for a logical module made of multiple disconnected face components;
+keep `mesh.separate` for exactly one connected region. Transfer or repair weights with
+the 0.14 tools first, then use `rig.bind` only to assemble verified groups against one
+exact Armature. Never assume FINAL_EVALUATED is a reusable rest Mesh after Armature
+deformation has been baked.
+
 ## Ground image evidence
 
 Use a successful capture's own `capture_id` when mapping normalized top-left image
@@ -185,5 +193,5 @@ creation/deletion, or reordering as a comparison candidate.
 Read [references/tool-recipes.md](references/tool-recipes.md) when executing an
 application/project lifecycle, multi-step scene authoring, exact Mesh editing,
 SelectionSet/surface fitting, revision-aware topology, Modifier-stack authoring,
-UV/weight authoring, rendering, observation,
+UV/weight authoring, materialize/extract/rig assembly, rendering, observation,
 comparison, preview, reconnect, or recovery workflow.

@@ -12,6 +12,7 @@ from .lookdev_ops import session_identity
 from .transaction_model import StructuralDelta, StructureGuard, Transaction, TransactionModelError
 
 _DATA_COLLECTIONS = {
+    "armature": "armatures",
     "camera": "cameras",
     "collection": "collections",
     "image": "images",
@@ -89,6 +90,35 @@ def _node_tree_summary(node_tree: Any) -> dict[str, Any] | None:
     }
 
 
+def _vertex_group_schema(resource: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": str(group.name),
+            "identity": session_identity("vertex_group", group),
+            "index": int(group.index),
+            "lock_weight": bool(group.lock_weight),
+        }
+        for group in getattr(resource, "vertex_groups", ())
+    ]
+
+
+def _parent_inverse(resource: Any) -> list[float]:
+    matrix = getattr(resource, "matrix_parent_inverse", None)
+    if matrix is None:
+        return [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+    return [round(float(value), 9) for row in matrix for value in row]
+
+
+def _exact_mesh_fingerprint(resource: Any) -> str | None:
+    try:
+        from .mesh_ops import mesh_fingerprint
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"bmesh", "mathutils"}:
+            raise
+        return None
+    return mesh_fingerprint(resource)
+
+
 def structure_summary(kind: str, resource: Any) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "kind": kind,
@@ -98,6 +128,8 @@ def structure_summary(kind: str, resource: Any) -> dict[str, Any]:
     }
     if kind == "object":
         from .modifier_ops import modifier_stack_summary
+
+        parent = getattr(resource, "parent", None)
 
         summary.update(
             {
@@ -119,6 +151,15 @@ def structure_summary(kind: str, resource: Any) -> dict[str, Any]:
                     for material in getattr(resource.data, "materials", ())
                 ],
                 "modifiers": modifier_stack_summary(resource),
+                "parent": (
+                    session_identity("object", parent)
+                    if parent is not None
+                    else None
+                ),
+                "parent_type": str(getattr(resource, "parent_type", "OBJECT")),
+                "parent_bone": str(getattr(resource, "parent_bone", "")),
+                "matrix_parent_inverse": _parent_inverse(resource),
+                "vertex_groups": _vertex_group_schema(resource),
             }
         )
     elif kind == "mesh":
@@ -131,6 +172,7 @@ def structure_summary(kind: str, resource: Any) -> dict[str, Any]:
                     session_identity("material", material) if material is not None else None
                     for material in resource.materials
                 ],
+                "mesh_fingerprint": _exact_mesh_fingerprint(resource),
             }
         )
     elif kind in {"material", "world"}:
@@ -178,6 +220,27 @@ def structure_summary(kind: str, resource: Any) -> dict[str, Any]:
                 "type": resource.type,
                 "energy": round(float(resource.energy), 9),
                 "color": _rounded(resource.color),
+            }
+        )
+    elif kind == "armature":
+        summary.update(
+            {
+                "bones": [
+                    {
+                        "name": bone.name,
+                        "identity": session_identity("bone", bone),
+                        "parent": (
+                            session_identity("bone", bone.parent)
+                            if bone.parent is not None
+                            else None
+                        ),
+                        "use_deform": bool(bone.use_deform),
+                        "head": _rounded(bone.head_local),
+                        "tail": _rounded(bone.tail_local),
+                        "roll": round(float(bone.matrix_local.to_euler().z), 9),
+                    }
+                    for bone in resource.bones
+                ]
             }
         )
     return summary
@@ -278,6 +341,10 @@ def restore_structural_delta(delta: StructuralDelta) -> dict[str, Any]:
                 _remove_data_block(str(owned_kind), owned_resource)
                 removed.append(f"{owned_kind}:{owned_name}")
         return {"kind": delta.kind, "action": delta.action, "removed": removed}
+    if delta.action == "rig_binding":
+        from .rig_ops import restore_rig_binding
+
+        return restore_rig_binding(delta)
     if delta.action == "unlink_object":
         obj = delta.payload["object"]
         linked = []

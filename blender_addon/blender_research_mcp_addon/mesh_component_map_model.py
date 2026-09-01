@@ -130,7 +130,7 @@ def make_component_map(
     separation_id: str | None = None,
     branch_role: str | None = None,
 ) -> ComponentMapRecord:
-    if map_kind not in {"SINGLE", "COMPOSED", "SEPARATION_BRANCH"}:
+    if map_kind not in {"SINGLE", "COMPOSED", "SEPARATION_BRANCH", "MATERIALIZATION"}:
         raise ValueError(f"Unsupported ComponentMap kind: {map_kind}")
     if step_count < 1:
         raise ValueError("ComponentMap step_count must be positive")

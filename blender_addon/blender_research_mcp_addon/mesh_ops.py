@@ -228,6 +228,30 @@ def mesh_revision_id(mesh: Any) -> str:
     return hasher.hexdigest()
 
 
+def shape_key_state_fingerprint(obj: Any) -> str:
+    """Hash the complete current Shape-Key graph and coordinates for materialization."""
+
+    hasher = hashlib.sha256()
+    shape_keys = getattr(getattr(obj, "data", None), "shape_keys", None)
+    if shape_keys is None:
+        _hash_text(hasher, None)
+        return hasher.hexdigest()
+    _hash_text(hasher, session_identity("shape_keys", shape_keys))
+    _hash_text(hasher, bool(getattr(shape_keys, "use_relative", True)))
+    _hash_text(hasher, float(getattr(shape_keys, "eval_time", 0.0)))
+    for key in shape_keys.key_blocks:
+        _hash_text(hasher, key.name)
+        _hash_text(hasher, session_identity("shape_key", key))
+        _hash_text(hasher, key.relative_key.name if key.relative_key is not None else None)
+        _hash_text(hasher, float(key.value))
+        _hash_text(hasher, bool(key.mute))
+        _hash_text(hasher, str(key.interpolation))
+        _hash_text(hasher, float(key.slider_min))
+        _hash_text(hasher, float(key.slider_max))
+        _hash_foreach(hasher, key.data, "co", "f", 3)
+    return hasher.hexdigest()
+
+
 def unsupported_attributes(mesh: Any) -> tuple[str, ...]:
     return tuple(
         f"{attribute.name}:{attribute.data_type}"
@@ -411,6 +435,7 @@ def inspect_mesh(
         "topology_fingerprint": topology_fingerprint(mesh),
         "mesh_fingerprint": mesh_fingerprint(mesh),
         "mesh_revision_id": mesh_revision_id(mesh),
+        "shape_key_state_fingerprint": shape_key_state_fingerprint(obj),
         "component": component,
         "writable": not _writable_reasons(obj, mesh),
         "write_blockers": _writable_reasons(obj, mesh),

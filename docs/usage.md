@@ -29,9 +29,12 @@
    and batch workflows require `mesh_uv: 1`, `mesh_weights: 1`,
    `mesh_attribute_transfer: 1`, `mesh_validation: 2`, `mesh_topology: 4`,
    `mesh_separation: 2`, `mesh_batch: 2`, and `transactions: 9`.
+   Independent evaluated/base outputs, disconnected extraction, and exact Armature
+   assembly require `mesh_materialization: 1`, `mesh_extraction: 1`,
+   `rig_binding: 1`, `mesh_component_map: 3`, and `transactions: 10`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.14.0.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.15.0.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -350,6 +353,38 @@ or interpolating an existing domain is unacceptable, and `DISCARD` only when the
 requested result intentionally drops that domain. `mesh.separate` accepts independent
 SOURCE and SEPARATED policies. Shape-Key Meshes permit topology-stable UV/weight edits,
 but all topology changes remain rejected.
+
+## Materialize, extract, and bind modular Mesh objects
+
+Use this transaction-v10 workflow when the source must remain intact while a new
+editable or rigged module is produced:
+
+1. Inspect the source with `mesh.inspect`. For current Shape-Key-only output, retain
+   `shape_key_state_fingerprint`; for final evaluated output, also prepare a live
+   EVALUATED SurfaceRef. Choose `BASE`, `SHAPE_KEYS_CURRENT`, or `FINAL_EVALUATED`
+   explicitly—do not infer one from the presence of modifiers.
+2. Begin one transaction and call `mesh.materialize`, declaring material, UV, and
+   weight copying independently. The output is a new unparented Mesh object without
+   Shape Keys or Modifiers. FINAL_EVALUATED may bake Armature deformation and must not
+   be treated as a reusable rest body unless the workflow proves that separately.
+3. Build a FACE SelectionSet on the new object. Use `mesh.extract.preflight` before a
+   large or multi-shell extraction, then `mesh.extract` with explicit parent, Modifier,
+   material-slot, and per-branch UV/weight policies. Use `mesh.separate` instead when
+   the requested region is exactly one connected shell.
+4. Inspect the extracted object's weights and call `rig.inspect` for the intended
+   Armature. `rig.bind` creates or updates one exact Armature Modifier and applies the
+   requested NONE/KEEP_WORLD/KEEP_LOCAL parent policy. It verifies existing groups and
+   weights but never creates, transfers, normalizes, or repairs them.
+5. Inspect the output, binding, ComponentMaps, and evaluated result. Commit the whole
+   chain only when the evidence is coherent; otherwise roll the transaction back.
+   Disconnect uses the same rollback path, while native Blender save accepts the
+   complete visible chain according to main-thread order.
+
+Materialization does not Apply or mutate the source stack. Its copy policy intentionally
+drops custom split normals and unsupported generic attributes because 0.15 has no write
+authority for those domains. Missing body surface beneath clothes or hair still needs an
+explicit template or cage; these tools do not reconstruct geometry that is absent from
+the source.
 
 ## Select, fit, and validate a Mesh region
 

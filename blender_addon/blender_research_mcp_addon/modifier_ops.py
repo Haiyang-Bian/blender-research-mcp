@@ -260,6 +260,24 @@ def modifier_summary(obj: Any, modifier: Any, stack_index: int) -> dict[str, Any
     }
     if supported:
         result["settings"] = modifier_settings(modifier)
+    elif modifier_type == "ARMATURE":
+        target = modifier.object
+        result["armature_binding"] = {
+            "object_name": target.name if target is not None else None,
+            "object_identity": (
+                session_identity("object", target) if target is not None else None
+            ),
+            "data_identity": (
+                session_identity("armature", target.data)
+                if target is not None and target.data is not None
+                else None
+            ),
+            "use_vertex_groups": bool(modifier.use_vertex_groups),
+            "use_bone_envelopes": bool(modifier.use_bone_envelopes),
+            "preserve_volume": bool(modifier.use_deform_preserve_volume),
+            "use_multi_modifier": bool(modifier.use_multi_modifier),
+            "vertex_group": str(modifier.vertex_group),
+        }
     return result
 
 

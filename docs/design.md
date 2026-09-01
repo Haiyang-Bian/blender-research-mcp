@@ -1,9 +1,9 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.14 UV and skin-weight authoring implementation
-- Current milestone: 0.14.0 typed UV, deform weights, transfer, and validation
+- Status: 0.15 modular Mesh materialization, extraction, and rig binding
+- Current milestone: 0.15.0 transaction-v10 modular character P0 chain
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.14.0
+- Package and add-on version: 0.15.0
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,7 +12,7 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.14.0 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.15.0 now covers
 the validated observation/lifecycle/static-authoring path, unified typed object,
 Light, and Camera settings, four bounded non-destructive Modifier families, and exact
 base-Mesh component editing with transaction snapshots; the older bridge is no longer
@@ -430,7 +430,7 @@ rebind. Transaction capability 9 makes both attribute domains participate in com
 rollback, disconnect recovery, and native-save adoption. See
 `docs/roadmap/0.14.0-uv-and-skin-weights.md` and decision 0015.
 
-The accepted 0.15 direction closes a different gap: create a new editable Mesh from
+The implemented 0.15 authority closes a different gap: create a new editable Mesh from
 BASE, current Shape-Key-only, or final evaluated geometry; extract a disconnected FACE
 SelectionSet as one object; and bind an exact weighted Mesh to an Armature. Materialize
 creates a new resource and never applies or removes a source Modifier or Shape Key.
@@ -618,7 +618,7 @@ hiding either responsibility in Modifier tools.
 
 ### Phase 10 — materialized Mesh modules and rig assembly
 
-Status: accepted 0.15.0 direction; implementation follows the merged 0.14 baseline.
+Status: implemented and validated in 0.15.0 on the merged 0.14 baseline.
 
 - Materialize BASE, current Shape-Key-only, or final evaluated geometry into a new
   independent object with explicit material/UV/weight copy policy.

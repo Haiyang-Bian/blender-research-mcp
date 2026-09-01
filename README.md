@@ -48,6 +48,9 @@ generation。
 Group schema、稀疏蒙皮权重、属性传递和 UV/权重验证。拓扑与分离现在可显式选择
 保留插值、已有属性即拒绝或丢弃结果属性；事务升级到 v9，Shape Key Mesh 也可执行
 拓扑不变的 UV/权重写入。
+0.15.0 新增显式 BASE / SHAPE_KEYS_CURRENT / FINAL_EVALUATED 实体化、非连通 FACE
+区域提取，以及精确 Armature 检查与绑定。三项能力可在同一 transaction-v10 中
+组合为独立工作副本、逻辑模块和骨架装配链，不修改、Apply 或替换源对象。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -76,7 +79,10 @@ SelectionSet 与求值曲面拟合见
 [0.13.1 验收记录](docs/validation/2026-08-31-mesh-separation-batches.md)。
 0.14 UV 与蒙皮权重见
 [0.14.0 路线图](docs/roadmap/0.14.0-uv-and-skin-weights.md)和
-[0.14.0 验收记录](docs/validation/2026-08-31-uv-and-skin-weights.md)。
+[0.14.0 验收记录](docs/validation/2026-08-31-uv-and-skin-weights.md)。0.15 模块化
+角色实体化见
+[0.15.0 路线图](docs/roadmap/0.15.0-modular-character-materialization.md)和
+[0.15.0 验收记录](docs/validation/2026-09-01-modular-character-materialization.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -241,6 +247,25 @@ nearest surface 的 UV/权重迁移；`mesh.validate` 返回 UV 越界、退化�
 SelectionSet。详细边界见
 [0.14.0 路线图](docs/roadmap/0.14.0-uv-and-skin-weights.md)。
 
+## 0.15.0 模块化角色实体化与绑定
+
+`mesh.materialize` 从精确基础 Mesh、仅当前 Shape Key 结果或实时最终求值结果创建
+独立对象。输出没有 Shape Key、Modifier 或父级，保持源对象世界变换，并逐项声明
+材料、UV 与权重复制；拓扑一致时返回精确 `MATERIALIZATION` ComponentMap，拓扑
+变化时明确不猜测 lineage。
+
+`mesh.extract.preflight/extract` 将一个或多个连通 FACE 区域提取为单一对象，同时
+返回 SOURCE/EXTRACTED 两条分支 Map、两侧 SelectionSet 和属性迁移证据。
+`rig.inspect/bind` 只装配已有权重：精确验证 Armature、骨骼 schema、Group 与现有
+Modifier，创建或更新一个 Armature Modifier，并按显式策略设置对象父级；不会隐式
+生成、传递或归一权重。
+
+三步可在同一事务中串联，任一步失败、显式 rollback 或断连都会恢复到 begin
+基线；Blender 原生保存仍以用户当前可见状态为最终接管。0.15 不开放 Shape Key
+结构写入、Modifier Apply、任意 RNA/BMesh/Python、Library append 或角色专用捷径。
+详细契约见
+[0.15.0 路线图](docs/roadmap/0.15.0-modular-character-materialization.md)。
+
 ## 目录
 
 ~~~text
@@ -271,7 +296,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.14.0
+uv run --no-sync python scripts/build_addon.py --version 0.15.0
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认
