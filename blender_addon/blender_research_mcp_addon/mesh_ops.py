@@ -1136,6 +1136,14 @@ def _remove_new_guard(transaction: Transaction, guard: MeshSnapshotGuard) -> Non
     transaction.remove_mesh_snapshot_guard(guard)
 
 
+def _refresh_snapshot_dependency_guards(transaction: Transaction, mesh: Any) -> None:
+    """Account for persistent transaction snapshots using guarded materials."""
+
+    for material in getattr(mesh, "materials", ()):
+        if material is not None:
+            refresh_structure_guard_if_present(transaction, "material", material)
+
+
 def _create_guard(
     transaction: Transaction,
     obj: Any,
@@ -1174,6 +1182,7 @@ def _create_guard(
         )
         refresh_structure_guard_if_present(transaction, "object", obj)
         refresh_structure_guard_if_present(transaction, "mesh", source)
+        _refresh_snapshot_dependency_guards(transaction, working)
     else:
         snapshot = mesh.copy()
         snapshot.name = f"{mesh.name}.MCP-Snapshot"
@@ -1189,6 +1198,7 @@ def _create_guard(
             data_scope=data_scope,
             snapshot=snapshot,
         )
+        _refresh_snapshot_dependency_guards(transaction, snapshot)
     transaction.add_mesh_snapshot_guard(guard)
     return guard
 

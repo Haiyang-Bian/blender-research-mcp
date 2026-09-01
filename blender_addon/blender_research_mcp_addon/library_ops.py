@@ -258,6 +258,37 @@ def _all_resources(created: dict[str, list[Any]]) -> list[tuple[str, Any]]:
     ]
 
 
+def _discard_append_source_library(created: dict[str, list[Any]], source_path: str) -> None:
+    """Remove Blender's transient source Library ID after a local append.
+
+    ``libraries.load(..., link=False)`` can leave the source ``Library`` ID in
+    ``bpy.data.libraries`` even though every appended dependency is local.  The
+    source handle is expected transport bookkeeping, not a nested Library
+    dependency.  It is safe to remove only after proving that no newly created
+    supported ID still points at it.
+    """
+
+    libraries = list(created.get("library", ()))
+    retained: list[Any] = []
+    supported = _all_resources(
+        {kind: values for kind, values in created.items() if kind in SUPPORTED_NEW_COLLECTIONS}
+    )
+    for library in libraries:
+        filepath = os.path.realpath(bpy.path.abspath(str(getattr(library, "filepath", ""))))
+        referenced = any(
+            getattr(resource, "library", None) is library
+            for _kind, resource in supported
+        )
+        if filepath != source_path or referenced:
+            retained.append(library)
+            continue
+        bpy.data.libraries.remove(library)
+    if retained:
+        created["library"] = retained
+    else:
+        created.pop("library", None)
+
+
 def _cleanup_created(created: dict[str, list[Any]]) -> None:
     resources = [resource for _kind, resource in _all_resources(created)]
     if not resources:
@@ -536,6 +567,7 @@ def append_library(
         output_root = _place_root(str(entry_type), root, output, destination)
         _assert_source_stable(path, stat)
         created = _new_ids(before)
+        _discard_append_source_library(created, path)
         _validate_static_graph(created)
         supported_resources = _all_resources(
             {kind: values for kind, values in created.items() if kind in SUPPORTED_NEW_COLLECTIONS}
@@ -621,6 +653,7 @@ def append_library(
 
 def restore_library_append(delta: StructuralDelta) -> dict[str, Any]:
     resources = tuple(delta.payload.get("resources", ()))
+    removed = [f"{kind}:{resource.name}" for kind, resource in resources]
     created = {kind: [] for kind in SUPPORTED_NEW_COLLECTIONS}
     for kind, resource in resources:
         created.setdefault(str(kind), []).append(resource)
@@ -637,5 +670,5 @@ def restore_library_append(delta: StructuralDelta) -> dict[str, Any]:
     return {
         "kind": delta.kind,
         "action": delta.action,
-        "removed": [f"{kind}:{resource.name}" for kind, resource in resources],
+        "removed": removed,
     }

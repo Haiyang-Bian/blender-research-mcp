@@ -506,6 +506,35 @@ class Transaction:
             if isinstance(delta, ObjectDataDelta) and delta.data_identity == data_identity:
                 delta.expected_users = users
 
+    def refresh_object_transform(
+        self,
+        object_name: str,
+        object_identity: str,
+        current: dict[str, dict[str, float]],
+    ) -> None:
+        """Refresh prior transform guards after a later agent-owned matrix write."""
+
+        for delta in self.deltas:
+            if not isinstance(delta, ObjectTransformDelta):
+                continue
+            if (
+                delta.object_name != object_name
+                or delta.object_identity != object_identity
+            ):
+                continue
+            for channel, values in delta.after.items():
+                live_channel = current[channel]
+                for axis in values:
+                    values[axis] = float(live_channel[axis])
+
+    def tracks_object_transform(self, object_name: str, object_identity: str) -> bool:
+        return any(
+            isinstance(delta, ObjectTransformDelta)
+            and delta.object_name == object_name
+            and delta.object_identity == object_identity
+            for delta in self.deltas
+        )
+
     def ensure_modifier_stack_guard(
         self,
         *,
