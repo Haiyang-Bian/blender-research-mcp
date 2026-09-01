@@ -262,7 +262,8 @@ def test_mesh_authoring_uses_bounded_data_api_snapshots_without_operators() -> N
     assert "bpy.ops" not in source
 
     resources = (SOURCE / "mesh_resource_model.py").read_text(encoding="utf-8")
-    assert "MAX_SELECTIONS = 64" in resources
+    assert "MAX_SELECTIONS = 192" in resources
+    assert "MAX_COMPONENT_MAPS = 128" in resources
     assert "MAX_SELECTION_COMPONENTS = 2_000_000" in resources
     assert "MAX_SURFACES = 8" in resources
     assert "MAX_SURFACE_TRIANGLES = 2_000_000" in resources

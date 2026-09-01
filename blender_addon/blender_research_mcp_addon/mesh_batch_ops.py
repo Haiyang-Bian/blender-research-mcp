@@ -1354,6 +1354,7 @@ def execute_mesh_batch(
     validations: dict[str, dict[str, Any]] = {}
     bindings: dict[str, dict[str, Any]] = {}
     library_appends: dict[str, dict[str, Any]] = {}
+    mesh_joins: dict[str, dict[str, Any]] = {}
     resources_before = _resource_counts(book)
     branches = {
         alias: {
@@ -1437,12 +1438,18 @@ def execute_mesh_batch(
                 component_map = result.get("component_map")
                 remaps: list[dict[str, Any]] = []
                 composed = None
+                joined_branch_compositions: dict[str, Any] = {}
                 if isinstance(component_map, dict):
                     component_map_id = str(component_map["component_map_id"])
                     remaps = _remap_target_selections(
                         book, selections, target_alias, component_map_id
                     )
                     composed = _append_map(book, branches[target_alias], component_map_id)
+                    for branch_alias, branch_state in branches.items():
+                        if branch_alias.startswith(f"{target_alias}:"):
+                            joined_branch_compositions[branch_alias] = _append_map(
+                                book, branch_state, component_map_id
+                            )
                     if step.get("map_alias") is not None:
                         maps[str(step["map_alias"])] = component_map_id
                 elif result.get("rebound_selection") is not None:
@@ -1465,7 +1472,12 @@ def execute_mesh_batch(
                             "remap_mode": "ALL_MAPPED",
                             "weight_merge": "MAX",
                         }
-                report = {**result, "automatic_remaps": remaps, "composed_component_map": composed}
+                report = {
+                    **result,
+                    "automatic_remaps": remaps,
+                    "composed_component_map": composed,
+                    "joined_branch_compositions": joined_branch_compositions,
+                }
             elif step_type == "mesh_join":
                 call_params = _join_params(step, targets, selections, collections)
                 result = join_meshes(transaction, book, call_params)
@@ -1517,6 +1529,24 @@ def execute_mesh_batch(
                     }
                     _append_map(book, joined_chain, map_id)
                     branches[f"{output_alias}:{source_alias}"] = joined_chain
+                mesh_joins[output_alias] = {
+                    "join_id": result["join_id"],
+                    "source_aliases": [
+                        str(source["target_alias"]) for source in step["sources"]
+                    ],
+                    "source_disposition": result["source_disposition"],
+                    "attribute_schemas": result["attribute_schemas"],
+                    "branches": [
+                        {
+                            "source_alias": str(source["target_alias"]),
+                            "component_map_id": branch["component_map"]["component_map_id"],
+                            "boundary_selection_id": branch["boundary_selection"][
+                                "selection_id"
+                            ],
+                        }
+                        for source, branch in zip(step["sources"], branch_reports, strict=True)
+                    ],
+                }
                 report = result
             elif step_type == "mesh_separate":
                 target_alias = str(step["target_alias"])
@@ -2236,6 +2266,7 @@ def execute_mesh_batch(
             for alias, value in sorted(libraries.items())
         },
         "library_appends": library_appends,
+        "mesh_joins": mesh_joins,
         "component_catalogs": {
             alias: book.component_catalog(value["component_catalog_id"]).summary()
             for alias, value in sorted(catalogs.items())

@@ -710,6 +710,129 @@ def test_batch_v4_rechecks_and_enriches_library_file_evidence(monkeypatch) -> No
     assert payload["steps"][0]["type"] == "library_append"
 
 
+def test_batch_v5_requires_join_capabilities_and_preserves_boundary_aliases(
+    monkeypatch,
+) -> None:
+    class FakeClient:
+        def __init__(self, *, port: int) -> None:
+            self.port = port
+            self.requirements: list[tuple[str, int]] = []
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        async def connect(self) -> object:
+            return object()
+
+        def require_capability(self, name: str, version: int = 1) -> None:
+            self.requirements.append((name, version))
+
+        async def call(self, command: str, params=None, **_kwargs):
+            payload = {} if params is None else params
+            self.calls.append((command, payload))
+            return {"command": command}
+
+        async def close(self) -> None:
+            return None
+
+    fake = FakeClient(port=9877)
+    monkeypatch.setattr(server_module, "BridgeClient", lambda **_kwargs: fake)
+    target = {
+        "object_name": "Head",
+        "expected_object_identity": "object:head",
+        "expected_mesh_identity": "mesh:head",
+        "expected_mesh_users": 1,
+        "expected_mesh_user_objects": [
+            {"object_name": "Head", "expected_object_identity": "object:head"}
+        ],
+        "expected_mesh_fingerprint": "a" * 64,
+    }
+    second = {
+        **target,
+        "object_name": "Body",
+        "expected_object_identity": "object:body",
+        "expected_mesh_identity": "mesh:body",
+        "expected_mesh_user_objects": [
+            {"object_name": "Body", "expected_object_identity": "object:body"}
+        ],
+    }
+    server = server_module.create_server()
+    asyncio.run(
+        server.call_tool(
+            "mesh.batch.execute",
+            {
+                "transaction_id": "tx-1",
+                "targets": [
+                    {"alias": "head", **target},
+                    {"alias": "body", **second},
+                ],
+                "inputs": [
+                    {
+                        "type": "collection",
+                        "alias": "modules",
+                        "collection_name": "Modules",
+                        "expected_collection_identity": "collection:1",
+                        "expected_collection_structure_fingerprint": "b" * 64,
+                    }
+                ],
+                "steps": [
+                    {
+                        "type": "mesh_join",
+                        "sources": [
+                            {
+                                "target_alias": "head",
+                                "map_alias": "head_map",
+                                "boundary_selection_alias": "head_boundary",
+                            },
+                            {
+                                "target_alias": "body",
+                                "map_alias": "body_map",
+                                "boundary_selection_alias": "body_boundary",
+                            },
+                        ],
+                        "output_target_alias": "joined",
+                        "new_object_name": "Joined",
+                        "new_mesh_name": "Joined Mesh",
+                        "collection_alias": "modules",
+                        "coordinate_frame": {"type": "WORLD"},
+                        "attributes": {
+                            "materials": "PRESERVE_BY_IDENTITY",
+                            "uv": "MERGE_BY_NAME",
+                            "weights": "MERGE_BY_NAME",
+                            "colors": "MERGE_BY_NAME",
+                            "generic": "ERROR_IF_PRESENT",
+                            "custom_normals": "DROP_RECALCULATE",
+                        },
+                        "dependencies": {
+                            "shape_keys": "ERROR_IF_PRESENT",
+                            "modifiers": "ERROR_IF_PRESENT",
+                        },
+                    },
+                    {
+                        "type": "mesh_edit",
+                        "target_alias": "joined",
+                        "data_scope": "OBJECT",
+                        "operation": {
+                            "type": "weld_vertices",
+                            "selection_aliases": ["head_boundary", "body_boundary"],
+                            "maximum_distance": 0.001,
+                        },
+                    },
+                ],
+                "expected_scene_generation": 4,
+                "idempotency_key": "123e4567-e89b-12d3-a456-426614174002",
+            },
+        )
+    )
+    assert ("mesh_join", 1) in fake.requirements
+    assert ("mesh_component_map", 4) in fake.requirements
+    assert ("mesh_topology", 5) in fake.requirements
+    assert ("mesh_batch", 5) in fake.requirements
+    assert ("transactions", 13) in fake.requirements
+    assert fake.calls[-1][1]["steps"][1]["operation"]["selection_aliases"] == (
+        "head_boundary",
+        "body_boundary",
+    )
+
+
 def test_material_input_value_preserves_json_types() -> None:
     adapter = TypeAdapter(MaterialInputValue)
 
