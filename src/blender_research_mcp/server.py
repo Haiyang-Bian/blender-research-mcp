@@ -559,6 +559,7 @@ def create_server(
                 "offset": offset,
                 "limit": limit,
             },
+            deadline_ms=MAX_DEADLINE_MS,
             read_only=True,
         )
 

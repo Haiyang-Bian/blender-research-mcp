@@ -208,6 +208,8 @@ class BridgeClient:
             except TransportError as exc:
                 last_error = exc
                 await self.close()
+                if exc.error.code == "REQUEST_TIMEOUT":
+                    raise
                 if attempt == 0 and may_retry:
                     continue
             except BridgeError:

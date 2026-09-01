@@ -215,12 +215,12 @@ def _mesh_fingerprint_sections(mesh: Any) -> dict[str, str]:
     return sections
 
 
-def mesh_revision_id(mesh: Any) -> str:
+def mesh_revision_id(mesh: Any, *, fingerprint: str | None = None) -> str:
     """Return session-scoped content evidence for one exact Mesh revision."""
 
     hasher = hashlib.sha256()
     _hash_text(hasher, session_identity("mesh", mesh))
-    _hash_text(hasher, mesh_fingerprint(mesh))
+    _hash_text(hasher, fingerprint if fingerprint is not None else mesh_fingerprint(mesh))
     _hash_text(hasher, int(mesh.users))
     for object_name, object_identity in mesh_user_refs(mesh):
         _hash_text(hasher, object_name)

@@ -36,7 +36,7 @@ from .mesh_weight_ops import (
     group_schema_fingerprint,
     weights_fingerprint,
 )
-from .structural_ops import make_structure_guard
+from .structural_ops import make_structure_guard, refresh_structure_guard_if_present
 from .transaction_model import StructuralDelta, Transaction
 
 
@@ -445,6 +445,7 @@ def materialize_mesh(
         output.matrix_world = source.matrix_world.copy()
         output.parent = None
         collection.objects.link(output)
+        refresh_structure_guard_if_present(transaction, "collection", collection)
         output.select_set(False)
         copy_result = _copy_domains(source, output, copy_policy)
         if output.parent is not None or len(output.modifiers) or output.data.shape_keys is not None:

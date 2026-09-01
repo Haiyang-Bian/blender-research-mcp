@@ -16,7 +16,12 @@ from .scene_organization_ops import (
     _require_collection_parent,
     collection_summary,
 )
-from .structural_ops import make_structure_guard, structure_fingerprint, validate_structure_guard
+from .structural_ops import (
+    make_structure_guard,
+    refresh_structure_guard_if_present,
+    structure_fingerprint,
+    validate_structure_guard,
+)
 from .transaction_model import StructuralDelta, Transaction
 
 LIBRARY_KINDS = {"OBJECT": "objects", "COLLECTION": "collections", "MESH": "meshes"}
@@ -565,6 +570,7 @@ def append_library(
     try:
         root = _load_root(path, str(entry_type), entry_name)
         output_root = _place_root(str(entry_type), root, output, destination)
+        refresh_structure_guard_if_present(transaction, destination_kind, destination)
         _assert_source_stable(path, stat)
         created = _new_ids(before)
         _discard_append_source_library(created, path)

@@ -36,6 +36,7 @@ from .modifier_ops import modifier_stack_fingerprint
 from .scene_organization_ops import collection_summary
 from .structural_ops import (
     make_structure_guard,
+    refresh_structure_guard_if_present,
     restore_structural_delta,
     structure_fingerprint,
 )
@@ -772,6 +773,9 @@ def join_meshes(
     phase = "create_output"
     try:
         obj, mesh, offsets = _build_output(preflight)
+        refresh_structure_guard_if_present(
+            transaction, "collection", preflight["output"]["collection"]
+        )
         object_guard = make_structure_guard("object", obj)
         mesh_guard = make_structure_guard("mesh", mesh)
         output_delta = StructuralDelta(

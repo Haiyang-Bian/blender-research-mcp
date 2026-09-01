@@ -11,6 +11,8 @@ in this order when starting a new implementation task:
      — implemented exact join, lineage branches, seam welding, and bounded live gate.
    - [0.17.0 cross-object Mesh composition validation](validation/2026-09-01-cross-object-mesh-composition.md)
      — deterministic pass plus explicit aggregate-stress and character-cage gaps.
+   - [0.17.1 Collection rollback and bounded UV inspection validation](validation/2026-09-01-transaction-rollback-collection-guard.md)
+     — guarded nested-Collection recovery, disconnect rollback, and real-character UV paging.
    - [Cross-object Mesh composition decision](decisions/0019-cross-object-mesh-composition.md)
      — implemented transaction-v13 Mesh-domain authority.
 2. [0.16.0 controlled Library and template coverage roadmap](roadmap/0.16.0-library-template-coverage.md)
@@ -124,6 +126,14 @@ Shape-Key, bone-authoring, and Modifier-Apply authority. See the
 [post-0.16 completeness direction](requirements/model-editing-completeness.md). Exact
 evidence and the remaining limitation are recorded in
 [the 0.17 validation record](validation/2026-09-01-cross-object-mesh-composition.md).
+
+Version 0.17.1 is the current validated patch. It refreshes transaction-owned
+Collection structure guards whenever a later Agent operation places or removes an
+object, while continuing to reject real external Collection edits. It also bounds
+non-summary UV inspection work, gives UV inspection the existing 30-second protocol
+deadline, and preserves `REQUEST_TIMEOUT` instead of masking it as a reconnect failure.
+The automated and Blender 4.2.23 evidence is recorded in
+[the 0.17.1 validation record](validation/2026-09-01-transaction-rollback-collection-guard.md).
 
 Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
 SurfaceRefs, topology-preserving surface deformation, and quantitative Mesh validation;

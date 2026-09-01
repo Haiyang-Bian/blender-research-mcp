@@ -41,7 +41,7 @@
    `mesh_topology: 5`, `mesh_batch: 5`, and `transactions: 13`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.17.0.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.17.1.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -425,6 +425,12 @@ Catalogs are session resources and are cleared on file load or add-on restart. T
 do not replace ComponentMaps: use Catalogs to choose connected shells in one revision,
 then use branch Maps and SelectionSet remapping after topology or extraction changes.
 
+Collections created earlier in the same transaction may receive later Agent-created,
+materialized, separated, joined, duplicated, or appended objects. In 0.17.1 these are
+recognized as transaction-owned changes and rollback restores the whole chain. A
+Collection changed by the user after the latest Agent write remains a hard structure
+conflict and is never force-restored.
+
 ## Inspect and append a controlled local Library
 
 Use `library.inspect` with an absolute `.blend` path before importing anything. Retain
@@ -651,6 +657,10 @@ Codex after the first installation so automatic skill discovery can see it.
   fall back to arbitrary Python.
 - `STRUCTURE_CONFLICT`: preserve user state, stop the batch, and re-inspect identities,
   users, slots, nodes, links, World, Camera, and transaction status.
+- `REQUEST_TIMEOUT`: the request exceeded its declared deadline and was not retried.
+  Re-inspect connection and transaction status before deciding whether to repeat it;
+  do not reinterpret this as `CONNECTION_LOST`. For paged UV evidence, request the
+  smallest component page and use `SUMMARY` only when global island metrics are needed.
 - `SHARED_OBJECT_DATA_CONFIRMATION_REQUIRED`: inspect the Light/Camera data users and
   proceed only when the user's requested scope includes all of them.
 - `OBJECT_DATA_IDENTITY_MISMATCH` or `OBJECT_DATA_USERS_MISMATCH`: discard the stale

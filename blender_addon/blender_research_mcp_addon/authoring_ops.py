@@ -250,6 +250,7 @@ def create_object(
             obj.empty_display_type = str(definition["display_type"])
             obj.empty_display_size = float(definition["display_size"])
         collection.objects.link(obj)
+        refresh_structure_guard_if_present(transaction, "collection", collection)
         delta = StructuralDelta(
             kind="object_create",
             action="create_resource",
@@ -322,6 +323,7 @@ def duplicate_object(
     if transform is not None:
         _apply_transform(duplicate, transform)
     collection.objects.link(duplicate)
+    refresh_structure_guard_if_present(transaction, "collection", collection)
     duplicate.select_set(False)
     delta = StructuralDelta(
         kind="object_duplicate",
@@ -402,6 +404,7 @@ def unlink_object(
     )
     for collection in collections:
         collection.objects.unlink(obj)
+        refresh_structure_guard_if_present(transaction, "collection", collection)
     delta = StructuralDelta(
         kind="object_delete",
         action="unlink_object",

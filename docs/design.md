@@ -1,11 +1,11 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.17.0 cross-object Mesh composition implemented; deterministic live gate
-  passed, aggregate same-process stress and real-character cage gate pending
-- Current milestone: 0.17.0 transaction-v13 Mesh join, explicit weld, and batch v5
+- Status: 0.17.1 transaction-owned Collection rollback and bounded UV inspection
+  stabilization validated; 0.17.0 Mesh composition remains implemented
+- Current milestone: 0.17.1 transaction-v13 recovery patch
 - Next milestone: 0.18.0 bounded Shape-Key structure authoring
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.17.0
+- Package and add-on version: 0.17.1
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -489,6 +489,13 @@ deletion is finalized only after all commit guards pass. Rollback only overwrite
 that still matches the last Agent write. Blender Undo is not the transaction contract
 because user and Agent actions can interleave.
 
+Transaction-owned structure guards follow the same last-Agent-write rule. If a later
+operation in the same transaction places or removes an object in an already guarded
+Collection, that writer refreshes the expected Collection fingerprint. This is owned
+progress, not an external conflict. A user or unrelated operator changing that
+Collection after the last Agent write still produces `STRUCTURE_CONFLICT`, and rollback
+does not overwrite the user's structure.
+
 Transaction capability v4 adds `MeshEditDelta` and `MeshSnapshotGuard`. The first edit
 of one working Mesh owns one baseline `Mesh.copy()`; subsequent edits reuse it and
 advance the expected fingerprint. Component indices are never treated as persistent
@@ -504,6 +511,14 @@ Transaction capability v9 extends Mesh snapshot evidence with UV roles, coordina
 pins, seams, object Group schemas, and deform values. Shape-Key Meshes remain topology
 immutable but may receive topology-stable UV or weight changes. Attribute writes never
 make Blender or UV Editor selection part of the hard transaction state.
+
+Version 0.17.1 keeps transaction capability 13 and repairs an ownership-integration
+gap exposed by materializing into a Collection created earlier in the same transaction.
+It also treats paged UV inspection as bounded evidence: only `SUMMARY` computes global
+island and degenerate-face aggregates, while `LOOPS`, `FACES`, and `SEAMS` compute their
+requested page and report deferred global metrics. The MCP route uses the existing
+30-second protocol ceiling, and an actual request timeout remains `REQUEST_TIMEOUT`
+rather than being retried and surfaced as `CONNECTION_LOST`.
 
 ## 9. Development phases
 

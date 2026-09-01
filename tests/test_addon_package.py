@@ -217,6 +217,44 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
     assert "os.replace(temporary_path, output_path)" in world_render
 
 
+def test_transactional_object_placement_refreshes_owned_collection_guards() -> None:
+    sources = {
+        name: (SOURCE / name).read_text(encoding="utf-8")
+        for name in (
+            "authoring_ops.py",
+            "library_ops.py",
+            "mesh_join_ops.py",
+            "mesh_materialization_ops.py",
+            "mesh_separation_ops.py",
+        )
+    }
+    for name, source in sources.items():
+        assert "refresh_structure_guard_if_present" in source, name
+    assert sources["authoring_ops.py"].count(
+        'refresh_structure_guard_if_present(transaction, "collection", collection)'
+    ) >= 3
+    assert (
+        'refresh_structure_guard_if_present(transaction, "collection", collection)'
+        in sources["mesh_materialization_ops.py"]
+    )
+
+
+def test_uv_inspection_defers_global_metrics_for_paged_components() -> None:
+    addon = (SOURCE / "mesh_uv_ops.py").read_text(encoding="utf-8")
+    server = (
+        Path(__file__).parents[1] / "src" / "blender_research_mcp" / "server.py"
+    ).read_text(encoding="utf-8")
+    uv_tool = server.split("async def mesh_uv_inspect", 1)[1].split(
+        "async def mesh_weights_inspect", 1
+    )[0]
+
+    assert 'compute_islands = component in {"SUMMARY", "ISLANDS"}' in addon
+    assert 'compute_degenerate_faces = component == "SUMMARY"' in addon
+    assert "MESH_UV_GLOBAL_METRICS_DEFERRED" in addon
+    assert "fingerprint=mesh_state_fingerprint" in addon
+    assert "deadline_ms=MAX_DEADLINE_MS" in uv_tool
+
+
 def test_addon_supports_session_only_managed_enable_without_saved_preferences() -> None:
     source = (SOURCE / "__init__.py").read_text(encoding="utf-8")
 

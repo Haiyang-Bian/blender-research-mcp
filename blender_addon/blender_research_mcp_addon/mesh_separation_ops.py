@@ -414,6 +414,9 @@ def separate_mesh(
             for collection in source_collections:
                 if duplicate.name not in collection.objects:
                     collection.objects.link(duplicate)
+                    refresh_structure_guard_if_present(
+                        transaction, "collection", collection
+                    )
 
         phase = "source_branch"
         source_relations, source_created, source_deleted = _branch_mesh(

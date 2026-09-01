@@ -62,7 +62,12 @@ Library Link/Override、脚本/驱动、Action、约束与 Geometry Nodes 继续
 0.17.0 新增只读 `mesh.join.preflight`、事务型 `mesh.join`、显式
 `mesh.edit(weld_vertices)` 和 `mesh.batch.execute` v5。跨对象合成会创建独立 BASE
 Mesh 输出、为每个来源保留 JOIN_BRANCH lineage，并且只有调用方明确提交边界
-SelectionSet 和距离规则时才焊接接缝；自动门禁已通过，Blender 实机发布门仍待记录。
+SelectionSet 和距离规则时才焊接接缝；自动门禁与确定性 Blender 实机门已通过，
+聚合同进程压力和真实角色笼拼接仍保留为未关闭的扩展验收项。
+0.17.1 修复了同一事务中“先创建 Collection、再由后续操作放入对象”时结构 guard
+仍停留在旧指纹、导致 rollback 误报冲突的问题；真实用户对 Collection 的外部修改
+仍会被保护。分页 UV 检查也改为只计算所请求页面，并用明确警告延后全局岛屿指标，
+避免大角色 Mesh 的正常检查被短超时误报为连接丢失。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -371,7 +376,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.17.0
+uv run --no-sync python scripts/build_addon.py --version 0.17.1
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认

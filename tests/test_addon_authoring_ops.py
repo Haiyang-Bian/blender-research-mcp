@@ -127,6 +127,13 @@ class CollectionObjects:
         self._owner = owner
         self._objects = objects
 
+    def __iter__(self):
+        return (
+            obj
+            for obj in self._objects
+            if self._owner in obj.users_collection
+        )
+
     def link(self, obj: Object) -> None:
         self._objects.add(obj)
         if self._owner not in obj.users_collection:
@@ -144,6 +151,7 @@ class Collection:
         self.name = name
         self.users = 1
         self.objects = CollectionObjects(self, objects)
+        self.children: list[Collection] = []
 
     def as_pointer(self) -> int:
         return id(self)
@@ -158,6 +166,8 @@ def _load_modules(*, source_type: str = "MESH"):
     meshes = FakeIDCollection()
     lights = FakeIDCollection()
     collection = Collection("Scene Collection", objects)
+    collections = FakeIDCollection()
+    collections.add(collection)
     if source_type == "MESH":
         data = Mesh("Shared Mesh", meshes)
     else:
@@ -173,7 +183,7 @@ def _load_modules(*, source_type: str = "MESH"):
         meshes=meshes,
         lights=lights,
         cameras=FakeIDCollection(),
-        collections=FakeIDCollection(),
+        collections=collections,
         images=FakeIDCollection(),
         materials=FakeIDCollection(),
         scenes=FakeIDCollection(),
@@ -219,6 +229,18 @@ def _guard_mesh_like_material_assignment(transaction, structural, model, data) -
             before=(),
             after=(structural.make_structure_guard("mesh", data),),
             payload={"data": data, "before": tuple(data.materials)},
+        )
+    )
+
+
+def _guard_collection(transaction, structural, model, collection) -> None:
+    transaction.record(
+        model.StructuralDelta(
+            kind="owned_collection",
+            action="guard_only",
+            before=(),
+            after=(structural.make_structure_guard("collection", collection),),
+            payload={},
         )
     )
 
@@ -320,6 +342,31 @@ def test_external_user_count_change_after_latest_agent_write_remains_a_conflict(
             structural.validate_structural_transaction(transaction)
         assert error.value.code == "STRUCTURE_CONFLICT"
     assert mesh.users == 4
+
+
+def test_agent_object_link_refreshes_owned_collection_but_external_link_conflicts() -> None:
+    authoring, structural, model, source, _mesh, objects = _load_modules()
+    transaction = _transaction(model)
+    collection = source.users_collection[0]
+    _guard_collection(transaction, structural, model, collection)
+
+    _linked_duplicate(authoring, transaction, source, "Agent Output")
+    structural.validate_structural_transaction(transaction)
+    collection_guard = next(
+        guard
+        for guard in transaction.expected_structures().values()
+        if guard.kind == "collection"
+    )
+    assert collection_guard.fingerprint == structural.structure_fingerprint(
+        "collection", collection
+    )
+
+    external = Object("User Output", "EMPTY", None)
+    objects.add(external)
+    collection.objects.link(external)
+    with pytest.raises(model.TransactionModelError) as conflict:
+        structural.validate_structural_transaction(transaction)
+    assert conflict.value.code == "STRUCTURE_CONFLICT"
 
 
 def test_independent_duplicate_does_not_refresh_shared_mesh_guard() -> None:
