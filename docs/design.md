@@ -1,7 +1,7 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.16.0 controlled Library and template coverage implementation
-- Current milestone: 0.16.0 transaction-v12 local Library append and batch v4
+- Status: 0.16.0 controlled Library and template coverage validated
+- Current milestone: 0.16.0 transaction-v12 local Library append and batch v4 accepted
 - Primary Blender target: 4.2.23 LTS
 - Package and add-on version: 0.16.0
 - Protocol version: 1
@@ -661,6 +661,10 @@ Status: implemented and validated in 0.15.1; see
   transfer, organization, rig binding and validation through batch v4.
 - Retain hidden-region template/cage priors instead of claiming reconstruction of
   geometry that the evaluated source does not contain.
+
+Completed on Blender 4.2.23 LTS with deterministic Library fixtures and a temporary
+`test-model.blend` copy; see
+`docs/validation/2026-09-01-library-template-coverage.md`.
 
 ## 10. Acceptance criteria for the first milestone
 

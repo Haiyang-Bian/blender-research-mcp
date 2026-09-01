@@ -97,11 +97,13 @@ ComponentCatalogs, exact Collection/object-parent organization, and cross-object
 automated and Blender 4.2.23 gates are recorded in
 [the 0.15.1 validation record](validation/2026-09-01-component-catalog-assembly.md).
 
-Version 0.16.0 is the current implementation milestone. It adds SHA-bound local
+Version 0.16.0 is the current validated milestone. It adds SHA-bound local
 Library inspection, transactionally guarded local-data append, and batch-v4 template
 coverage composition. See the
 [0.16 roadmap](roadmap/0.16.0-library-template-coverage.md) and
-[decision 0018](decisions/0018-controlled-library-template-coverage.md).
+[decision 0018](decisions/0018-controlled-library-template-coverage.md). The automated,
+deterministic Blender, and `test-model.blend` coverage gates are recorded in
+[the 0.16 validation record](validation/2026-09-01-library-template-coverage.md).
 
 Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
 SurfaceRefs, topology-preserving surface deformation, and quantitative Mesh validation;
