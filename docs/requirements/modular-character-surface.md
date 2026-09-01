@@ -1,6 +1,6 @@
 # Blender MCP：角色缺失表面补全与可拆装模块需求
 
-- Status: accepted requirements; P0 implemented in 0.15.0, P1 in 0.15.1, P2 implemented and validated in 0.16.0
+- Status: accepted requirements; P0 implemented in 0.15.0, P1 in 0.15.1, P2 validated in 0.16.0, P3 planned for 0.17.0
 - Evidence baseline: Blender Research MCP 0.14.0, audited 2026-09-01
 - Implemented milestones: 0.15.0 materialize/extract/rig binding; 0.15.1 catalog/assembly; 0.16.0 controlled Library/template coverage
 
@@ -379,7 +379,9 @@ ComponentCatalog，而不是为每个碎片立即创建 SelectionSet：
 - `collection.link_object`；
 - `collection.unlink_object`；
 - `object.parent.set` / `object.parent.clear`；
-- 可选的 `object.join`，仅接受精确对象身份和明确的材质/UV/权重合并策略。
+- 0.17 的 `mesh.join.preflight` / `mesh.join`，仅接受精确对象/Mesh 身份和明确的
+  坐标、材质、UV、权重及依赖合并策略；
+- `mesh.edit(weld_vertices)`，只焊接精确 revision 上显式选择的边界。
 
 这些接口应保持通用 Blender 语义，不应出现“角色头发”“衣服”等特定领域名称。
 
@@ -560,8 +562,21 @@ Character_Coverage
 覆盖面回归；量化证据与源文件哈希保护记录在
 `docs/validation/2026-09-01-library-template-coverage.md`。
 
-Shape Key 结构写入和 Modifier Apply 不进入 0.15；两者需要独立的快照、映射和回归
-设计，不能借 materialize 的“创建新输出”语义绕过。
+### P3：0.17 合并模块并闭合真实接缝
+
+1. 对多个精确 Mesh 对象执行只读合并预检；
+2. 创建一个独立输出并返回每个输入到输出的 JOIN_BRANCH ComponentMap；
+3. 通过映射后的边界 SelectionSet 显式 weld，而不是按空间邻近自动猜测；
+4. 验证材质槽、UV Layer、权重 schema、连通性和接缝质量；
+5. 在 batch v5 中组合 Library append、拟合、join、weld、权重和绑定。
+
+join 固定读取 BASE Mesh；需要求值结果时先显式 materialize。输入对象保留或 commit
+删除由调用方选择，用户无需再对已经表达的合并意图进行二次确认。完整边界见
+`docs/roadmap/0.17.0-cross-object-mesh-composition.md`。
+
+Shape Key 结构写入和 Modifier Apply 不进入 0.17；两者需要独立的快照、映射和回归
+设计，不能借 materialize 或 join 的“创建新输出”语义绕过。当前后续顺序为 0.18
+Shape Key、0.19 骨架创作和 0.20 Modifier 最终化。
 
 ## 13. 建议的第一项验证任务
 

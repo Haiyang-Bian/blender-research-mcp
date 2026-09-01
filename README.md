@@ -97,6 +97,8 @@ SelectionSet 与求值曲面拟合见
 0.16 受控 Library 与模板覆盖面见
 [0.16.0 路线图](docs/roadmap/0.16.0-library-template-coverage.md)和
 [0.16.0 验收记录](docs/validation/2026-09-01-library-template-coverage.md)。
+0.17 跨对象 Mesh 合成与接缝焊接计划见
+[0.17.0 路线图](docs/roadmap/0.17.0-cross-object-mesh-composition.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -312,6 +314,21 @@ extract、Collection、父级和 rig.bind。运行期失败回退完整活动事
 距离/穿透/相交验证；任一步失败仍回退完整活动事务，manifest 只作为响应证据。
 模板只提供不存在几何的先验形体，不宣称恢复遮挡下不存在的原始人体数据。详细边界见
 [0.16.0 路线图](docs/roadmap/0.16.0-library-template-coverage.md)。
+
+## 0.17.0 跨对象 Mesh 合成与接缝焊接（下一阶段）
+
+0.17 计划新增只读 `mesh.join.preflight` 和事务型 `mesh.join`：将 2–32 个精确
+BASE Mesh 对象转换到明确坐标系，按显式策略统一材质、UV、颜色和 Vertex Group，
+创建一个独立输出，并为每个输入返回一条 JOIN_BRANCH ComponentMap。输入对象是保留
+还是在 commit 时删除由请求直接声明。
+
+join 不会自动按距离焊接。新的 `mesh.edit(weld_vertices)` 只处理同一 revision 上
+显式 SelectionSet 接受的顶点组，并返回 MERGED lineage、属性影响和新的边界证据。
+Batch v5 将 Library append、拟合、join、weld、权重、绑定和验证组合为一次原子流程。
+这一步完成后再按 0.18 Shape Key、0.19 骨架创作、0.20 Modifier 最终化推进。详细
+接口、事务语义和实机验收计划见
+[0.17.0 路线图](docs/roadmap/0.17.0-cross-object-mesh-composition.md)和
+[0.16 后模型编辑完整性方向](docs/requirements/model-editing-completeness.md)。
 
 ## 目录
 

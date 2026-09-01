@@ -5,6 +5,12 @@ in this order when starting a new implementation task:
 
 1. [Design and handoff](design.md) — architecture, safety boundaries, implemented
    phases, and open decisions.
+   - [Post-0.16 model-editing completeness direction](requirements/model-editing-completeness.md)
+     — accepted 0.17–0.20 capability sequence.
+   - [0.17.0 cross-object Mesh composition roadmap](roadmap/0.17.0-cross-object-mesh-composition.md)
+     — next implementation plan for exact join, lineage branches, and seam welding.
+   - [Cross-object Mesh composition decision](decisions/0019-cross-object-mesh-composition.md)
+     — planned transaction-v13 Mesh-domain authority.
 2. [0.16.0 controlled Library and template coverage roadmap](roadmap/0.16.0-library-template-coverage.md)
    — accepted local Library evidence, transactional append, and batch-v4 direction.
 3. [Controlled Library and template coverage decision](decisions/0018-controlled-library-template-coverage.md)
@@ -89,7 +95,7 @@ full `test-model.blend` gates passed; see the
 It does not authorize Shape-Key structure editing or Modifier Apply. See the
 [modular character surface requirements](requirements/modular-character-surface.md).
 
-Version 0.15.1 is the current validated milestone. It adds compact revision-bound
+Version 0.15.1 is the previous validated milestone. It adds compact revision-bound
 ComponentCatalogs, exact Collection/object-parent organization, and cross-object
 `mesh.batch.execute` v3 without adding persistent project metadata. See the
 [0.15.1 roadmap](roadmap/0.15.1-component-catalog-assembly.md) and
@@ -104,6 +110,14 @@ coverage composition. See the
 [decision 0018](decisions/0018-controlled-library-template-coverage.md). The automated,
 deterministic Blender, and `test-model.blend` coverage gates are recorded in
 [the 0.16 validation record](validation/2026-09-01-library-template-coverage.md).
+
+Version 0.17.0 is the next planned milestone. It will add read-only join preflight,
+transactional independent Mesh composition, one exact JOIN_BRANCH map per source,
+explicit SelectionSet-based seam welding, and batch v5. It deliberately precedes
+Shape-Key, bone-authoring, and Modifier-Apply authority. See the
+[0.17 roadmap](roadmap/0.17.0-cross-object-mesh-composition.md),
+[decision 0019](decisions/0019-cross-object-mesh-composition.md), and the
+[post-0.16 completeness direction](requirements/model-editing-completeness.md).
 
 Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
 SurfaceRefs, topology-preserving surface deformation, and quantitative Mesh validation;

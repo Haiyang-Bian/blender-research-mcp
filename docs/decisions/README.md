@@ -28,6 +28,9 @@ batch composition.
 Decision 0018 defines SHA-bound local Library inspection, guarded local-data append,
 template-derived hidden coverage, and transaction-v12 batch composition without a
 role-specific fitting command.
+Decision 0019 places multi-object geometric composition in the Mesh domain, separates
+join from explicit seam welding, and defines one exact lineage branch per source for
+the planned transaction-v13 and batch-v5 authority.
 
 Each record should include context, decision, alternatives, consequences, and
 status. Do not use decision records for routine implementation details.
