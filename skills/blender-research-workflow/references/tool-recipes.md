@@ -406,6 +406,44 @@ accepts only topology-stable UV/weight writes. Custom normals, generic attribute
 Shape-Key writes, evaluated materialization, Modifier Apply, and retopology remain
 outside this authority.
 
+## Materialize, extract, and bind modular Mesh objects
+
+Use this recipe with `mesh_materialization: 1`, `mesh_extraction: 1`,
+`rig_binding: 1`, `mesh_component_map: 3`, and `transactions >= 10`:
+
+1. Inspect the exact source Mesh. Retain its object/Mesh identities, revision, full
+   fingerprint, user set, and `shape_key_state_fingerprint`. For FINAL_EVALUATED,
+   prepare and retain a live EVALUATED SurfaceRef for the same object.
+2. Begin one transaction and choose the evaluation contract explicitly:
+   - BASE copies stored coordinates and ignores all Shape Keys and Modifiers;
+   - SHAPE_KEYS_CURRENT bakes current Shape Keys at the current frame and excludes all
+     Modifiers;
+   - FINAL_EVALUATED bakes the complete dependency graph and reports Armature/Modifier
+     dependencies. Do not treat this result as a reusable rest Mesh by default.
+3. Call `mesh.materialize` with explicit material/UV/weight copy booleans. Verify the
+   new object has no parent, Shape Keys, or Modifiers and the source fingerprints did
+   not change. A topology-identical result has a MATERIALIZATION ComponentMap; a
+   topology-changing evaluated result intentionally has no guessed lineage.
+4. Query a FACE SelectionSet on the materialized object. Use `mesh.separate` only for
+   one connected shell. For a logical module containing several shells, first call
+   `mesh.extract.preflight`, then `mesh.extract` with explicit parent, Modifier,
+   material-slot, and independent SOURCE/EXTRACTED UV/weight policies.
+5. Inspect the extracted Mesh weights and call `rig.inspect` with the intended Armature.
+   Transfer, normalize, or limit weights through the 0.14 tools before binding if the
+   report shows missing groups or invalid coverage.
+6. Call `rig.bind` with exact Mesh, Armature data, bone schema, Group/weight, and existing
+   Modifier evidence. Choose NONE, KEEP_WORLD, or KEEP_LOCAL parenting explicitly.
+   Repeating a binding must update the exact existing Armature Modifier or return no-op;
+   never stack another same-name binding without evidence.
+7. Validate the evaluated result and review source/extracted ComponentMaps. Commit only
+   after the complete chain succeeds. Any failure should roll back the active transaction;
+   disconnect uses the same recovery, while native save accepts the current visible chain.
+
+Materialize may discard custom split normals and unsupported generic attributes because
+they are outside its declared copy domains. Missing body surface under clothing or hair
+cannot be reconstructed from absent data; use an explicit template or cage in a later
+authorized workflow rather than claiming recovery.
+
 ## Revision-bound selection and evaluated-surface fitting
 
 Use this recipe with `mesh_selection: 1`, `mesh_surface_query: 1`,

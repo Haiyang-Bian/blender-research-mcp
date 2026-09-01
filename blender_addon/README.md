@@ -16,7 +16,7 @@ uv run --no-sync python scripts/build_addon.py
 ~~~
 
 The ignored output is written to
-`artifacts/blender-research-mcp-addon-0.14.0.zip`. Install that ZIP in Blender
+`artifacts/blender-research-mcp-addon-0.15.0.zip`. Install that ZIP in Blender
 4.2, then enable **Blender Research MCP**. The listener binds only to
 `127.0.0.1:9877`, creates a random per-session token, and publishes its
 ephemeral manifest under the current user's local application data directory.
@@ -43,6 +43,10 @@ and closed declarative Mesh batches with invocation-local aliases, automatic rem
 validation assertions, and whole-transaction failure recovery.
 Version 0.14.0 adds exact UV-layer and deform-weight inspection/writes, isolated official
 unwrap/pack, attribute transfer and validation, and explicit topology migration policy.
+Version 0.15.0 adds independent BASE/current-Shape-Key/final-evaluated Mesh
+materialization, disconnected-region extraction, and exact Armature inspection/binding
+under transaction capability 10. These commands do not edit source Shape Keys, Apply
+source Modifiers, synthesize weights, or expose generic parenting/RNA.
 Captures can temporarily use solid, material, wireframe, or rendered shading and an
 absolute orbit while restoring the user's original context. Blender may be obscured by
 another window, but it must remain running with a `VIEW_3D`; minimized capture is not

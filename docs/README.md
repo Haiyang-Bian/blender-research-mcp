@@ -10,7 +10,7 @@ in this order when starting a new implementation task:
 3. [Materialized Mesh modules and rig binding decision](decisions/0016-materialized-mesh-modules-and-rig-binding.md)
    — explicit evaluation modes and transaction-v10 assembly boundary.
 4. [0.14.0 UV and skin-weight roadmap](roadmap/0.14.0-uv-and-skin-weights.md)
-   — current implementation target, attribute ownership, migration, and validation.
+   — validated attribute ownership, migration, and validation baseline.
 5. [UV and skin-weight decision](decisions/0015-uv-and-skin-weight-authority.md)
    — isolated unwrap, deform-data ownership, and transaction-v9 semantics.
 6. [0.13.1 separation and Mesh-batch roadmap](roadmap/0.13.1-mesh-separation-batches.md)
@@ -64,7 +64,7 @@ assertions, one-generation success semantics, and whole-transaction runtime reco
 Its automated, focused Blender, and full `test-model.blend` regression gates passed;
 see [the 0.13.1 validation record](validation/2026-08-31-mesh-separation-batches.md).
 
-Version 0.14.0 is the current implementation milestone. It adds exact UV layers,
+Version 0.14.0 is the previous validated milestone. It adds exact UV layers,
 isolated official unwrap/pack, Vertex Group weights, topology/nearest attribute
 transfer, attribute-aware topology migration, validation, and batch composition under
 transaction capability 9. Its automated and Blender 4.2.23 gates have passed. See the
@@ -72,10 +72,13 @@ transaction capability 9. Its automated and Blender 4.2.23 gates have passed. Se
 [decision 0015](decisions/0015-uv-and-skin-weight-authority.md), plus the
 [0.14 validation record](validation/2026-08-31-uv-and-skin-weights.md).
 
-The accepted next direction is a 0.15 P0 chain that creates an independent editable
-Mesh from BASE, current Shape Keys, or final evaluated geometry; extracts disconnected
-face regions; and binds the resulting object to an exact Armature. This direction does
-not authorize Shape-Key structure editing or Modifier Apply. See the
+Version 0.15.0 is the current implementation milestone. It creates independent Mesh
+outputs from explicit BASE, SHAPE_KEYS_CURRENT, or FINAL_EVALUATED evidence, extracts
+one or more disconnected FACE regions with exact branch lineage, and binds existing
+weights to an exact Armature under transaction capability 10. The deterministic and
+full `test-model.blend` gates passed; see the
+[0.15 validation record](validation/2026-09-01-modular-character-materialization.md).
+It does not authorize Shape-Key structure editing or Modifier Apply. See the
 [modular character surface requirements](requirements/modular-character-surface.md).
 
 Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
@@ -123,7 +126,8 @@ Documentation does not grant additional runtime authority. Unless a later accept
 decision explicitly changes the contract, the project still forbids arbitrary Python,
 external network services, arbitrary node graphs, arbitrary Mesh/BMesh operations or
   arrays, generic custom attributes, animation, Cycles, and force-overwriting
-  transaction conflicts. UV and weight writes are limited to their typed 0.14 tools.
+  transaction conflicts. UV and weight writes are limited to their typed 0.14 tools;
+  materialization, extraction, and rig assembly use only their typed 0.15 tools.
 Bounded semantic base-Mesh component edits are available only through `mesh.edit`.
 Local absolute-path image loading,
 bounded object location/rotation, fixed semantic nodes, and explicit render export are
