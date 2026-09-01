@@ -538,6 +538,11 @@ Character_Coverage
 3. 批处理跨对象分支；
 4. 模块级 manifest 与重复运行审计。
 
+该阶段采用 revision-bound ComponentCatalog、通用 Collection/对象父级操作和现有
+`mesh.batch.execute` 的 v3 扩展。Manifest 作为带 SHA-256 的响应证据返回，不写入
+`.blend` Custom Properties；`object.join`、Collection 删除和 Bone Parent 创建不在
+0.15.1 范围内。
+
 ### P2：0.16 提高模板化建模质量
 
 1. 受控 Blender Library 追加；
