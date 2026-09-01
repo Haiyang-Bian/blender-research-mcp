@@ -169,6 +169,64 @@ def test_batch_v4_library_input_and_template_steps_are_closed() -> None:
         TypeAdapter(BatchSteps).validate_python([invalid])
 
 
+def test_batch_v5_join_and_boundary_weld_are_closed() -> None:
+    policies = {
+        "materials": "PRESERVE_BY_IDENTITY",
+        "uv": "MERGE_BY_NAME",
+        "weights": "MERGE_BY_NAME",
+        "colors": "MERGE_BY_NAME",
+        "generic": "ERROR_IF_PRESENT",
+        "custom_normals": "DROP_RECALCULATE",
+    }
+    steps = TypeAdapter(BatchSteps).validate_python(
+        [
+            {
+                "type": "mesh_join",
+                "sources": [
+                    {
+                        "target_alias": "head",
+                        "map_alias": "head_join_map",
+                        "boundary_selection_alias": "head_boundary",
+                    },
+                    {
+                        "target_alias": "body",
+                        "map_alias": "body_join_map",
+                        "boundary_selection_alias": "body_boundary",
+                    },
+                ],
+                "output_target_alias": "joined",
+                "new_object_name": "Joined",
+                "new_mesh_name": "Joined Mesh",
+                "collection_alias": "modules",
+                "coordinate_frame": {"type": "SOURCE_OBJECT", "source_target_alias": "body"},
+                "attributes": policies,
+                "dependencies": {
+                    "shape_keys": "ERROR_IF_PRESENT",
+                    "modifiers": "ERROR_IF_PRESENT",
+                },
+            },
+            {
+                "type": "mesh_edit",
+                "target_alias": "joined",
+                "data_scope": "OBJECT",
+                "operation": {
+                    "type": "weld_vertices",
+                    "selection_aliases": ["head_boundary", "body_boundary"],
+                    "maximum_distance": 0.002,
+                },
+                "map_alias": "weld_map",
+            },
+        ]
+    )
+    assert [step.type for step in steps] == ["mesh_join", "mesh_edit"]
+    assert steps[1].operation.type == "weld_vertices"
+
+    invalid = steps[0].model_dump()
+    invalid["sources"][1]["boundary_selection_alias"] = "head_boundary"
+    with pytest.raises(ValidationError):
+        TypeAdapter(BatchSteps).validate_python([invalid])
+
+
 def test_batch_steps_cover_catalog_materialization_assembly_and_binding() -> None:
     steps = TypeAdapter(BatchSteps).validate_python(
         [

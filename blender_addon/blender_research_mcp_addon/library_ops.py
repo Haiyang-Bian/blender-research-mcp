@@ -360,7 +360,7 @@ def _validate_static_graph(created: dict[str, list[Any]]) -> None:
         if getattr(mesh, "shape_keys", None) is not None:
             raise AuthoringOperationError(
                 "LIBRARY_DEPENDENCY_UNSUPPORTED",
-                f"Shape-Key template Mesh is not appendable in 0.16: {mesh.name}",
+                f"Shape-Key template Mesh is not appendable in 0.17: {mesh.name}",
             )
     limits = {
         "vertices": MAX_VERTICES,

@@ -58,6 +58,7 @@ class ComponentMapRecord:
     step_count: int = 1
     transaction_ids: tuple[str, ...] = ()
     separation_id: str | None = None
+    join_id: str | None = None
     branch_role: str | None = None
 
     @property
@@ -89,6 +90,7 @@ class ComponentMapRecord:
             "source_component_map_ids": list(self.source_component_map_ids),
             "step_count": self.step_count,
             "separation_id": self.separation_id,
+            "join_id": self.join_id,
             "branch_role": self.branch_role,
             "before": {
                 "object_name": self.before_object_name,
@@ -128,9 +130,16 @@ def make_component_map(
     step_count: int = 1,
     transaction_ids: tuple[str, ...] | None = None,
     separation_id: str | None = None,
+    join_id: str | None = None,
     branch_role: str | None = None,
 ) -> ComponentMapRecord:
-    if map_kind not in {"SINGLE", "COMPOSED", "SEPARATION_BRANCH", "MATERIALIZATION"}:
+    if map_kind not in {
+        "SINGLE",
+        "COMPOSED",
+        "SEPARATION_BRANCH",
+        "MATERIALIZATION",
+        "JOIN_BRANCH",
+    }:
         raise ValueError(f"Unsupported ComponentMap kind: {map_kind}")
     if step_count < 1:
         raise ValueError("ComponentMap step_count must be positive")
@@ -143,6 +152,7 @@ def make_component_map(
         "source_component_map_ids": source_component_map_ids,
         "step_count": step_count,
         "separation_id": separation_id,
+        "join_id": join_id,
         "branch_role": branch_role,
         "before": before,
         "after": after,
@@ -183,6 +193,7 @@ def make_component_map(
         step_count=step_count,
         transaction_ids=resolved_transaction_ids,
         separation_id=separation_id,
+        join_id=join_id,
         branch_role=branch_role,
     )
 

@@ -81,6 +81,7 @@ from .mesh_component_map import (
     remap_selection,
 )
 from .mesh_deform_ops import DEFORM_OPERATIONS, edit_mesh_deform
+from .mesh_join_ops import join_meshes, preflight_join, weld_mesh_vertices
 from .mesh_materialization_ops import materialize_mesh
 from .mesh_ops import (
     MeshOperationError,
@@ -190,6 +191,7 @@ CAPABILITIES = [
     "library.inspect",
     "object.geometry.inspect",
     "mesh.inspect",
+    "mesh.join.preflight",
     "mesh.uv.inspect",
     "mesh.weights.inspect",
     "mesh.selection.query",
@@ -234,6 +236,7 @@ CAPABILITIES = [
     "modifier.move",
     "modifier.delete",
     "mesh.edit",
+    "mesh.join",
     "mesh.uv.edit",
     "mesh.weights.edit",
     "mesh.attribute.transfer",
@@ -268,7 +271,7 @@ CAPABILITY_VERSIONS = {
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 12,
+    "transactions": 13,
     "object_transform_scale": 1,
     "object_transform": 1,
     "object_settings": 1,
@@ -282,15 +285,16 @@ CAPABILITY_VERSIONS = {
     "object_visibility": 1,
     "modifier_state": 1,
     "modifier_authoring": 1,
-    "mesh_topology": 4,
+    "mesh_topology": 5,
     "mesh_selection": 1,
     "mesh_surface_query": 1,
     "mesh_deformation": 1,
     "mesh_validation": 2,
-    "mesh_component_map": 3,
+    "mesh_component_map": 4,
     "mesh_component_catalog": 1,
     "mesh_separation": 2,
-    "mesh_batch": 4,
+    "mesh_batch": 5,
+    "mesh_join": 1,
     "mesh_uv": 1,
     "mesh_weights": 1,
     "mesh_attribute_transfer": 1,
@@ -328,6 +332,7 @@ MUTATION_COMMANDS = {
     "modifier.move",
     "modifier.delete",
     "mesh.edit",
+    "mesh.join",
     "mesh.uv.edit",
     "mesh.weights.edit",
     "mesh.attribute.transfer",
@@ -1385,6 +1390,27 @@ class AddonState:
                 }
             )
             return result
+        if command == "mesh.join.preflight":
+            return preflight_join(self.mesh_resources, params)["public"]
+        if command == "mesh.join":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            with self.suppress_generation():
+                result = join_meshes(transaction, self.mesh_resources, params)
+                bpy.context.view_layer.update()
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
         if command == "library.append":
             transaction = self._require_transaction(params, request)
             self._validate_transaction_guards(transaction)
@@ -1454,7 +1480,9 @@ class AddonState:
             with self.suppress_generation():
                 operation = params.get("operation")
                 operation_type = operation.get("type") if isinstance(operation, dict) else None
-                if operation_type in DEFORM_OPERATIONS:
+                if operation_type == "weld_vertices":
+                    result = weld_mesh_vertices(transaction, self.mesh_resources, params)
+                elif operation_type in DEFORM_OPERATIONS:
                     result = edit_mesh_deform(
                         transaction, self.mesh_resources, self.captures, params
                     )

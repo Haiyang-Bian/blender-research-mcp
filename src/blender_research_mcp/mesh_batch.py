@@ -32,6 +32,7 @@ from blender_research_mcp.mesh_component_catalog import (
     ComponentCatalogMetrics,
     ComponentIdentities,
 )
+from blender_research_mcp.mesh_join import MeshJoinAttributes, MeshJoinDependencies
 from blender_research_mcp.mesh_modular import (
     ArmatureTarget,
     ExtractOutputPolicy,
@@ -424,6 +425,25 @@ class BatchGridFill(BaseModel):
     attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
+class BatchWeldVertices(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["weld_vertices"]
+    selection_aliases: Annotated[tuple[BatchAlias, ...], Field(min_length=1, max_length=8)]
+    mode: Literal["ALL_SELECTED", "CROSS_SELECTIONS"] = "CROSS_SELECTIONS"
+    maximum_distance: FiniteNumber = Field(gt=0, le=1_000_000)
+    destination: Literal["LOWEST_INDEX", "CENTER"] = "LOWEST_INDEX"
+    weight_merge: Literal["MAX", "AVERAGE", "SUM_NORMALIZE"] = "MAX"
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
+
+    @model_validator(mode="after")
+    def exact_selection_groups(self) -> BatchWeldVertices:
+        if len(set(self.selection_aliases)) != len(self.selection_aliases):
+            raise ValueError("selection_aliases must be unique")
+        if self.mode == "CROSS_SELECTIONS" and len(self.selection_aliases) < 2:
+            raise ValueError("CROSS_SELECTIONS requires at least two selections")
+        return self
+
+
 BatchMeshOperation = Annotated[
     BatchSetPositions
     | BatchSmooth
@@ -437,7 +457,8 @@ BatchMeshOperation = Annotated[
     | BatchSplit
     | BatchBridge
     | BatchFill
-    | BatchGridFill,
+    | BatchGridFill
+    | BatchWeldVertices,
     Field(discriminator="type"),
 ]
 
@@ -691,6 +712,83 @@ class BatchMeshSurfacePrepareStep(BaseModel):
     target_alias: BatchAlias
     geometry: SurfaceGeometry = "EVALUATED"
     output_surface_alias: BatchAlias
+
+
+class BatchMeshJoinSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_alias: BatchAlias
+    map_alias: BatchAlias
+    boundary_selection_alias: BatchAlias
+    selection_aliases: Annotated[tuple[BatchAlias, ...], Field(max_length=8)] = ()
+    rebound_selection_aliases: Annotated[tuple[BatchAlias, ...], Field(max_length=8)] = ()
+
+    @model_validator(mode="after")
+    def paired_rebound_aliases(self) -> BatchMeshJoinSource:
+        if len(self.selection_aliases) != len(self.rebound_selection_aliases):
+            raise ValueError(
+                "selection_aliases and rebound_selection_aliases must have equal length"
+            )
+        if len(set(self.selection_aliases)) != len(self.selection_aliases):
+            raise ValueError("selection_aliases must be unique per source")
+        return self
+
+
+class BatchJoinWorldCoordinates(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["WORLD"]
+
+
+class BatchJoinSourceCoordinates(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["SOURCE_OBJECT"]
+    source_target_alias: BatchAlias
+
+
+BatchJoinCoordinateFrame = Annotated[
+    BatchJoinWorldCoordinates | BatchJoinSourceCoordinates,
+    Field(discriminator="type"),
+]
+
+
+class BatchMeshJoinStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["mesh_join"]
+    sources: Annotated[tuple[BatchMeshJoinSource, ...], Field(min_length=2, max_length=32)]
+    output_target_alias: BatchAlias
+    new_object_name: str = Field(min_length=1, max_length=255)
+    new_mesh_name: str = Field(min_length=1, max_length=255)
+    collection_alias: BatchAlias
+    coordinate_frame: BatchJoinCoordinateFrame
+    source_disposition: Literal["KEEP", "DELETE_ON_COMMIT"] = "KEEP"
+    attributes: MeshJoinAttributes
+    dependencies: MeshJoinDependencies
+
+    @model_validator(mode="after")
+    def exact_sources_and_output(self) -> BatchMeshJoinStep:
+        target_aliases = [source.target_alias for source in self.sources]
+        aliases = [
+            alias
+            for source in self.sources
+            for alias in (
+                source.map_alias,
+                source.boundary_selection_alias,
+                *source.rebound_selection_aliases,
+            )
+        ]
+        if len(set(target_aliases)) != len(target_aliases):
+            raise ValueError("mesh_join source target aliases must be unique")
+        if len(set(aliases)) != len(aliases):
+            raise ValueError("mesh_join output aliases must be unique")
+        if self.new_object_name == self.new_mesh_name:
+            raise ValueError("new_object_name and new_mesh_name must be distinct")
+        if (
+            isinstance(self.coordinate_frame, BatchJoinSourceCoordinates)
+            and self.coordinate_frame.source_target_alias not in target_aliases
+        ):
+            raise ValueError("SOURCE_OBJECT frame must reference one of the join sources")
+        return self
 
 
 class BatchUVSeamSetOperation(BaseModel):
@@ -973,7 +1071,8 @@ BatchStep = Annotated[
     | BatchRigBindStep
     | BatchLibraryAppendStep
     | BatchObjectSetStep
-    | BatchMeshSurfacePrepareStep,
+    | BatchMeshSurfacePrepareStep
+    | BatchMeshJoinStep,
     Field(discriminator="type"),
 ]
 

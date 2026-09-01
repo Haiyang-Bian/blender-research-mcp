@@ -58,6 +58,7 @@ class CapabilityVersions(BaseModel):
     object_parenting: int = Field(default=0, ge=0)
     library_inspection: int = Field(default=0, ge=0)
     library_append: int = Field(default=0, ge=0)
+    mesh_join: int = Field(default=0, ge=0)
     shape_key_value: int = Field(default=0, ge=0)
     material_input: int = Field(default=0, ge=0)
     project_lifecycle: int = Field(default=0, ge=0)

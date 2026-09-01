@@ -8,4 +8,4 @@ def test_protocol_version_starts_at_one() -> None:
 
 def test_version_command(capsys) -> None:
     assert main(["--version"]) == 0
-    assert capsys.readouterr().out.strip() == "0.16.0"
+    assert capsys.readouterr().out.strip() == "0.17.0"

@@ -87,6 +87,13 @@ from blender_research_mcp.mesh_component_catalog import (
     ComponentCatalogMetrics,
     ComponentIdentities,
 )
+from blender_research_mcp.mesh_join import (
+    MeshJoinAttributes,
+    MeshJoinDependencies,
+    MeshJoinOutput,
+    MeshJoinRequest,
+    MeshJoinSources,
+)
 from blender_research_mcp.mesh_modular import (
     ArmatureTarget,
     ExtractMeshTarget,
@@ -1917,6 +1924,70 @@ def create_server(
         )
 
     @server.tool(
+        name="mesh.join.preflight",
+        description=(
+            "Validate exact source Meshes, coordinate frame, output names, attribute "
+            "schemas, dependencies, and budgets without changing Blender state."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_join_preflight(
+        sources: MeshJoinSources,
+        output: MeshJoinOutput,
+        attributes: MeshJoinAttributes,
+        dependencies: MeshJoinDependencies,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_join")
+        request = MeshJoinRequest(
+            sources=sources,
+            output=output,
+            attributes=attributes,
+            dependencies=dependencies,
+        )
+        return await client.call(
+            "mesh.join.preflight",
+            request.model_dump(),
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.join",
+        description=(
+            "Create one independent exact base-Mesh output from two to thirty-two "
+            "guarded sources and return per-source JOIN_BRANCH lineage evidence."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def mesh_join(
+        transaction_id: TransactionId,
+        sources: MeshJoinSources,
+        output: MeshJoinOutput,
+        attributes: MeshJoinAttributes,
+        dependencies: MeshJoinDependencies,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_join")
+        client.require_capability("transactions", 13)
+        request = MeshJoinRequest(
+            sources=sources,
+            output=output,
+            attributes=attributes,
+            dependencies=dependencies,
+        )
+        payload = request.model_dump()
+        payload["transaction_id"] = transaction_id
+        return await client.call(
+            "mesh.join",
+            payload,
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
         name="mesh.edit",
         description=(
             "Apply one bounded semantic edit to exact base-Mesh components inside the "
@@ -1957,7 +2028,12 @@ def create_server(
             "fill",
             "grid_fill",
         }
-        if operation.type in topology_v2_operations:
+        if operation.type == "weld_vertices":
+            await require_capability(client, "mesh_join")
+            client.require_capability("mesh_topology", 5)
+            client.require_capability("mesh_component_map", 4)
+            client.require_capability("transactions", 13)
+        elif operation.type in topology_v2_operations:
             await require_capability(client, "mesh_component_map")
             client.require_capability("mesh_topology", 2)
             client.require_capability("transactions", 7)
@@ -2457,6 +2533,7 @@ def create_server(
         requires_batch_v2 = False
         requires_batch_v3 = False
         requires_batch_v4 = False
+        requires_batch_v5 = False
         for payload in input_payloads:
             if payload["type"] != "library":
                 continue
@@ -2504,6 +2581,11 @@ def create_server(
                 requires_batch_v2 = True
             elif step_type == "mesh_edit":
                 operation_payload = payload.get("operation", {})
+                if operation_payload.get("type") == "weld_vertices":
+                    await require_capability(client, "mesh_join")
+                    client.require_capability("mesh_component_map", 4)
+                    client.require_capability("mesh_topology", 5)
+                    requires_batch_v5 = True
                 policy = operation_payload.get("attribute_policy")
                 if policy == MeshAttributePolicy().model_dump():
                     operation_payload.pop("attribute_policy", None)
@@ -2557,6 +2639,11 @@ def create_server(
             elif step_type == "mesh_surface_prepare":
                 await require_capability(client, "mesh_surface_query")
                 requires_batch_v4 = True
+            elif step_type == "mesh_join":
+                await require_capability(client, "mesh_join")
+                client.require_capability("mesh_component_map", 4)
+                client.require_capability("mesh_topology", 5)
+                requires_batch_v5 = True
         if requires_batch_v2:
             client.require_capability("mesh_batch", 2)
             client.require_capability("mesh_topology", 4)
@@ -2567,6 +2654,9 @@ def create_server(
         if requires_batch_v4:
             client.require_capability("mesh_batch", 4)
             client.require_capability("transactions", 12)
+        if requires_batch_v5:
+            client.require_capability("mesh_batch", 5)
+            client.require_capability("transactions", 13)
         return await client.call(
             "mesh.batch.execute",
             {

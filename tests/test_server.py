@@ -10,7 +10,7 @@ from blender_research_mcp.server import MaterialInputValue, create_server
 
 def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     server = create_server()
-    assert server._mcp_server.version == "0.16.0"
+    assert server._mcp_server.version == "0.17.0"
     tools = asyncio.run(server.list_tools())
     assert [tool.name for tool in tools] == [
         "application.status",
@@ -73,6 +73,8 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "modifier.set",
         "modifier.move",
         "modifier.delete",
+        "mesh.join.preflight",
+        "mesh.join",
         "mesh.edit",
         "mesh.uv.edit",
         "mesh.weights.edit",
@@ -223,6 +225,16 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert library_append.inputSchema["properties"]["output"]["discriminator"][
         "propertyName"
     ] == "type"
+    mesh_join_preflight = tools_by_name["mesh.join.preflight"]
+    assert mesh_join_preflight.annotations is not None
+    assert mesh_join_preflight.annotations.readOnlyHint is True
+    mesh_join = tools_by_name["mesh.join"]
+    assert mesh_join.annotations is not None
+    assert mesh_join.annotations.readOnlyHint is False
+    assert mesh_join.annotations.destructiveHint is True
+    assert mesh_join.annotations.idempotentHint is True
+    assert mesh_join.inputSchema["properties"]["sources"]["minItems"] == 2
+    assert mesh_join.inputSchema["properties"]["sources"]["maxItems"] == 32
     collection_create = tools_by_name["collection.create"]
     parent_schema = collection_create.inputSchema["properties"]["parent"]
     assert parent_schema["discriminator"]["propertyName"] == "type"
@@ -257,7 +269,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert mesh_batch.inputSchema["properties"]["steps"]["maxItems"] == 32
     step_schema = mesh_batch.inputSchema["properties"]["steps"]["items"]
     assert step_schema["discriminator"]["propertyName"] == "type"
-    assert len(step_schema["oneOf"]) == 20
+    assert len(step_schema["oneOf"]) == 21
     input_schema = mesh_batch.inputSchema["properties"]["inputs"]["items"]
     assert input_schema["discriminator"]["propertyName"] == "type"
     assert len(input_schema["oneOf"]) == 7
@@ -429,7 +441,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     ]
     operation_schema = mesh_edit.inputSchema["properties"]["operation"]
     assert operation_schema["discriminator"]["propertyName"] == "type"
-    assert len(operation_schema["oneOf"]) == 23
+    assert len(operation_schema["oneOf"]) == 24
     mesh_uv_edit = tools_by_name["mesh.uv.edit"]
     assert mesh_uv_edit.annotations is not None
     assert mesh_uv_edit.annotations.readOnlyHint is False

@@ -83,3 +83,4 @@ def test_capability_versions_default_to_incompatible_zeroes() -> None:
     assert versions.application_lifecycle == 0
     assert versions.library_inspection == 0
     assert versions.library_append == 0
+    assert versions.mesh_join == 0

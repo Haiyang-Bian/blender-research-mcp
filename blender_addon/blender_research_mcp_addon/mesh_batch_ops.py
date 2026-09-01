@@ -26,6 +26,7 @@ from .mesh_component_catalog_ops import (
 )
 from .mesh_component_map import compose_component_map, remap_selection
 from .mesh_deform_ops import DEFORM_OPERATIONS, edit_mesh_deform
+from .mesh_join_ops import join_meshes, preflight_join, weld_mesh_vertices
 from .mesh_materialization_ops import materialize_mesh
 from .mesh_ops import (
     MeshOperationError,
@@ -49,6 +50,7 @@ from .mesh_weight_ops import (
     group_schema_fingerprint,
     weights_fingerprint,
 )
+from .modifier_ops import modifier_stack_fingerprint
 from .object_settings_ops import apply_object_settings
 from .rig_ops import bind_rig, bone_schema_fingerprint
 from .scene_organization_ops import (
@@ -119,6 +121,35 @@ def _live_target(alias: str, obj: Any) -> dict[str, Any]:
         "uv_fingerprint": uv_fingerprint(mesh),
         "group_schema_fingerprint": group_schema_fingerprint(obj),
         "weights_fingerprint": weights_fingerprint(mesh),
+    }
+
+
+def _join_source_params(
+    target: dict[str, Any], selection_ids: list[str] | tuple[str, ...]
+) -> dict[str, Any]:
+    obj = bpy.data.objects.get(target["object_name"])
+    if obj is None or obj.type != "MESH" or obj.data is None:
+        _batch_error("MESH_BATCH_TARGET_MISMATCH", "Join source target disappeared")
+    mesh = obj.data
+    return {
+        "object_name": obj.name,
+        "expected_object_identity": session_identity("object", obj),
+        "expected_object_structure_fingerprint": structure_fingerprint("object", obj),
+        "mesh_name": mesh.name,
+        "expected_mesh_identity": session_identity("mesh", mesh),
+        "expected_mesh_users": int(mesh.users),
+        "expected_mesh_user_objects": [
+            {"object_name": name, "expected_object_identity": identity}
+            for name, identity in mesh_user_refs(mesh)
+        ],
+        "expected_mesh_fingerprint": mesh_fingerprint(mesh),
+        "expected_mesh_revision_id": mesh_revision_id(mesh),
+        "expected_uv_fingerprint": uv_fingerprint(mesh),
+        "expected_group_schema_fingerprint": group_schema_fingerprint(obj),
+        "expected_weights_fingerprint": weights_fingerprint(mesh),
+        "expected_shape_key_state_fingerprint": shape_key_state_fingerprint(obj),
+        "expected_modifier_stack_fingerprint": modifier_stack_fingerprint(obj),
+        "selection_ids": list(selection_ids),
     }
 
 
@@ -303,6 +334,44 @@ def _library_output_params(
         )
         result["parent"] = {"type": "COLLECTION", **_live_collection(collection)}
     return result
+
+
+def _join_params(
+    step: dict[str, Any],
+    targets: dict[str, dict[str, Any]],
+    selections: dict[str, dict[str, Any]],
+    collections: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    sources = []
+    for source in step["sources"]:
+        target_alias = str(source["target_alias"])
+        selection_ids = [
+            selections[str(alias)]["selection_id"] for alias in source.get("selection_aliases", [])
+        ]
+        sources.append(_join_source_params(targets[target_alias], selection_ids))
+    collection = _collection_for_alias(str(step["collection_alias"]), collections)
+    coordinate = dict(step["coordinate_frame"])
+    if coordinate["type"] == "SOURCE_OBJECT":
+        target_alias = str(coordinate.pop("source_target_alias"))
+        source_obj = _object_for_alias(target_alias, targets, {})
+        coordinate.update(
+            {
+                "source_object_name": source_obj.name,
+                "expected_source_object_identity": session_identity("object", source_obj),
+            }
+        )
+    return {
+        "sources": sources,
+        "output": {
+            "new_object_name": step["new_object_name"],
+            "new_mesh_name": step["new_mesh_name"],
+            **_live_collection(collection),
+            "coordinate_frame": coordinate,
+            "source_disposition": step.get("source_disposition", "KEEP"),
+        },
+        "attributes": step["attributes"],
+        "dependencies": step["dependencies"],
+    }
 
 
 def _live_armature(obj: Any) -> dict[str, Any]:
@@ -553,11 +622,28 @@ def _preflight(
                 _require_alias(alias_kinds, alias, "selection")
             _reserve(alias_kinds, step.get("output_alias"), "selection")
         elif step_type == "mesh_edit":
-            _require_alias(alias_kinds, step.get("target_alias"), "target")
+            target_alias = _require_alias(alias_kinds, step.get("target_alias"), "target")
             operation = step.get("operation")
             if not isinstance(operation, dict):
                 _batch_error("MESH_BATCH_INVALID", "mesh_edit requires operation")
-            _require_alias(alias_kinds, operation.get("selection_alias"), "selection")
+            if operation.get("type") == "weld_vertices":
+                selection_aliases = operation.get("selection_aliases")
+                if not isinstance(selection_aliases, list):
+                    _batch_error(
+                        "MESH_BATCH_INVALID",
+                        "weld_vertices requires selection_aliases",
+                    )
+                for selection_alias in selection_aliases:
+                    resolved = _require_alias(alias_kinds, selection_alias, "selection")
+                    existing = input_selections.get(resolved)
+                    if existing is not None and existing["target_alias"] != target_alias:
+                        _batch_error(
+                            "MESH_BATCH_TARGET_MISMATCH",
+                            f"Selection {resolved} does not belong to {target_alias}",
+                        )
+                topology_steps += 1
+            else:
+                _require_alias(alias_kinds, operation.get("selection_alias"), "selection")
             if operation.get("type") in {"project", "shrinkwrap"}:
                 _require_alias(alias_kinds, operation.get("surface_alias"), "surface")
             if operation.get("type") in TOPOLOGY_OPERATIONS:
@@ -575,6 +661,69 @@ def _preflight(
                     if value is not None:
                         _reserve(alias_kinds, value, "selection")
             capacity += 1
+        elif step_type == "mesh_join":
+            source_aliases = []
+            for source in step.get("sources", []):
+                if not isinstance(source, dict):
+                    _batch_error("MESH_BATCH_INVALID", "mesh_join sources must be objects")
+                target_alias = _require_alias(alias_kinds, source.get("target_alias"), "target")
+                source_aliases.append(target_alias)
+                for selection_alias in source.get("selection_aliases", []):
+                    resolved = _require_alias(alias_kinds, selection_alias, "selection")
+                    existing = input_selections.get(resolved)
+                    if existing is not None and existing["target_alias"] != target_alias:
+                        _batch_error(
+                            "MESH_BATCH_TARGET_MISMATCH",
+                            f"Selection {resolved} does not belong to {target_alias}",
+                        )
+                _reserve(alias_kinds, source.get("map_alias"), "component_map")
+                _reserve(
+                    alias_kinds,
+                    source.get("boundary_selection_alias"),
+                    "selection",
+                )
+                for rebound_alias in source.get("rebound_selection_aliases", []):
+                    _reserve(alias_kinds, rebound_alias, "selection")
+            coordinate = step.get("coordinate_frame", {})
+            if coordinate.get("type") == "SOURCE_OBJECT" and coordinate.get(
+                "source_target_alias"
+            ) not in source_aliases:
+                _batch_error(
+                    "MESH_BATCH_INVALID",
+                    "SOURCE_OBJECT coordinate frame must reference a join source",
+                )
+            _require_alias(alias_kinds, step.get("collection_alias"), "collection")
+            _reserve(alias_kinds, step.get("output_target_alias"), "target")
+            object_name = step.get("new_object_name")
+            mesh_name = step.get("new_mesh_name")
+            if not isinstance(object_name, str) or object_name in reserved_object_names:
+                _batch_error(
+                    "MESH_BATCH_INVALID",
+                    f"Batch object output name is not unique: {object_name}",
+                )
+            if not isinstance(mesh_name, str) or mesh_name in reserved_mesh_names:
+                _batch_error(
+                    "MESH_BATCH_INVALID",
+                    f"Batch Mesh output name is not unique: {mesh_name}",
+                )
+            reserved_object_names.add(object_name)
+            reserved_mesh_names.add(mesh_name)
+            if all(alias in targets for alias in source_aliases) and str(
+                step["collection_alias"]
+            ) in input_collections:
+                preflight_join(
+                    book,
+                    _join_params(step, targets, input_selections, input_collections),
+                )
+            topology_steps += 1
+            capacity += 1 + (
+                len(source_aliases)
+                if step.get("source_disposition", "KEEP") == "DELETE_ON_COMMIT"
+                else 0
+            )
+            if step.get("source_disposition", "KEEP") == "DELETE_ON_COMMIT":
+                for source_alias in source_aliases:
+                    alias_kinds[source_alias] = "terminated_target"
         elif step_type == "mesh_separate":
             _require_alias(alias_kinds, step.get("target_alias"), "target")
             _require_alias(alias_kinds, step.get("selection_alias"), "selection")
@@ -1025,12 +1174,21 @@ def _edit_operation(
     selections: dict[str, dict[str, Any]],
     surfaces: dict[str, str],
 ) -> dict[str, Any]:
+    excluded = {"selection_alias", "selection_aliases", "surface_alias"}
     result = {
         key: value
         for key, value in operation.items()
-        if key not in {"selection_alias", "surface_alias"}
+        if key not in excluded
     }
-    result["selection_id"] = selections[str(operation["selection_alias"])]["selection_id"]
+    if operation.get("type") == "weld_vertices":
+        result["selection_ids"] = [
+            selections[str(alias)]["selection_id"]
+            for alias in operation["selection_aliases"]
+        ]
+    else:
+        result["selection_id"] = selections[str(operation["selection_alias"])][
+            "selection_id"
+        ]
     if operation.get("surface_alias") is not None:
         result["surface_id"] = surfaces[str(operation["surface_alias"])]
     return result
@@ -1246,12 +1404,17 @@ def execute_mesh_batch(
             elif step_type == "mesh_edit":
                 target_alias = str(step["target_alias"])
                 operation = _edit_operation(step["operation"], selections, surfaces)
-                selection_alias = str(step["operation"]["selection_alias"])
-                if selections[selection_alias]["target_alias"] != target_alias:
-                    _batch_error(
-                        "MESH_BATCH_TARGET_MISMATCH",
-                        f"Selection {selection_alias} does not belong to {target_alias}",
-                    )
+                selection_aliases = (
+                    [str(alias) for alias in step["operation"]["selection_aliases"]]
+                    if operation["type"] == "weld_vertices"
+                    else [str(step["operation"]["selection_alias"])]
+                )
+                for selection_alias in selection_aliases:
+                    if selections[selection_alias]["target_alias"] != target_alias:
+                        _batch_error(
+                            "MESH_BATCH_TARGET_MISMATCH",
+                            f"Selection {selection_alias} does not belong to {target_alias}",
+                        )
                 call_params = {
                     **_target_params(targets[target_alias], str(step["data_scope"])),
                     "transaction_id": transaction.transaction_id,
@@ -1260,6 +1423,8 @@ def execute_mesh_batch(
                 operation_type = operation["type"]
                 if operation_type in DEFORM_OPERATIONS:
                     result = edit_mesh_deform(transaction, book, captures, call_params)
+                elif operation_type == "weld_vertices":
+                    result = weld_mesh_vertices(transaction, book, call_params)
                 elif operation_type in TOPOLOGY_OPERATIONS:
                     result = edit_mesh_topology(transaction, book, call_params)
                 else:
@@ -1281,9 +1446,9 @@ def execute_mesh_batch(
                     if step.get("map_alias") is not None:
                         maps[str(step["map_alias"])] = component_map_id
                 elif result.get("rebound_selection") is not None:
-                    selections[selection_alias]["selection_id"] = result["rebound_selection"][
-                        "selection_id"
-                    ]
+                    selections[selection_aliases[0]]["selection_id"] = result[
+                        "rebound_selection"
+                    ]["selection_id"]
                 created_aliases = step.get("created_selection_aliases") or {}
                 created = result.get("created_selections") or {}
                 for domain_key, alias in created_aliases.items():
@@ -1301,6 +1466,58 @@ def execute_mesh_batch(
                             "weight_merge": "MAX",
                         }
                 report = {**result, "automatic_remaps": remaps, "composed_component_map": composed}
+            elif step_type == "mesh_join":
+                call_params = _join_params(step, targets, selections, collections)
+                result = join_meshes(transaction, book, call_params)
+                changed = True
+                output_alias = str(step["output_target_alias"])
+                output_obj = bpy.data.objects.get(result["output_object"]["name"])
+                if output_obj is None:
+                    _batch_error("MESH_JOIN_FAILED", "Joined output Object disappeared")
+                targets[output_alias] = _live_target(output_alias, output_obj)
+                branches[output_alias] = {
+                    "direct_component_map_ids": [],
+                    "composed_component_map_id": None,
+                    "composed_component_map": None,
+                }
+                branch_reports = result["branches"]
+                for source_spec, branch in zip(step["sources"], branch_reports, strict=True):
+                    source_alias = str(source_spec["target_alias"])
+                    map_id = str(branch["component_map"]["component_map_id"])
+                    maps[str(source_spec["map_alias"])] = map_id
+                    boundary_alias = str(source_spec["boundary_selection_alias"])
+                    selections[boundary_alias] = {
+                        "selection_id": branch["boundary_selection"]["selection_id"],
+                        "target_alias": output_alias,
+                        "remap_mode": "ALL_MAPPED",
+                        "weight_merge": "MAX",
+                    }
+                    for input_alias, rebound_alias, rebound in zip(
+                        source_spec.get("selection_aliases", []),
+                        source_spec.get("rebound_selection_aliases", []),
+                        branch["rebound_selections"],
+                        strict=True,
+                    ):
+                        source_binding = selections[str(input_alias)]
+                        selections[str(rebound_alias)] = {
+                            "selection_id": rebound["selection_id"],
+                            "target_alias": output_alias,
+                            "remap_mode": source_binding["remap_mode"],
+                            "weight_merge": source_binding["weight_merge"],
+                        }
+                    prior_chain = list(branches[source_alias]["direct_component_map_ids"])
+                    joined_chain = {
+                        "direct_component_map_ids": prior_chain,
+                        "composed_component_map_id": branches[source_alias].get(
+                            "composed_component_map_id"
+                        ),
+                        "composed_component_map": branches[source_alias].get(
+                            "composed_component_map"
+                        ),
+                    }
+                    _append_map(book, joined_chain, map_id)
+                    branches[f"{output_alias}:{source_alias}"] = joined_chain
+                report = result
             elif step_type == "mesh_separate":
                 target_alias = str(step["target_alias"])
                 selection_alias = str(step["selection_alias"])
