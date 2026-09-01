@@ -72,6 +72,12 @@ from blender_research_mcp.mesh_authoring import (
     MeshUserObject,
 )
 from blender_research_mcp.mesh_batch import BatchInputs, BatchSteps, BatchTargets
+from blender_research_mcp.mesh_component_catalog import (
+    DEFAULT_COMPONENT_CATALOG_METRICS,
+    ComponentCatalogId,
+    ComponentCatalogMetrics,
+    ComponentIdentities,
+)
 from blender_research_mcp.mesh_modular import (
     ArmatureTarget,
     ExtractMeshTarget,
@@ -117,6 +123,11 @@ from blender_research_mcp.observation import (
     settle_capture_generation,
 )
 from blender_research_mcp.rendering import request_render_preview, request_render_save
+from blender_research_mcp.scene_organization import (
+    CollectionParent,
+    ParentTransformMode,
+    SceneOrganizationFingerprint,
+)
 
 READ_ONLY = ToolAnnotations(
     readOnlyHint=True,
@@ -431,6 +442,27 @@ def create_server(
         )
 
     @server.tool(
+        name="collection.inspect",
+        description=(
+            "Inspect one exact Collection, its parents, children, direct object links, "
+            "library state, and structural fingerprint."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def collection_inspect(
+        collection_name: ObjectName,
+        offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=256)] = 256,
+    ) -> dict[str, Any]:
+        await require_capability(client, "collection_authoring")
+        return await client.call(
+            "collection.inspect",
+            {"collection_name": collection_name, "offset": offset, "limit": limit},
+            read_only=True,
+        )
+
+    @server.tool(
         name="object.inspect",
         description="Inspect one exact Blender object without changing user context.",
         annotations=READ_ONLY,
@@ -620,6 +652,87 @@ def create_server(
         return await client.call(
             "mesh.selection.release",
             {"selection_id": selection_id},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.component_catalog.prepare",
+        description=(
+            "Partition one live non-empty FACE SelectionSet into deterministic "
+            "shared-edge connected components without creating Blender selections."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_component_catalog_prepare(
+        selection_id: SelectionId,
+        include: ComponentCatalogMetrics = DEFAULT_COMPONENT_CATALOG_METRICS,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_component_catalog")
+        return await client.call(
+            "mesh.component_catalog.prepare",
+            {"selection_id": selection_id, "include": list(include)},
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.component_catalog.inspect",
+        description="Inspect a bounded page of one revision-bound ComponentCatalog.",
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_component_catalog_inspect(
+        component_catalog_id: ComponentCatalogId,
+        offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=256)] = 128,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_component_catalog")
+        return await client.call(
+            "mesh.component_catalog.inspect",
+            {
+                "component_catalog_id": component_catalog_id,
+                "offset": offset,
+                "limit": limit,
+            },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.component_catalog.select",
+        description=(
+            "Materialize one to 4096 exact catalog components as a new weighted "
+            "FACE SelectionSet on the same Mesh revision."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_component_catalog_select(
+        component_catalog_id: ComponentCatalogId,
+        component_identities: ComponentIdentities,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_component_catalog")
+        return await client.call(
+            "mesh.component_catalog.select",
+            {
+                "component_catalog_id": component_catalog_id,
+                "component_identities": list(component_identities),
+            },
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.component_catalog.release",
+        description="Release one session-local ComponentCatalog; repeated release is safe.",
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_component_catalog_release(
+        component_catalog_id: ComponentCatalogId,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_component_catalog")
+        return await client.call(
+            "mesh.component_catalog.release",
+            {"component_catalog_id": component_catalog_id},
             read_only=True,
         )
 
@@ -1148,6 +1261,224 @@ def create_server(
                 "transaction_id": transaction_id,
                 "object_name": object_name,
                 "expected_object_identity": expected_object_identity,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="collection.create",
+        description=(
+            "Create one globally unique Collection under an exact Scene root or parent "
+            "Collection inside the active transaction."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def collection_create(
+        transaction_id: TransactionId,
+        name: ObjectName,
+        parent: CollectionParent,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "collection_authoring")
+        client.require_capability("transactions", 11)
+        return await client.call(
+            "collection.create",
+            {
+                "transaction_id": transaction_id,
+                "name": name,
+                "parent": parent.model_dump(),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    async def _collection_link_call(
+        command: str,
+        *,
+        transaction_id: TransactionId,
+        collection_name: ObjectName,
+        expected_collection_identity: SessionIdentity,
+        expected_collection_structure_fingerprint: SceneOrganizationFingerprint,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_object_collections_fingerprint: SceneOrganizationFingerprint,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "collection_authoring")
+        client.require_capability("transactions", 11)
+        return await client.call(
+            command,
+            {
+                "transaction_id": transaction_id,
+                "collection_name": collection_name,
+                "expected_collection_identity": expected_collection_identity,
+                "expected_collection_structure_fingerprint": (
+                    expected_collection_structure_fingerprint
+                ),
+                "object_name": object_name,
+                "expected_object_identity": expected_object_identity,
+                "expected_object_collections_fingerprint": (
+                    expected_object_collections_fingerprint
+                ),
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="collection.link_object",
+        description="Link one exact object into one exact Collection transactionally.",
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def collection_link_object(
+        transaction_id: TransactionId,
+        collection_name: ObjectName,
+        expected_collection_identity: SessionIdentity,
+        expected_collection_structure_fingerprint: SceneOrganizationFingerprint,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_object_collections_fingerprint: SceneOrganizationFingerprint,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        return await _collection_link_call(
+            "collection.link_object",
+            transaction_id=transaction_id,
+            collection_name=collection_name,
+            expected_collection_identity=expected_collection_identity,
+            expected_collection_structure_fingerprint=(
+                expected_collection_structure_fingerprint
+            ),
+            object_name=object_name,
+            expected_object_identity=expected_object_identity,
+            expected_object_collections_fingerprint=expected_object_collections_fingerprint,
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+        )
+
+    @server.tool(
+        name="collection.unlink_object",
+        description=(
+            "Unlink one exact object from one exact Collection while refusing its final link."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def collection_unlink_object(
+        transaction_id: TransactionId,
+        collection_name: ObjectName,
+        expected_collection_identity: SessionIdentity,
+        expected_collection_structure_fingerprint: SceneOrganizationFingerprint,
+        object_name: ObjectName,
+        expected_object_identity: SessionIdentity,
+        expected_object_collections_fingerprint: SceneOrganizationFingerprint,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        return await _collection_link_call(
+            "collection.unlink_object",
+            transaction_id=transaction_id,
+            collection_name=collection_name,
+            expected_collection_identity=expected_collection_identity,
+            expected_collection_structure_fingerprint=(
+                expected_collection_structure_fingerprint
+            ),
+            object_name=object_name,
+            expected_object_identity=expected_object_identity,
+            expected_object_collections_fingerprint=expected_object_collections_fingerprint,
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+        )
+
+    @server.tool(
+        name="object.parent.set",
+        description=(
+            "Create one exact OBJECT parent relation while preserving world or local transform."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def object_parent_set(
+        transaction_id: TransactionId,
+        child_name: ObjectName,
+        expected_child_identity: SessionIdentity,
+        expected_child_structure_fingerprint: SceneOrganizationFingerprint,
+        parent_name: ObjectName,
+        expected_parent_identity: SessionIdentity,
+        expected_parent_structure_fingerprint: SceneOrganizationFingerprint,
+        transform_mode: ParentTransformMode,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "object_parenting")
+        client.require_capability("transactions", 11)
+        return await client.call(
+            "object.parent.set",
+            {
+                "transaction_id": transaction_id,
+                "child_name": child_name,
+                "expected_child_identity": expected_child_identity,
+                "expected_child_structure_fingerprint": (
+                    expected_child_structure_fingerprint
+                ),
+                "parent_name": parent_name,
+                "expected_parent_identity": expected_parent_identity,
+                "expected_parent_structure_fingerprint": (
+                    expected_parent_structure_fingerprint
+                ),
+                "transform_mode": transform_mode,
+            },
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
+        name="object.parent.clear",
+        description=(
+            "Clear one exact existing OBJECT or BONE parent while preserving world or "
+            "local transform."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def object_parent_clear(
+        transaction_id: TransactionId,
+        child_name: ObjectName,
+        expected_child_identity: SessionIdentity,
+        expected_child_structure_fingerprint: SceneOrganizationFingerprint,
+        expected_parent_name: ObjectName,
+        expected_parent_identity: SessionIdentity,
+        expected_parent_structure_fingerprint: SceneOrganizationFingerprint,
+        transform_mode: ParentTransformMode,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "object_parenting")
+        client.require_capability("transactions", 11)
+        return await client.call(
+            "object.parent.clear",
+            {
+                "transaction_id": transaction_id,
+                "child_name": child_name,
+                "expected_child_identity": expected_child_identity,
+                "expected_child_structure_fingerprint": (
+                    expected_child_structure_fingerprint
+                ),
+                "expected_parent_name": expected_parent_name,
+                "expected_parent_identity": expected_parent_identity,
+                "expected_parent_structure_fingerprint": (
+                    expected_parent_structure_fingerprint
+                ),
+                "transform_mode": transform_mode,
             },
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,
@@ -2013,8 +2344,9 @@ def create_server(
         client.require_capability("mesh_component_map", 2)
         client.require_capability("mesh_topology", 3)
         client.require_capability("transactions", 8)
-        step_payloads = [item.model_dump(exclude_none=True) for item in steps]
+        step_payloads = [item.model_dump(exclude_none=True, by_alias=True) for item in steps]
         requires_batch_v2 = False
+        requires_batch_v3 = False
         for payload in step_payloads:
             step_type = payload["type"]
             if step_type == "uv_edit":
@@ -2057,10 +2389,40 @@ def create_server(
                     payload.pop("separated_attribute_policy", None)
                 else:
                     requires_batch_v2 = True
+            elif step_type in {
+                "component_catalog_prepare",
+                "component_catalog_select",
+            }:
+                await require_capability(client, "mesh_component_catalog")
+                requires_batch_v3 = True
+            elif step_type == "mesh_materialize":
+                await require_capability(client, "mesh_materialization")
+                client.require_capability("mesh_component_map", 3)
+                requires_batch_v3 = True
+            elif step_type == "mesh_extract":
+                await require_capability(client, "mesh_extraction")
+                client.require_capability("mesh_component_map", 3)
+                requires_batch_v3 = True
+            elif step_type in {
+                "collection_create",
+                "collection_link_object",
+                "collection_unlink_object",
+            }:
+                await require_capability(client, "collection_authoring")
+                requires_batch_v3 = True
+            elif step_type in {"object_parent_set", "object_parent_clear"}:
+                await require_capability(client, "object_parenting")
+                requires_batch_v3 = True
+            elif step_type == "rig_bind":
+                await require_capability(client, "rig_binding")
+                requires_batch_v3 = True
         if requires_batch_v2:
             client.require_capability("mesh_batch", 2)
             client.require_capability("mesh_topology", 4)
             client.require_capability("transactions", 9)
+        if requires_batch_v3:
+            client.require_capability("mesh_batch", 3)
+            client.require_capability("transactions", 11)
         return await client.call(
             "mesh.batch.execute",
             {

@@ -9,7 +9,11 @@ import bmesh
 import bpy
 
 from .lookdev_ops import session_identity
-from .structural_ops import make_structure_guard, refresh_structure_guard_if_present
+from .structural_ops import (
+    make_structure_guard,
+    refresh_structure_guard_if_present,
+    structure_fingerprint,
+)
 from .transaction_model import StructuralDelta, Transaction
 
 
@@ -181,6 +185,7 @@ def _new_object_data(definition: dict[str, Any]) -> tuple[Any | None, str | None
 def object_summary(obj: Any) -> dict[str, Any]:
     data = obj.data
     data_kind = data.__class__.__name__.lower() if data is not None else None
+    parent = getattr(obj, "parent", None)
     return {
         "name": obj.name,
         "type": obj.type,
@@ -202,6 +207,16 @@ def object_summary(obj: Any) -> dict[str, Any]:
             }
             for collection in obj.users_collection
         ],
+        "parent": (
+            {
+                "name": parent.name,
+                "session_identity": session_identity("object", parent),
+                "type": str(getattr(obj, "parent_type", "OBJECT")),
+                "bone": str(getattr(obj, "parent_bone", "")),
+            }
+            if parent is not None
+            else None
+        ),
         "location": [float(value) for value in obj.location],
         "rotation_euler_degrees": [math.degrees(float(value)) for value in obj.rotation_euler],
         "scale": [float(value) for value in obj.scale],
@@ -418,6 +433,14 @@ def inspect_scene(kinds: list[str], name_filter: str | None, limit: int) -> dict
             object_summary(obj) for obj in bpy.data.objects if allowed(obj.name)
         ][:limit]
     if "collections" in kinds:
+        scene = bpy.context.scene
+        result["scene_root"] = {
+            "scene_name": scene.name,
+            "scene_identity": session_identity("scene", scene),
+            "scene_structure_fingerprint": structure_fingerprint("scene", scene),
+            "collection_name": scene.collection.name,
+            "collection_identity": session_identity("collection", scene.collection),
+        }
         result["collections"] = [
             {
                 "name": collection.name,

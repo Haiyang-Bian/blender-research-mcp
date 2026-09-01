@@ -50,6 +50,159 @@ def test_batch_inputs_are_closed_and_revision_resource_typed() -> None:
         )
 
 
+def test_batch_inputs_cover_objects_armatures_collections_and_catalogs() -> None:
+    inputs = TypeAdapter(BatchInputs).validate_python(
+        [
+            {
+                "type": "object",
+                "alias": "root",
+                "object_name": "Root",
+                "expected_object_identity": "object:1",
+                "expected_object_structure_fingerprint": "a" * 64,
+            },
+            {
+                "type": "armature",
+                "alias": "rig",
+                "target": {
+                    "object_name": "Rig",
+                    "expected_object_identity": "object:2",
+                    "expected_data_identity": "armature:1",
+                    "expected_bone_schema_fingerprint": "b" * 64,
+                },
+            },
+            {
+                "type": "collection",
+                "alias": "modules",
+                "collection_name": "Modules",
+                "expected_collection_identity": "collection:1",
+                "expected_collection_structure_fingerprint": "c" * 64,
+            },
+            {
+                "type": "component_catalog",
+                "alias": "shells",
+                "component_catalog_id": "catalog:1",
+                "target_alias": "source",
+            },
+        ]
+    )
+    assert [item.type for item in inputs] == [
+        "object",
+        "armature",
+        "collection",
+        "component_catalog",
+    ]
+
+
+def test_batch_steps_cover_catalog_materialization_assembly_and_binding() -> None:
+    steps = TypeAdapter(BatchSteps).validate_python(
+        [
+            {
+                "type": "component_catalog_prepare",
+                "selection_alias": "all_faces",
+                "output_catalog_alias": "shells",
+            },
+            {
+                "type": "component_catalog_select",
+                "catalog_alias": "shells",
+                "component_identities": ["component:1"],
+                "output_selection_alias": "hair_faces",
+            },
+            {
+                "type": "mesh_materialize",
+                "source_target_alias": "source",
+                "evaluation": {
+                    "type": "SHAPE_KEYS_CURRENT",
+                    "expected_shape_key_state_fingerprint": "d" * 64,
+                },
+                "new_object_name": "Working Copy",
+                "copy": {"materials": True, "uv": True, "weights": True},
+                "output_target_alias": "working",
+                "map_alias": "materialization_map",
+            },
+            {
+                "type": "mesh_extract",
+                "target_alias": "working",
+                "selection_alias": "hair_faces",
+                "new_target_alias": "hair",
+                "new_selection_alias": "hair_output_faces",
+                "source_map_alias": "working_map",
+                "extracted_map_alias": "hair_map",
+                "new_object_name": "Hair Module",
+                "output_policy": {
+                    "parent": "CLEAR_KEEP_WORLD",
+                    "modifiers": "DROP",
+                    "material_slots": "COMPACT",
+                },
+                "source_attribute_policy": {},
+                "extracted_attribute_policy": {},
+                "collection_alias": "modules",
+            },
+            {
+                "type": "collection_create",
+                "name": "Hair",
+                "parent": {
+                    "type": "SCENE_ROOT",
+                    "scene_name": "Scene",
+                    "expected_scene_identity": "scene:1",
+                    "expected_scene_structure_fingerprint": "e" * 64,
+                },
+                "output_collection_alias": "hair_collection",
+            },
+            {
+                "type": "collection_link_object",
+                "collection_alias": "hair_collection",
+                "object_alias": "hair",
+            },
+            {
+                "type": "collection_unlink_object",
+                "collection_alias": "modules",
+                "object_alias": "hair",
+            },
+            {
+                "type": "object_parent_set",
+                "child_alias": "hair",
+                "parent_alias": "root",
+                "transform_mode": "KEEP_WORLD",
+            },
+            {
+                "type": "object_parent_clear",
+                "child_alias": "hair",
+                "expected_parent_alias": "root",
+                "transform_mode": "KEEP_LOCAL",
+            },
+            {
+                "type": "rig_bind",
+                "mesh_target_alias": "hair",
+                "armature_alias": "rig",
+                "modifier": {
+                    "name": "Armature",
+                    "expected_existing": None,
+                },
+                "parenting": "KEEP_WORLD",
+                "group_scope": {"type": "ALL_MATCHED"},
+                "output_binding_alias": "hair_binding",
+            },
+        ]
+    )
+    assert [step.type for step in steps] == [
+        "component_catalog_prepare",
+        "component_catalog_select",
+        "mesh_materialize",
+        "mesh_extract",
+        "collection_create",
+        "collection_link_object",
+        "collection_unlink_object",
+        "object_parent_set",
+        "object_parent_clear",
+        "rig_bind",
+    ]
+    assert steps[2].model_dump(by_alias=True)["copy"] == {
+        "materials": True,
+        "uv": True,
+        "weights": True,
+    }
+
+
 def test_batch_steps_cover_query_derive_edit_separate_and_validation() -> None:
     steps = TypeAdapter(BatchSteps).validate_python(
         [

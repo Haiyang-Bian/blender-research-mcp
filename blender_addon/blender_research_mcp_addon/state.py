@@ -67,6 +67,12 @@ from .material_authoring_ops import (
 )
 from .mesh_attribute_transfer_ops import transfer_attribute
 from .mesh_batch_ops import MeshBatchExecutionError, execute_mesh_batch
+from .mesh_component_catalog_ops import (
+    inspect_component_catalog,
+    prepare_component_catalog,
+    release_component_catalog,
+    select_component_catalog,
+)
 from .mesh_component_map import (
     compose_component_map,
     inspect_component_map,
@@ -133,6 +139,13 @@ from .project_ops import (
 )
 from .rig_ops import bind_rig, inspect_rig
 from .runtime import ADDON_VERSION, ListenerRuntime
+from .scene_organization_ops import (
+    change_collection_link,
+    change_object_parent,
+    create_collection,
+    inspect_collection,
+    organization_result,
+)
 from .structural_ops import (
     adopt_structural_delta_for_native_save,
     finalize_structural_delta,
@@ -172,6 +185,7 @@ CAPABILITIES = [
     "context.restore",
     "object.inspect",
     "scene.inspect",
+    "collection.inspect",
     "object.geometry.inspect",
     "mesh.inspect",
     "mesh.uv.inspect",
@@ -180,6 +194,10 @@ CAPABILITIES = [
     "mesh.selection.derive",
     "mesh.selection.inspect",
     "mesh.selection.release",
+    "mesh.component_catalog.prepare",
+    "mesh.component_catalog.inspect",
+    "mesh.component_catalog.select",
+    "mesh.component_catalog.release",
     "mesh.component_map.inspect",
     "mesh.component_map.release",
     "mesh.component_map.compose",
@@ -201,6 +219,11 @@ CAPABILITIES = [
     "object.create",
     "object.duplicate",
     "object.delete",
+    "collection.create",
+    "collection.link_object",
+    "collection.unlink_object",
+    "object.parent.set",
+    "object.parent.clear",
     "object.visibility.set",
     "modifier.set_state",
     "modifier.create",
@@ -242,7 +265,7 @@ CAPABILITY_VERSIONS = {
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 10,
+    "transactions": 11,
     "object_transform_scale": 1,
     "object_transform": 1,
     "object_settings": 1,
@@ -262,14 +285,17 @@ CAPABILITY_VERSIONS = {
     "mesh_deformation": 1,
     "mesh_validation": 2,
     "mesh_component_map": 3,
+    "mesh_component_catalog": 1,
     "mesh_separation": 2,
-    "mesh_batch": 2,
+    "mesh_batch": 3,
     "mesh_uv": 1,
     "mesh_weights": 1,
     "mesh_attribute_transfer": 1,
     "mesh_materialization": 1,
     "mesh_extraction": 1,
     "rig_binding": 1,
+    "collection_authoring": 1,
+    "object_parenting": 1,
     "shape_key_value": 1,
     "material_input": 1,
     "project_lifecycle": 1,
@@ -284,6 +310,11 @@ MUTATION_COMMANDS = {
     "object.create",
     "object.duplicate",
     "object.delete",
+    "collection.create",
+    "collection.link_object",
+    "collection.unlink_object",
+    "object.parent.set",
+    "object.parent.clear",
     "object.visibility.set",
     "modifier.set_state",
     "modifier.create",
@@ -922,6 +953,23 @@ class AddonState:
                     kind="validation",
                 )
             return inspect_scene(kinds, name_filter, limit)
+        if command == "collection.inspect":
+            name = params.get("collection_name")
+            if not isinstance(name, str) or not name:
+                raise AuthoringOperationError(
+                    "COLLECTION_NAME_INVALID", "collection_name must be non-empty"
+                )
+            offset = params.get("offset", 0)
+            limit = params.get("limit", 256)
+            if isinstance(offset, bool) or not isinstance(offset, int):
+                raise AuthoringOperationError(
+                    "COLLECTION_PAGINATION_INVALID", "offset must be an integer"
+                )
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise AuthoringOperationError(
+                    "COLLECTION_PAGINATION_INVALID", "limit must be an integer"
+                )
+            return inspect_collection(name, offset, limit)
         if command == "object.geometry.inspect":
             object_name = params.get("object_name")
             if not isinstance(object_name, str) or not object_name:
@@ -1007,6 +1055,25 @@ class AddonState:
             return result
         if command == "mesh.selection.release":
             result = release_selection(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.component_catalog.prepare":
+            with self.suppress_generation():
+                result = prepare_component_catalog(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.component_catalog.inspect":
+            with self.suppress_generation():
+                result = inspect_component_catalog(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.component_catalog.select":
+            with self.suppress_generation():
+                result = select_component_catalog(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.component_catalog.release":
+            result = release_component_catalog(self.mesh_resources, params)
             result["scene_generation"] = self.scene_generation
             return result
         if command == "mesh.component_map.inspect":
@@ -1289,6 +1356,71 @@ class AddonState:
                 "delta_count": len(transaction.deltas),
                 "delta_kinds": transaction.delta_kinds(),
             }
+        if command == "collection.create":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            with self.suppress_generation():
+                collection, delta = create_collection(transaction, params)
+                bpy.context.view_layer.update()
+            self._record_delta(transaction, delta)
+            result = organization_result(
+                transaction, changed=True, collection=collection
+            )
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
+        if command in {"collection.link_object", "collection.unlink_object"}:
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            with self.suppress_generation():
+                changed, delta, collection, obj = change_collection_link(
+                    transaction,
+                    params,
+                    link=command == "collection.link_object",
+                )
+                bpy.context.view_layer.update()
+            if delta is not None:
+                self._record_delta(transaction, delta)
+            result = organization_result(
+                transaction,
+                changed=changed,
+                collection=collection,
+                obj=obj,
+            )
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
+        if command in {"object.parent.set", "object.parent.clear"}:
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            with self.suppress_generation():
+                changed, delta, obj = change_object_parent(
+                    transaction,
+                    params,
+                    clear=command == "object.parent.clear",
+                )
+                bpy.context.view_layer.update()
+            if delta is not None:
+                self._record_delta(transaction, delta)
+            result = organization_result(transaction, changed=changed, obj=obj)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
+            )
+            return result
         if command == "mesh.edit":
             transaction = self._require_transaction(params, request)
             self._validate_transaction_guards(transaction)

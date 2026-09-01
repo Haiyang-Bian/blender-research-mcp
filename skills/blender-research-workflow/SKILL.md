@@ -142,6 +142,13 @@ the 0.14 tools first, then use `rig.bind` only to assemble verified groups again
 exact Armature. Never assume FINAL_EVALUATED is a reusable rest Mesh after Armature
 deformation has been baked.
 
+When one FACE region contains many disconnected shells, use a revision-bound
+ComponentCatalog to review compact component metrics and materialize SelectionSets only
+for chosen identities. Use exact Collection link and object-parent tools for isolated
+organization changes. Prefer `mesh.batch.execute` v3 when materialize, catalog, extract,
+organization, and rig binding form one atomic assembly chain; review its response-only
+assembly manifest and never treat it as persistent project metadata.
+
 ## Ground image evidence
 
 Use a successful capture's own `capture_id` when mapping normalized top-left image
@@ -194,4 +201,5 @@ Read [references/tool-recipes.md](references/tool-recipes.md) when executing an
 application/project lifecycle, multi-step scene authoring, exact Mesh editing,
 SelectionSet/surface fitting, revision-aware topology, Modifier-stack authoring,
 UV/weight authoring, materialize/extract/rig assembly, rendering, observation,
-comparison, preview, reconnect, or recovery workflow.
+ComponentCatalog/cross-object assembly, comparison, preview, reconnect, or recovery
+workflow.

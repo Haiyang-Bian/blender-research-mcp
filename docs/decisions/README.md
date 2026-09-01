@@ -22,6 +22,9 @@ two-branch object separation, and transaction-v8 declarative Mesh batches. Decis
 attribute migration, and transaction-v9 recovery. Decision 0016 separates stored,
 Shape-Key-only, and final evaluated materialization; generalizes disconnected region
 extraction; and defines exact transaction-v10 Armature binding.
+Decision 0017 adds revision-bound ComponentCatalogs, exact Collection/object-parent
+organization, response-only assembly manifests, and transaction-v11 cross-object
+batch composition.
 
 Each record should include context, decision, alternatives, consequences, and
 status. Do not use decision records for routine implementation details.

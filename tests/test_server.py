@@ -3,12 +3,13 @@ import asyncio
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+import blender_research_mcp.server as server_module
 from blender_research_mcp.server import MaterialInputValue, create_server
 
 
 def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     server = create_server()
-    assert server._mcp_server.version == "0.15.0"
+    assert server._mcp_server.version == "0.15.1"
     tools = asyncio.run(server.list_tools())
     assert [tool.name for tool in tools] == [
         "application.status",
@@ -23,6 +24,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "context.snapshot",
         "context.restore",
         "scene.inspect",
+        "collection.inspect",
         "object.inspect",
         "object.geometry.inspect",
         "mesh.inspect",
@@ -32,6 +34,10 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "mesh.selection.derive",
         "mesh.selection.inspect",
         "mesh.selection.release",
+        "mesh.component_catalog.prepare",
+        "mesh.component_catalog.inspect",
+        "mesh.component_catalog.select",
+        "mesh.component_catalog.release",
         "mesh.component_map.inspect",
         "mesh.component_map.release",
         "mesh.component_map.compose",
@@ -51,6 +57,11 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "object.create",
         "object.duplicate",
         "object.delete",
+        "collection.create",
+        "collection.link_object",
+        "collection.unlink_object",
+        "object.parent.set",
+        "object.parent.clear",
         "object.set",
         "object.transform",
         "object.visibility.set",
@@ -191,6 +202,32 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "KEEP_WORLD",
         "KEEP_LOCAL",
     ]
+    collection_inspect = tools_by_name["collection.inspect"]
+    assert collection_inspect.annotations is not None
+    assert collection_inspect.annotations.readOnlyHint is True
+    assert collection_inspect.inputSchema["properties"]["limit"]["maximum"] == 256
+    collection_create = tools_by_name["collection.create"]
+    parent_schema = collection_create.inputSchema["properties"]["parent"]
+    assert parent_schema["discriminator"]["propertyName"] == "type"
+    assert len(parent_schema["oneOf"]) == 2
+    for name in (
+        "collection.create",
+        "collection.link_object",
+        "collection.unlink_object",
+        "object.parent.set",
+        "object.parent.clear",
+    ):
+        tool = tools_by_name[name]
+        assert tool.annotations is not None
+        assert tool.annotations.readOnlyHint is False
+        assert tool.annotations.destructiveHint is True
+        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.openWorldHint is False
+    parent_set = tools_by_name["object.parent.set"]
+    assert parent_set.inputSchema["properties"]["transform_mode"]["enum"] == [
+        "KEEP_WORLD",
+        "KEEP_LOCAL",
+    ]
     mesh_batch = tools_by_name["mesh.batch.execute"]
     assert mesh_batch.annotations is not None
     assert mesh_batch.annotations.readOnlyHint is False
@@ -203,7 +240,10 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert mesh_batch.inputSchema["properties"]["steps"]["maxItems"] == 32
     step_schema = mesh_batch.inputSchema["properties"]["steps"]["items"]
     assert step_schema["discriminator"]["propertyName"] == "type"
-    assert len(step_schema["oneOf"]) == 8
+    assert len(step_schema["oneOf"]) == 17
+    input_schema = mesh_batch.inputSchema["properties"]["inputs"]["items"]
+    assert input_schema["discriminator"]["propertyName"] == "type"
+    assert len(input_schema["oneOf"]) == 6
     selection_query = tools_by_name["mesh.selection.query"]
     assert selection_query.annotations is not None
     assert selection_query.annotations.readOnlyHint is True
@@ -217,6 +257,10 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     for name in (
         "mesh.selection.inspect",
         "mesh.selection.release",
+        "mesh.component_catalog.prepare",
+        "mesh.component_catalog.inspect",
+        "mesh.component_catalog.select",
+        "mesh.component_catalog.release",
         "mesh.component_map.compose",
         "mesh.surface.prepare",
         "mesh.surface.query",
@@ -226,6 +270,17 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         assert tool.annotations is not None
         assert tool.annotations.readOnlyHint is True
         assert tool.annotations.destructiveHint is False
+    catalog_prepare = tools_by_name["mesh.component_catalog.prepare"]
+    include_schema = catalog_prepare.inputSchema["properties"]["include"]
+    assert include_schema["minItems"] == 1
+    assert include_schema["maxItems"] == 5
+    catalog_inspect = tools_by_name["mesh.component_catalog.inspect"]
+    assert catalog_inspect.inputSchema["properties"]["limit"]["default"] == 128
+    assert catalog_inspect.inputSchema["properties"]["limit"]["maximum"] == 256
+    catalog_select = tools_by_name["mesh.component_catalog.select"]
+    identities = catalog_select.inputSchema["properties"]["component_identities"]
+    assert identities["minItems"] == 1
+    assert identities["maxItems"] == 4096
     map_compose = tools_by_name["mesh.component_map.compose"]
     map_ids = map_compose.inputSchema["properties"]["component_map_ids"]
     assert map_ids["minItems"] == 2
@@ -254,6 +309,8 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     material_inspect = tools_by_name["material.inspect"]
     assert material_inspect.annotations is not None
     assert material_inspect.annotations.readOnlyHint is True
+
+
     assert material_inspect.inputSchema["properties"]["material_slot_index"]["maximum"] == 63
     raycast = tools_by_name["viewport.raycast"]
     assert raycast.annotations is not None
@@ -438,6 +495,82 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert render_save.annotations is not None
     assert render_save.annotations.destructiveHint is True
     assert render_save.inputSchema["properties"]["transparent"]["default"] is False
+
+
+def test_batch_v3_rig_bind_does_not_depend_on_separation_policy(monkeypatch) -> None:
+    class FakeClient:
+        def __init__(self, *, port: int) -> None:
+            self.port = port
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        async def connect(self) -> object:
+            return object()
+
+        def require_capability(self, _name: str, _version: int = 1) -> None:
+            return None
+
+        async def call(self, command: str, params=None, **_kwargs):
+            payload = {} if params is None else params
+            self.calls.append((command, payload))
+            return {"command": command, "steps": payload.get("steps", [])}
+
+        async def close(self) -> None:
+            return None
+
+    fake = FakeClient(port=9877)
+    monkeypatch.setattr(server_module, "BridgeClient", lambda **_kwargs: fake)
+    server = server_module.create_server()
+    asyncio.run(
+        server.call_tool(
+            "mesh.batch.execute",
+            {
+                "transaction_id": "tx-1",
+                "targets": [
+                    {
+                        "alias": "mesh",
+                        "object_name": "Mesh",
+                        "expected_object_identity": "object:1",
+                        "expected_mesh_identity": "mesh:1",
+                        "expected_mesh_users": 1,
+                        "expected_mesh_user_objects": [
+                            {
+                                "object_name": "Mesh",
+                                "expected_object_identity": "object:1",
+                            }
+                        ],
+                        "expected_mesh_fingerprint": "a" * 64,
+                    }
+                ],
+                "inputs": [
+                    {
+                        "type": "armature",
+                        "alias": "rig",
+                        "target": {
+                            "object_name": "Rig",
+                            "expected_object_identity": "object:2",
+                            "expected_data_identity": "armature:1",
+                            "expected_bone_schema_fingerprint": "b" * 64,
+                        },
+                    }
+                ],
+                "steps": [
+                    {
+                        "type": "rig_bind",
+                        "mesh_target_alias": "mesh",
+                        "armature_alias": "rig",
+                        "modifier": {"name": "Armature", "expected_existing": None},
+                        "parenting": "KEEP_WORLD",
+                        "group_scope": {"type": "ALL_MATCHED"},
+                        "output_binding_alias": "binding",
+                    }
+                ],
+                "expected_scene_generation": 4,
+                "idempotency_key": "123e4567-e89b-12d3-a456-426614174000",
+            },
+        )
+    )
+    assert fake.calls[-1][0] == "mesh.batch.execute"
+    assert fake.calls[-1][1]["steps"][0]["type"] == "rig_bind"
 
 
 def test_material_input_value_preserves_json_types() -> None:

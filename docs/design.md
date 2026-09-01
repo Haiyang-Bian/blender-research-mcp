@@ -1,9 +1,9 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.15 modular Mesh materialization, extraction, and rig binding
-- Current milestone: 0.15.0 transaction-v10 modular character P0 chain
+- Status: 0.15.1 ComponentCatalog and cross-object modular assembly
+- Current milestone: 0.15.1 transaction-v11 catalog, organization, and batch v3
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.15.0
+- Package and add-on version: 0.15.1
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -12,7 +12,7 @@
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.15.0 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.15.1 now covers
 the validated observation/lifecycle/static-authoring path, unified typed object,
 Light, and Camera settings, four bounded non-destructive Modifier families, and exact
 base-Mesh component editing with transaction snapshots; the older bridge is no longer
@@ -441,7 +441,9 @@ all current deformation is baked and is not assumed to be a reusable rest mesh.
 Character-specific completion remains a workflow over generic tools. Missing surface
 under hair or clothing is underdetermined and requires an explicit template or cage;
 the bridge does not claim to reconstruct undisclosed source geometry. Component
-catalogs, Collection organization, and cross-object batches follow in 0.15.1; bounded
+catalogs, Collection organization, and cross-object batches are the implemented 0.15.1
+authority. Catalogs are session-local revision evidence, and batch manifests are
+returned to callers rather than stored as project custom properties. Bounded
 library append and template workflows follow in 0.16. Shape-Key structure writes and
 Modifier Apply remain separate later authorities. See
 `docs/requirements/modular-character-surface.md`.
@@ -628,6 +630,20 @@ Status: implemented and validated in 0.15.0 on the merged 0.14 baseline.
 - Keep the source object, Shape Keys, Modifier stack, and binding unchanged.
 - Validate the complete materialize → extract → bind chain with rollback, native-save
   adoption, save/reload, and a real modular-character fixture.
+
+### Phase 11 — component catalogs and cross-object assembly
+
+Status: implemented and validated in 0.15.1; see
+`docs/validation/2026-09-01-component-catalog-assembly.md`.
+
+- Partition a FACE SelectionSet into a compact revision-bound ComponentCatalog without
+  eagerly consuming SelectionSet resources.
+- Create and organize exact Collections and object-level parent relationships through
+  reversible structural deltas.
+- Extend the existing declarative Mesh batch with materialize, extract, organization,
+  and rig-binding aliases while preserving v1/v2 requests.
+- Return a hashed assembly manifest as response evidence without writing persistent
+  project-specific metadata.
 
 ## 10. Acceptance criteria for the first milestone
 

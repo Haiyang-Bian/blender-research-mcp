@@ -26,6 +26,19 @@ from blender_research_mcp.mesh_attributes import (
     WeightGroupRenameOperation,
 )
 from blender_research_mcp.mesh_authoring import MeshDataScope, MeshUserObject
+from blender_research_mcp.mesh_component_catalog import (
+    DEFAULT_COMPONENT_CATALOG_METRICS,
+    ComponentCatalogMetrics,
+    ComponentIdentities,
+)
+from blender_research_mcp.mesh_modular import (
+    ArmatureTarget,
+    ExtractOutputPolicy,
+    MaterializeCopyPolicy,
+    MaterializeEvaluation,
+    RigGroupScope,
+    RigModifierPolicy,
+)
 from blender_research_mcp.mesh_resources import (
     CoordinateSpace,
     MeshDomain,
@@ -38,6 +51,10 @@ from blender_research_mcp.mesh_topology import (
     MeshAttributePolicy,
     SelectionRemapMode,
     WeightMergeMode,
+)
+from blender_research_mcp.scene_organization import (
+    ParentTransformMode,
+    SceneRootCollectionParent,
 )
 
 BatchAlias = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")]
@@ -89,7 +106,52 @@ class BatchSurfaceInput(BaseModel):
     surface_id: SurfaceId
 
 
-BatchInput = Annotated[BatchSelectionInput | BatchSurfaceInput, Field(discriminator="type")]
+class BatchObjectInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["object"]
+    alias: BatchAlias
+    object_name: str = Field(min_length=1, max_length=255)
+    expected_object_identity: str = Field(min_length=1, max_length=128)
+    expected_object_structure_fingerprint: Fingerprint
+
+
+class BatchArmatureInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["armature"]
+    alias: BatchAlias
+    target: ArmatureTarget
+
+
+class BatchCollectionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["collection"]
+    alias: BatchAlias
+    collection_name: str = Field(min_length=1, max_length=255)
+    expected_collection_identity: str = Field(min_length=1, max_length=128)
+    expected_collection_structure_fingerprint: Fingerprint
+
+
+class BatchComponentCatalogInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["component_catalog"]
+    alias: BatchAlias
+    component_catalog_id: str = Field(min_length=1, max_length=128)
+    target_alias: BatchAlias
+
+
+BatchInput = Annotated[
+    BatchSelectionInput
+    | BatchSurfaceInput
+    | BatchObjectInput
+    | BatchArmatureInput
+    | BatchCollectionInput
+    | BatchComponentCatalogInput,
+    Field(discriminator="type"),
+]
 
 
 class BatchSelectionQueryStep(BaseModel):
@@ -409,6 +471,116 @@ class BatchMeshSeparateStep(BaseModel):
         return self
 
 
+class BatchComponentCatalogPrepareStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["component_catalog_prepare"]
+    selection_alias: BatchAlias
+    output_catalog_alias: BatchAlias
+    include: ComponentCatalogMetrics = DEFAULT_COMPONENT_CATALOG_METRICS
+
+
+class BatchComponentCatalogSelectStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["component_catalog_select"]
+    catalog_alias: BatchAlias
+    component_identities: ComponentIdentities
+    output_selection_alias: BatchAlias
+    remap_mode: SelectionRemapMode = "ALL_MAPPED"
+    weight_merge: WeightMergeMode = "MAX"
+
+
+class BatchMeshMaterializeStep(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    type: Literal["mesh_materialize"]
+    source_target_alias: BatchAlias
+    evaluation: MaterializeEvaluation
+    new_object_name: str = Field(min_length=1, max_length=255)
+    copy_policy: MaterializeCopyPolicy = Field(alias="copy")
+    output_target_alias: BatchAlias
+    collection_alias: BatchAlias | None = None
+    map_alias: BatchAlias | None = None
+
+
+class BatchMeshExtractStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["mesh_extract"]
+    target_alias: BatchAlias
+    selection_alias: BatchAlias
+    new_target_alias: BatchAlias
+    new_selection_alias: BatchAlias
+    source_map_alias: BatchAlias
+    extracted_map_alias: BatchAlias
+    new_object_name: str = Field(min_length=1, max_length=255)
+    output_policy: ExtractOutputPolicy
+    source_attribute_policy: MeshAttributePolicy
+    extracted_attribute_policy: MeshAttributePolicy
+    collection_alias: BatchAlias | None = None
+
+
+class BatchCollectionAliasParent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["COLLECTION_ALIAS"]
+    collection_alias: BatchAlias
+
+
+BatchCollectionParent = Annotated[
+    SceneRootCollectionParent | BatchCollectionAliasParent,
+    Field(discriminator="type"),
+]
+
+
+class BatchCollectionCreateStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["collection_create"]
+    name: str = Field(min_length=1, max_length=255)
+    parent: BatchCollectionParent
+    output_collection_alias: BatchAlias
+
+
+class BatchCollectionLinkStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["collection_link_object", "collection_unlink_object"]
+    collection_alias: BatchAlias
+    object_alias: BatchAlias
+
+
+class BatchObjectParentSetStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["object_parent_set"]
+    child_alias: BatchAlias
+    parent_alias: BatchAlias
+    transform_mode: ParentTransformMode
+
+
+class BatchObjectParentClearStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["object_parent_clear"]
+    child_alias: BatchAlias
+    expected_parent_alias: BatchAlias
+    transform_mode: ParentTransformMode
+
+
+class BatchRigBindStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["rig_bind"]
+    mesh_target_alias: BatchAlias
+    armature_alias: BatchAlias
+    modifier: RigModifierPolicy
+    parenting: Literal["NONE", "KEEP_WORLD", "KEEP_LOCAL"]
+    group_scope: RigGroupScope
+    output_binding_alias: BatchAlias
+
+
 class BatchUVSeamSetOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["seam_set"]
@@ -677,7 +849,16 @@ BatchStep = Annotated[
     | BatchUVEditStep
     | BatchWeightsEditStep
     | BatchAttributeTransferStep
-    | BatchMeshValidateStep,
+    | BatchMeshValidateStep
+    | BatchComponentCatalogPrepareStep
+    | BatchComponentCatalogSelectStep
+    | BatchMeshMaterializeStep
+    | BatchMeshExtractStep
+    | BatchCollectionCreateStep
+    | BatchCollectionLinkStep
+    | BatchObjectParentSetStep
+    | BatchObjectParentClearStep
+    | BatchRigBindStep,
     Field(discriminator="type"),
 ]
 

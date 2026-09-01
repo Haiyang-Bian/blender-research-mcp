@@ -1,8 +1,8 @@
 # Blender MCP：角色缺失表面补全与可拆装模块需求
 
-- Status: accepted product requirements and staged roadmap
+- Status: accepted requirements; P0 implemented in 0.15.0 and P1 implemented in 0.15.1
 - Evidence baseline: Blender Research MCP 0.14.0, audited 2026-09-01
-- First implementation milestone: 0.15.0 materialize, extract, and rig binding
+- Implemented milestones: 0.15.0 materialize/extract/rig binding; 0.15.1 catalog/assembly
 
 ## 1. 文档目的
 
@@ -537,6 +537,11 @@ Character_Coverage
 2. Collection 创建与对象组织；
 3. 批处理跨对象分支；
 4. 模块级 manifest 与重复运行审计。
+
+该阶段采用 revision-bound ComponentCatalog、通用 Collection/对象父级操作和现有
+`mesh.batch.execute` 的 v3 扩展。Manifest 作为带 SHA-256 的响应证据返回，不写入
+`.blend` Custom Properties；`object.join`、Collection 删除和 Bone Parent 创建不在
+0.15.1 范围内。
 
 ### P2：0.16 提高模板化建模质量
 
