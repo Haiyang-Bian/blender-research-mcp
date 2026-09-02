@@ -161,8 +161,9 @@ def _branch_mesh(
             )
         relations, created, deleted = _finish_lineage(bm, lineage, "separate")
         lineage = None
-        bm.to_mesh(mesh)
-        mesh.update(calc_edges=True, calc_edges_loose=True)
+        from .mesh_ops import write_bmesh_exact
+
+        write_bmesh_exact(bm, mesh)
         return relations, created, deleted
     finally:
         if lineage is not None:

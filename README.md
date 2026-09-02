@@ -68,6 +68,11 @@ SelectionSet 和距离规则时才焊接接缝；自动门禁与确定性 Blende
 仍停留在旧指纹、导致 rollback 误报冲突的问题；真实用户对 Collection 的外部修改
 仍会被保护。分页 UV 检查也改为只计算所请求页面，并用明确警告延后全局岛屿指标，
 避免大角色 Mesh 的正常检查被短超时误报为连接丢失。
+0.17.2 修复了拓扑操作失败后重建 Vertex Group 导致的事务回退死锁、大网格边表
+重排导致的 ComponentMap 错位，以及多层 UV/Pin Join 的原生崩溃与空材质槽处理。
+失败恢复保留未改变的 Group identity；边映射按写回后的实际连接关系验证。
+补丁与既有 Join/Weld/batch、UV/权重实机回归见
+[0.17.2 验收记录](docs/validation/2026-09-03-mesh-recovery-and-join-hotfix.md)。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -376,7 +381,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.17.1
+uv run --no-sync python scripts/build_addon.py --version 0.17.2
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认

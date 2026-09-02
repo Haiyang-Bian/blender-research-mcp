@@ -1,11 +1,11 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.17.1 transaction-owned Collection rollback and bounded UV inspection
-  stabilization validated; 0.17.0 Mesh composition remains implemented
-- Current milestone: 0.17.1 transaction-v13 recovery patch
+- Status: 0.17.2 Mesh failure recovery, exact edge lineage and UV/Pin Join
+  stabilization; 0.17.0 Mesh composition remains implemented
+- Current milestone: 0.17.2 transaction-v13 recovery patch
 - Next milestone: 0.18.0 bounded Shape-Key structure authoring
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.17.1
+- Package and add-on version: 0.17.2
 - Protocol version: 1
 - Development transport port: 9877
 
@@ -519,6 +519,22 @@ island and degenerate-face aggregates, while `LOOPS`, `FACES`, and `SEAMS` compu
 requested page and report deferred global metrics. The MCP route uses the existing
 30-second protocol ceiling, and an actual request timeout remains `REQUEST_TIMEOUT`
 rather than being retried and surfaced as `CONNECTION_LOST`.
+
+Version 0.17.2 preserves unchanged Vertex Group identities during call recovery.
+Topology snapshots are restored through an exact BMesh write, not `clear_geometry`
+(which also removes Group schemas). Neither recovery nor conflict handling blindly
+refreshes a guard to accept unknown user changes. UV/Pin restoration and Join/Weld
+copying use typed, freshly acquired attribute accessors to avoid stale CustomData
+wrappers during optional-layer allocation.
+
+ComponentMaps use native BMesh element keys and explicit lineage tags, not Python
+wrapper identity or interpolated integer vertex tags. Edge-derived subdivision
+vertices are CREATED in the vertex domain, not guessed descendants of an endpoint.
+Completed BMesh writes retain their edge table and verify edge endpoints and face
+order before publishing Maps. Do not run `calc_edges=True` after establishing a
+Map: large-mesh edge regeneration can reorder the table without changing geometry.
+Join edge SelectionSets are sorted separately from source-index-ordered lineage.
+Public schemas, protocol 1, and transaction capability 13 remain unchanged.
 
 ## 9. Development phases
 

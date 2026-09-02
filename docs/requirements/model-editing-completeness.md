@@ -1,8 +1,9 @@
 # Blender Research MCP：0.16 之后的模型编辑完整性方向
 
 - Status: active direction after the validated 0.16.0 milestone
-- Current implementation baseline: 0.17.0 / protocol 1 / transactions 13;
-  deterministic live gate passed, aggregate stress and character cage gate pending
+- Current implementation baseline: 0.17.2 / protocol 1 / transactions 13;
+  deterministic live gate and 0.17.2 repeated-cycle/direct-batch regressions passed;
+  character cage gate pending
 - Next implementation milestone: 0.18.0 Shape Key structure and migration
 
 ## 1. 目的

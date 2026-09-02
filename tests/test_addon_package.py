@@ -293,9 +293,10 @@ def test_mesh_authoring_uses_bounded_data_api_snapshots_without_operators() -> N
     assert "_copy_mesh_snapshot(mesh, snapshot)" in restore
     assert "bmesh.new()" not in restore
     assert "def _restore_attributes(" in source
-    assert 'foreach_set("vertex_index"' in source
+    assert "write_bmesh_exact(bm, mesh)" in source
+    assert "bm.from_mesh(snapshot)" in source
+    assert "mesh.clear_geometry()" not in source
     assert "mesh.copy()" in source
-    assert "mesh.clear_geometry()" in source
     assert "bmesh.ops" in source
     assert "bpy.ops" not in source
 

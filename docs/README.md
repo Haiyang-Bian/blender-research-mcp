@@ -13,6 +13,8 @@ in this order when starting a new implementation task:
      — deterministic pass plus explicit aggregate-stress and character-cage gaps.
    - [0.17.1 Collection rollback and bounded UV inspection validation](validation/2026-09-01-transaction-rollback-collection-guard.md)
      — guarded nested-Collection recovery, disconnect rollback, and real-character UV paging.
+   - [0.17.2 Mesh recovery and Join hotfix](validation/2026-09-03-mesh-recovery-and-join-hotfix.md)
+     — Group identity preservation, verified edge lineage, and native UV/Pin regression evidence.
    - [Cross-object Mesh composition decision](decisions/0019-cross-object-mesh-composition.md)
      — implemented transaction-v13 Mesh-domain authority.
 2. [0.16.0 controlled Library and template coverage roadmap](roadmap/0.16.0-library-template-coverage.md)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import math
 import uuid
+from array import array
 from typing import Any
 
 import bmesh
@@ -27,6 +28,7 @@ from .mesh_ops import (
     mesh_user_refs,
     shape_key_state_fingerprint,
     topology_fingerprint,
+    write_bmesh_exact,
 )
 from .mesh_query_ops import validate_selection
 from .mesh_resource_model import MeshResourceBook, MeshResourceError
@@ -277,6 +279,15 @@ def _material_schema(sources: list[dict[str, Any]], policy: str) -> dict[str, An
                 if identity not in seen:
                     seen.add(identity)
                     materials.append(material)
+        # A Mesh with faces but no slots still contributes unassigned faces.
+        # Keep them unassigned instead of looking up a missing None identity or
+        # accidentally assigning the other source's first material.
+        if materials and None not in seen and any(
+            int(face.material_index) >= len(source["mesh"].materials)
+            for source in sources
+            for face in source["mesh"].polygons
+        ):
+            materials.append(None)
     indices = {
         session_identity("material", material) if material is not None else None: index
         for index, material in enumerate(materials)
@@ -558,6 +569,44 @@ def _copy_color_values(source: Any, target: Any, domain_offset: int) -> None:
             target_item.color = tuple(float(value) for value in item.color)
 
 
+def _copy_join_uv(
+    sources: list[dict[str, Any]],
+    mesh: Any,
+    schema: dict[str, Any],
+    offsets: list[dict[str, Any]],
+) -> None:
+    # Allocate schemas before retaining any RNA layer/data wrappers. Creating a
+    # pin/selection attribute can reallocate Blender's CustomData layer table.
+    # Reusing a legacy MeshUVLoopLayer after that allocation corrupts memory.
+    for name in schema["names"]:
+        mesh.uv_layers.new(name=name, do_init=False)
+    for name in schema["names"]:
+        values = array("f", [0.0]) * (2 * len(mesh.loops))
+        pins = array("b", [0]) * len(mesh.loops)
+        for source, offset in zip(sources, offsets, strict=True):
+            layer = source["mesh"].uv_layers.get(name)
+            if layer is None:
+                continue
+            source_values = array("f", [0.0]) * (2 * len(layer.uv))
+            layer.uv.foreach_get("vector", source_values)
+            start = offset["loop"]
+            values[2 * start : 2 * start + len(source_values)] = source_values
+            source_pins = array("b", [0]) * len(layer.pin)
+            if source_pins:
+                layer.pin.foreach_get("value", source_pins)
+                pins[start : start + len(source_pins)] = source_pins
+        mesh.uv_layers[name].uv.foreach_set("vector", values)
+        if any(pins):
+            # Access through a newly acquired layer after every allocation.
+            mesh.uv_layers[name].pin.foreach_set("value", pins)
+    for name in schema["names"]:
+        role = schema["roles"][name]
+        if role["active_render"]:
+            mesh.uv_layers[name].active_render = True
+        if role["active_clone"]:
+            mesh.uv_layers[name].active_clone = True
+
+
 def _build_output(preflight: dict[str, Any]) -> tuple[Any, Any, list[dict[str, Any]]]:
     sources = preflight["sources"]
     output_evidence = preflight["output"]
@@ -660,24 +709,7 @@ def _build_output(preflight: dict[str, Any]) -> tuple[Any, Any, list[dict[str, A
                     )
                     target_polygon.material_index = schemas["materials"]["indices"][identity]
 
-        for name in schemas["uv"]["names"]:
-            target_layer = mesh.uv_layers.get(name)
-            if target_layer is None:
-                target_layer = mesh.uv_layers.new(name=name, do_init=True)
-            role = schemas["uv"]["roles"][name]
-            if role["active_render"]:
-                target_layer.active_render = True
-            if role["active_clone"]:
-                target_layer.active_clone = True
-            for source, offset in zip(sources, offsets, strict=True):
-                source_layer = source["mesh"].uv_layers.get(name)
-                if source_layer is None:
-                    continue
-                for index, item in enumerate(source_layer.data):
-                    target_item = target_layer.data[offset["loop"] + index]
-                    target_item.uv = tuple(float(value) for value in item.uv)
-                    if hasattr(target_item, "pin_uv"):
-                        target_item.pin_uv = bool(getattr(item, "pin_uv", False))
+        _copy_join_uv(sources, mesh, schemas["uv"], offsets)
 
         for name, data_type, domain in schemas["colors"]["items"]:
             target_color = mesh.color_attributes.get(name)
@@ -734,7 +766,7 @@ def _build_output(preflight: dict[str, Any]) -> tuple[Any, Any, list[dict[str, A
                         obj.vertex_groups[group_name].add(
                             [target_index], float(membership.weight), "REPLACE"
                         )
-        mesh.update(calc_edges=True, calc_edges_loose=True)
+        mesh.update(calc_edges=False, calc_edges_loose=True)
         output_evidence["collection"].objects.link(obj)
         obj.select_set(False)
         return obj, mesh, offsets
@@ -835,7 +867,7 @@ def join_meshes(
                         range(offset["vertex"], offset["vertex"] + len(source_mesh.vertices))
                     ),
                 ),
-                ("EDGE", offset["edge_map"]),
+                ("EDGE", tuple(sorted(offset["edge_map"]))),
                 (
                     "FACE",
                     tuple(range(offset["face"], offset["face"] + len(source_mesh.polygons))),
@@ -1283,7 +1315,10 @@ def _restore_weld_uv(
     face_targets = _relation_targets(relations, "FACE")
     vertex_targets = _relation_targets(relations, "VERTEX")
     for layer in evidence["layers"]:
-        target = mesh.uv_layers.new(name=layer["name"], do_init=True)
+        name = layer["name"]
+        mesh.uv_layers.new(name=name, do_init=False)
+        uv_values = array("f", [0.0]) * (2 * len(mesh.loops))
+        pins = array("b", [0]) * len(mesh.loops)
         values = layer["values"]
         for source_face, face in enumerate(evidence["faces"]):
             mapped_faces = face_targets.get(source_face, ())
@@ -1301,13 +1336,14 @@ def _restore_weld_uv(
                 if len(mapped_vertices) != 1 or not available.get(mapped_vertices[0]):
                     continue
                 target_loop = available[mapped_vertices[0]].pop(0)
-                target_item = target.data[target_loop]
                 source_item = values[source_loop]
-                target_item.uv = source_item["uv"]
-                if hasattr(target_item, "pin_uv"):
-                    target_item.pin_uv = source_item["pin_uv"]
-        target.active_render = layer["active_render"]
-        target.active_clone = layer["active_clone"]
+                uv_values[2 * target_loop : 2 * target_loop + 2] = array("f", source_item["uv"])
+                pins[target_loop] = source_item["pin_uv"]
+        mesh.uv_layers[name].uv.foreach_set("vector", uv_values)
+        if any(pins):
+            mesh.uv_layers[name].pin.foreach_set("value", pins)
+        mesh.uv_layers[name].active_render = layer["active_render"]
+        mesh.uv_layers[name].active_clone = layer["active_clone"]
     active_index = int(evidence["active_index"])
     if evidence["layers"] and 0 <= active_index < len(mesh.uv_layers):
         mesh.uv_layers.active_index = active_index
@@ -1514,7 +1550,7 @@ def weld_mesh_vertices(
         deleted["VERTEX"] = tuple(
             index for index in deleted["VERTEX"] if index not in merged_sources
         )
-        bm.to_mesh(mesh)
+        write_bmesh_exact(bm, mesh)
         _restore_weld_uv(mesh, uv_evidence, relations)
         _restore_weld_colors(mesh, color_evidence, relations)
         if created_join_output:
@@ -1543,7 +1579,7 @@ def weld_mesh_vertices(
                         obj.vertex_groups[group_index].add(
                             [vertex_index], float(value), "REPLACE"
                         )
-        mesh.update(calc_edges=True, calc_edges_loose=True)
+        mesh.update(calc_edges=False, calc_edges_loose=True)
         attribute_effects = finish_topology_attributes(obj, mesh, attribute_evidence)
         if created_join_output:
             # Publish all dependent UV/deform state before recording the

@@ -46,6 +46,7 @@ from .mesh_ops import (
     topology_fingerprint,
     unsupported_attributes,
     validate_attribute_policy,
+    write_bmesh_exact,
 )
 from .mesh_query_ops import validate_selection
 from .mesh_resource_model import MeshResourceBook, MeshResourceError, SelectionRecord
@@ -498,7 +499,7 @@ class _LineageLayer:
     sequence: Any
     layer: Any
     before: tuple[Any, ...]
-    before_ids: frozenset[int]
+    before_keys: tuple[int, ...]
 
 
 def _start_lineage(bm: Any) -> dict[str, _LineageLayer]:
@@ -514,7 +515,7 @@ def _start_lineage(bm: Any) -> dict[str, _LineageLayer]:
             sequence,
             layer,
             before,
-            frozenset(id(item) for item in before),
+            tuple(hash(item) for item in before),
         )
     return result
 
@@ -537,22 +538,35 @@ def _finish_lineage(
         state.sequence.ensure_lookup_table()
         targets: dict[int, list[int]] = {}
         created_indices = []
+        # CustomData changes can invalidate Python wrappers without deleting the
+        # native elements. Capture their native hashes before the operation;
+        # Python id()/is_valid on the old wrapper cannot identify survivors.
+        survivors = {key: index for index, key in enumerate(state.before_keys)}
         for item in state.sequence:
-            source = int(item[state.layer]) - 1
+            survivor = survivors.get(hash(item))
+            if survivor is not None and int(item[state.layer]) != survivor + 1:
+                survivor = None
+            source = survivor if survivor is not None else int(item[state.layer]) - 1
+            if survivor is None and domain == "VERTEX" and operation_type in {
+                "subdivide", "loop_cut", "bisect", "bevel_edges", "inset_faces"
+            }:
+                # An interpolated integer tag is not exact vertex ancestry.
+                # Edge/face-derived vertices are CREATED in the vertex domain.
+                source = -1
             if source >= 0 and source < len(state.before):
                 targets.setdefault(source, []).append(int(item.index))
-            if id(item) not in state.before_ids:
+            if survivor is None:
                 created_indices.append(int(item.index))
         rows = []
         deleted_indices = []
-        for source, before_item in enumerate(state.before):
+        for source in range(len(state.before)):
             mapped = tuple(sorted(set(targets.get(source, ()))))
             if not mapped:
                 deleted_indices.append(source)
                 continue
             if len(mapped) > 1:
                 relation = "SPLIT"
-            elif id(state.sequence[mapped[0]]) == id(before_item):
+            elif hash(state.sequence[mapped[0]]) == state.before_keys[source]:
                 relation = "SURVIVED"
             else:
                 relation = "DERIVED"
@@ -714,8 +728,7 @@ def edit_mesh_topology(
             )
         relations, created, deleted = _finish_lineage(bm, lineage, operation_type)
         lineage = None
-        bm.to_mesh(mesh)
-        mesh.update(calc_edges=True, calc_edges_loose=True)
+        write_bmesh_exact(bm, mesh)
         migration_result = finish_topology_attributes(obj, mesh, topology_attribute_evidence)
         if unsupported_attributes(mesh):
             raise MeshOperationError(

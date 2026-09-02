@@ -41,7 +41,7 @@
    `mesh_topology: 5`, `mesh_batch: 5`, and `transactions: 13`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.17.1.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.17.2.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -430,6 +430,23 @@ materialized, separated, joined, duplicated, or appended objects. In 0.17.1 thes
 recognized as transaction-owned changes and rollback restores the whole chain. A
 Collection changed by the user after the latest Agent write remains a hard structure
 conflict and is never force-restored.
+
+In 0.17.2, an invalid fill/grid-fill boundary does not recreate unchanged Vertex
+Groups or invalidate a previous successful write's guard. A rejected standalone
+operation restores that call's state; the transaction can then continue or roll back.
+Batch runtime errors still roll back the entire transaction. Real external Group,
+Mesh or Collection changes remain conflicts, not permission to refresh guards.
+
+Use new ComponentMaps after upgrading: Maps already returned by an older add-on
+cannot be repaired retrospectively. Edge-derived subdivision vertices are reported
+as CREATED, while edge descendants preserve exact connectivity. Join preserves
+unassigned faces with an empty material slot when other sources have materials.
+
+These fixes run inside the Blender add-on. Restarting only the MCP client does not
+update an already-running add-on. Load 0.17.2 and verify `connection.ping.addon_version`
+before retrying. Do not force-refresh evidence or automatically save/reload an old
+conflicted user scene; the user's choice of visible state versus saved state remains
+authoritative. The regression harness operates exclusively on temporary projects.
 
 ## Inspect and append a controlled local Library
 
