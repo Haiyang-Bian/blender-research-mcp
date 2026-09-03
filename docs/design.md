@@ -9,6 +9,11 @@
 - Protocol version: 1
 - Development transport port: 9877
 
+Pending requirement review: [explicit boundary and surface patching](requirements/explicit-boundary-surface-patching.md)
+records the 0.17.2 Grid Fill contract/diagnostic gaps and proposed exact-connection,
+four-sided patch, and open-chain bridge controls. It does not change the current
+public tool surface or the approved 0.18–0.20 sequence.
+
 ## 1. Why this project exists
 
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool

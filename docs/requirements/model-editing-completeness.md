@@ -6,6 +6,11 @@
   character cage gate pending
 - Next implementation milestone: 0.18.0 Shape Key structure and migration
 
+新增待评审专项：[明确边界与分块补面](explicit-boundary-surface-patching.md)。
+2026-09-03 的真实使用与隔离调查暴露 Grid Fill 契约/诊断和精确连接表达的缺口；
+优先级建议与验收要求单独记录，不将既有“有拓扑工具”视为复杂补面流程已完备，
+也不在需求阶段改动下述已批准版本顺序。
+
 ## 1. 目的
 
 0.16 已经闭合“检查或追加模板 → 对齐 → 选区 → 曲面拟合 → UV/权重迁移 →
