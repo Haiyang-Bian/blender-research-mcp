@@ -19,6 +19,8 @@ from blender_research_mcp.mesh_resources import (
 from blender_research_mcp.mesh_topology import (
     BisectOperation,
     BridgeOperation,
+    CreateEdgeOperation,
+    CreateFaceOperation,
     FillOperation,
     GridFillOperation,
     LoopCutOperation,
@@ -291,6 +293,8 @@ MeshOperation = Annotated[
     | SplitOperation
     | BridgeOperation
     | FillOperation
-    | GridFillOperation,
+    | GridFillOperation
+    | CreateEdgeOperation
+    | CreateFaceOperation,
     Field(discriminator="type"),
 ]

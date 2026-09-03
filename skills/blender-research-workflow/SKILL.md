@@ -15,6 +15,20 @@ A single closed loop requires four explicit corners, and two closed loops use
 bridge. Do not retry an unchanged invalid boundary or treat sorted indices as a
 directed path. Inspection creates no scene or selection resources.
 
+With `mesh_topology >= 6` and `mesh_component_map >= 5`, author patches through
+`mesh.edit`. Exact vertices are singleton VERTEX SelectionSets; a directed path is
+`{selection_id: EDGE_ID, start_vertex: VERTEX_ID}`. Grid Fill accepts either the
+legacy selection_id or `boundary` with `type=FOUR_PATHS` and four cyclic paths, or
+`type=CLOSED_LOOP`, one EDGE selection_id and four cyclic corner vertex IDs.
+Opposite segment counts must match. Hidden explicit boundaries require allow_hidden.
+`create_edge` accepts two vertex IDs and is a no-op for an existing edge;
+`create_face` accepts three or four cyclic vertex IDs. Open `bridge` accepts two
+directed paths with equal counts, and cuts from 0 to 32. Starts define correspondence.
+Preserved UV layers require compatible boundary sources. Explicit
+`uv_creation={LAYER_NAME: INDEPENDENT_ISLAND}` creates a parameterized island marked
+for later unwrap/pack. Inspect creation provenance with ComponentMap direction
+CREATION_EVIDENCE. Inspect remaining bridge end boundaries before the next patch.
+
 ## Follow application and project intent
 
 Treat application launch and project opening as separate decisions:

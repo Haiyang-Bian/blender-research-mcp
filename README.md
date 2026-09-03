@@ -77,6 +77,11 @@ SelectionSet 和距离规则时才焊接接缝；自动门禁与确定性 Blende
 分叉不会仅因度数大于 2 被拒绝。边界补面后续阶段与现场证据见
 [分期路线图](docs/roadmap/0.17.x-explicit-boundary-patching.md)和
 [验收记录](docs/validation/2026-09-03-explicit-boundary-patching.md)。
+0.17.4 实现定向四边/闭环四角 Grid Fill、精确 create_edge/create_face 和开链
+bridge，统一走现有事务写入器。生成前检查局部相交和属性来源；新 UV、权重
+使用固定边界插值，独立 UV 岛需要显式选择。ComponentMap 分别报告真实血缘
+和创建证据。全量测试、合成属性压力及 Blender 回滚/重连已通过；真实角色
+验收留在 0.17.5。
 补丁与既有 Join/Weld/batch、UV/权重实机回归见
 [0.17.2 验收记录](docs/validation/2026-09-03-mesh-recovery-and-join-hotfix.md)。
 既有验收记录见

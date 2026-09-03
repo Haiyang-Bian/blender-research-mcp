@@ -23,9 +23,9 @@ def deadline_after(seconds: float) -> float:
     return min(_deadline.get() or float("inf"), time.monotonic() + seconds)
 
 
-def check_deadline() -> None:
+def check_deadline(reserve_seconds: float = 0.0) -> None:
     deadline = _deadline.get()
-    if deadline is not None and time.monotonic() >= deadline:
+    if deadline is not None and time.monotonic() + reserve_seconds >= deadline:
         from .mesh_ops import MeshOperationError
 
         raise MeshOperationError(

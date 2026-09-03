@@ -12,7 +12,7 @@ from blender_research_mcp.mesh_resources import CoordinateSpace, SelectionId
 ComponentMapId = Annotated[str, Field(min_length=1, max_length=128)]
 ComponentMapIds = Annotated[tuple[ComponentMapId, ...], Field(min_length=2, max_length=8)]
 ComponentMapDomain = Literal["SUMMARY", "VERTEX", "EDGE", "FACE"]
-ComponentMapDirection = Literal["FORWARD", "REVERSE", "CREATED", "DELETED"]
+ComponentMapDirection = Literal["FORWARD", "REVERSE", "CREATED", "DELETED", "CREATION_EVIDENCE"]
 SelectionRemapMode = Literal["ALL_MAPPED", "EXACT_SURVIVORS", "STRICT"]
 WeightMergeMode = Literal["MAX", "AVERAGE"]
 AttributeMigrationMode = Literal["PRESERVE_INTERPOLATE", "ERROR_IF_PRESENT", "DISCARD"]
@@ -77,15 +77,58 @@ class SplitOperation(BaseModel):
     attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
+class DirectedPath(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selection_id: SelectionId
+    start_vertex: SelectionId
+
+
+class FourPathsBoundary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["FOUR_PATHS"]
+    paths: tuple[DirectedPath, DirectedPath, DirectedPath, DirectedPath]
+
+
+class ClosedLoopBoundary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["CLOSED_LOOP"]
+    selection_id: SelectionId
+    corners: tuple[SelectionId, SelectionId, SelectionId, SelectionId]
+
+
+PatchBoundary = Annotated[FourPathsBoundary | ClosedLoopBoundary, Field(discriminator="type")]
+
+
 class BridgeOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["bridge"]
-    selection_id: SelectionId
+    selection_id: SelectionId | None = None
+    paths: tuple[DirectedPath, DirectedPath] | None = None
+    cuts: Annotated[StrictInt, Field(ge=0, le=32)] = 0
+    allow_hidden: StrictBool = False
+    uv_creation: dict[str, Literal["BOUNDARY_INTERPOLATE", "INDEPENDENT_ISLAND"]] = Field(
+        default_factory=dict
+    )
     twist_offset: Annotated[StrictInt, Field(ge=-4096, le=4096)] = 0
     material_slot_index: Annotated[StrictInt, Field(ge=0, le=63)] | None = None
     smooth: StrictBool = False
     attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
+
+    @model_validator(mode="after")
+    def exclusive_input(self) -> BridgeOperation:
+        if (self.selection_id is None) == (self.paths is None):
+            raise ValueError("Provide exactly one of selection_id or paths")
+        if self.paths is None and (self.cuts or self.allow_hidden or self.uv_creation):
+            raise ValueError("cuts, allow_hidden and uv_creation require directed paths")
+        if self.paths is not None and self.twist_offset:
+            raise ValueError(
+                "Directed path starts define correspondence; twist_offset must be zero"
+            )
+        return self
 
 
 class FillOperation(BaseModel):
@@ -104,10 +147,46 @@ class GridFillOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["grid_fill"]
-    selection_id: SelectionId
+    selection_id: SelectionId | None = None
+    boundary: PatchBoundary | None = None
+    allow_hidden: StrictBool = False
+    uv_creation: dict[str, Literal["BOUNDARY_INTERPOLATE", "INDEPENDENT_ISLAND"]] = Field(
+        default_factory=dict
+    )
     use_interp_simple: StrictBool = False
     material_slot_index: Annotated[StrictInt, Field(ge=0, le=63)] | None = None
     smooth: StrictBool = False
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
+
+    @model_validator(mode="after")
+    def exclusive_input(self) -> GridFillOperation:
+        if (self.selection_id is None) == (self.boundary is None):
+            raise ValueError("Provide exactly one of selection_id or boundary")
+        if self.boundary is None and self.allow_hidden:
+            raise ValueError("allow_hidden requires an explicit boundary")
+        return self
+
+
+class CreateEdgeOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["create_edge"]
+    vertices: tuple[SelectionId, SelectionId]
+    allow_hidden: StrictBool = False
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
+
+
+class CreateFaceOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["create_face"]
+    vertices: Annotated[tuple[SelectionId, ...], Field(min_length=3, max_length=4)]
+    allow_hidden: StrictBool = False
+    material_slot_index: Annotated[StrictInt, Field(ge=0, le=63)] | None = None
+    smooth: StrictBool = False
+    uv_creation: dict[str, Literal["BOUNDARY_INTERPOLATE", "INDEPENDENT_ISLAND"]] = Field(
+        default_factory=dict
+    )
     attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
@@ -119,4 +198,6 @@ TopologyOperation = (
     | BridgeOperation
     | FillOperation
     | GridFillOperation
+    | CreateEdgeOperation
+    | CreateFaceOperation
 )

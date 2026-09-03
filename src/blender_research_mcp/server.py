@@ -679,10 +679,16 @@ def create_server(
         await require_capability(client, "mesh_selection", 2)
         return await client.call(
             "mesh.boundary.inspect",
-            {"selection_id": selection_id, "expected_mesh_fingerprint": expected_mesh_fingerprint,
-             "component": component, "offset": offset, "limit": limit,
-             "maximum_visits": maximum_visits},
-            read_only=True, deadline_ms=MAX_DEADLINE_MS,
+            {
+                "selection_id": selection_id,
+                "expected_mesh_fingerprint": expected_mesh_fingerprint,
+                "component": component,
+                "offset": offset,
+                "limit": limit,
+                "maximum_visits": maximum_visits,
+            },
+            read_only=True,
+            deadline_ms=MAX_DEADLINE_MS,
         )
 
     @server.tool(
@@ -797,6 +803,8 @@ def create_server(
         limit: Annotated[StrictInt, Field(ge=1, le=4096)] = 256,
     ) -> dict[str, Any]:
         await require_capability(client, "mesh_component_map")
+        if direction == "CREATION_EVIDENCE":
+            client.require_capability("mesh_component_map", 5)
         return await client.call(
             "mesh.component_map.inspect",
             {
@@ -1497,9 +1505,7 @@ def create_server(
             transaction_id=transaction_id,
             collection_name=collection_name,
             expected_collection_identity=expected_collection_identity,
-            expected_collection_structure_fingerprint=(
-                expected_collection_structure_fingerprint
-            ),
+            expected_collection_structure_fingerprint=(expected_collection_structure_fingerprint),
             object_name=object_name,
             expected_object_identity=expected_object_identity,
             expected_object_collections_fingerprint=expected_object_collections_fingerprint,
@@ -1531,9 +1537,7 @@ def create_server(
             transaction_id=transaction_id,
             collection_name=collection_name,
             expected_collection_identity=expected_collection_identity,
-            expected_collection_structure_fingerprint=(
-                expected_collection_structure_fingerprint
-            ),
+            expected_collection_structure_fingerprint=(expected_collection_structure_fingerprint),
             object_name=object_name,
             expected_object_identity=expected_object_identity,
             expected_object_collections_fingerprint=expected_object_collections_fingerprint,
@@ -1569,14 +1573,10 @@ def create_server(
                 "transaction_id": transaction_id,
                 "child_name": child_name,
                 "expected_child_identity": expected_child_identity,
-                "expected_child_structure_fingerprint": (
-                    expected_child_structure_fingerprint
-                ),
+                "expected_child_structure_fingerprint": (expected_child_structure_fingerprint),
                 "parent_name": parent_name,
                 "expected_parent_identity": expected_parent_identity,
-                "expected_parent_structure_fingerprint": (
-                    expected_parent_structure_fingerprint
-                ),
+                "expected_parent_structure_fingerprint": (expected_parent_structure_fingerprint),
                 "transform_mode": transform_mode,
             },
             expected_scene_generation=expected_scene_generation,
@@ -1613,14 +1613,10 @@ def create_server(
                 "transaction_id": transaction_id,
                 "child_name": child_name,
                 "expected_child_identity": expected_child_identity,
-                "expected_child_structure_fingerprint": (
-                    expected_child_structure_fingerprint
-                ),
+                "expected_child_structure_fingerprint": (expected_child_structure_fingerprint),
                 "expected_parent_name": expected_parent_name,
                 "expected_parent_identity": expected_parent_identity,
-                "expected_parent_structure_fingerprint": (
-                    expected_parent_structure_fingerprint
-                ),
+                "expected_parent_structure_fingerprint": (expected_parent_structure_fingerprint),
                 "transform_mode": transform_mode,
             },
             expected_scene_generation=expected_scene_generation,
@@ -2042,6 +2038,22 @@ def create_server(
     ) -> dict[str, Any]:
         await require_capability(client, "mesh_topology")
         operation_payload = operation.model_dump(exclude_none=True)
+        explicit_patch = (
+            operation.type in {"create_edge", "create_face"}
+            or (operation.type == "grid_fill" and operation_payload.get("boundary") is not None)
+            or (operation.type == "bridge" and operation_payload.get("paths") is not None)
+        )
+        if (
+            explicit_patch
+            or operation_payload.get("uv_creation")
+            or operation_payload.get("allow_hidden")
+        ):
+            client.require_capability("mesh_topology", 6)
+            client.require_capability("mesh_component_map", 5)
+        if operation.type in {"grid_fill", "bridge"} and not explicit_patch:
+            for key, default in (("allow_hidden", False), ("uv_creation", {}), ("cuts", 0)):
+                if operation_payload.get(key) == default:
+                    operation_payload.pop(key, None)
         attribute_policy = operation_payload.get("attribute_policy")
         if attribute_policy == MeshAttributePolicy().model_dump():
             operation_payload.pop("attribute_policy", None)
@@ -2056,6 +2068,8 @@ def create_server(
             "bridge",
             "fill",
             "grid_fill",
+            "create_edge",
+            "create_face",
         }
         if operation.type == "weld_vertices":
             await require_capability(client, "mesh_join")

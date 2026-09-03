@@ -10,8 +10,9 @@ from typing import Any
 import bmesh
 import bpy
 
+from .execution_budget import check_deadline
 from .lookdev_ops import session_identity
-from .mesh_boundary_ops import auto_boundary, graph_from_bmesh, preflight_grid
+from .mesh_boundary_ops import auto_boundary, graph_from_bmesh
 from .mesh_component_map import remap_selection
 from .mesh_component_map_model import (
     DOMAINS,
@@ -49,6 +50,13 @@ from .mesh_ops import (
     validate_attribute_policy,
     write_bmesh_exact,
 )
+from .mesh_patch_ops import (
+    apply_patch_plan,
+    is_patch,
+    no_op_result,
+    prepare_patch,
+    validate_patch,
+)
 from .mesh_query_ops import validate_selection
 from .mesh_resource_model import MeshResourceBook, MeshResourceError, SelectionRecord
 from .structural_ops import refresh_structure_guard_if_present
@@ -62,6 +70,8 @@ TOPOLOGY_OPERATIONS = {
     "bridge",
     "fill",
     "grid_fill",
+    "create_edge",
+    "create_face",
 }
 
 _DOMAIN_COLLECTION = {
@@ -139,6 +149,8 @@ def _validate_operation(raw: Any, material_count: int) -> dict[str, Any]:
         raise MeshOperationError("MESH_OPERATION_INVALID", "operation must be an object")
     operation_type = raw.get("type")
     validate_attribute_policy(raw)
+    if is_patch(raw):
+        return validate_patch(raw, material_count)
     common = {"type", "selection_id"}
     if operation_type == "subdivide":
         operation = _closed(
@@ -480,7 +492,9 @@ def _operate(
             if len(edge.link_faces) <= 1 and edge.index not in permitted:
                 edge.hide = True
         result = bmesh.ops.grid_fill(
-            bm, edges=selected, mat_nr=_material_index(operation, material_count) or 0,
+            bm,
+            edges=selected,
+            mat_nr=_material_index(operation, material_count) or 0,
             use_smooth=bool(operation.get("smooth", False)),
             use_interp_simple=bool(operation.get("use_interp_simple", False)),
         )
@@ -490,7 +504,8 @@ def _operate(
     faces = _new_faces(result)
     if not faces:
         raise MeshOperationError(
-            "MESH_BOUNDARY_INVALID", "Native Grid Fill rejected a validated boundary",
+            "MESH_BOUNDARY_INVALID",
+            "Native Grid Fill rejected a validated boundary",
             details={"reason": "NATIVE_GRID_REJECTED", "phase": "generation", "boundary": boundary},
         )
     return {"boundary_components": 2, "created_faces": len(faces), "boundary": boundary}
@@ -549,9 +564,19 @@ def _finish_lineage(
             if survivor is not None and int(item[state.layer]) != survivor + 1:
                 survivor = None
             source = survivor if survivor is not None else int(item[state.layer]) - 1
-            if survivor is None and domain == "VERTEX" and operation_type in {
-                "subdivide", "loop_cut", "bisect", "bevel_edges", "inset_faces"
+            if survivor is None and operation_type in {
+                "grid_fill",
+                "create_edge",
+                "create_face",
+                "bridge",
             }:
+                source = -1
+            if (
+                survivor is None
+                and domain == "VERTEX"
+                and operation_type
+                in {"subdivide", "loop_cut", "bisect", "bevel_edges", "inset_faces"}
+            ):
                 # An interpolated integer tag is not exact vertex ancestry.
                 # Edge/face-derived vertices are CREATED in the vertex domain.
                 source = -1
@@ -616,9 +641,11 @@ def _created_selections(
     record: ComponentMapRecord,
     obj: Any,
     mesh: Any,
+    identifiers: list[str] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], list[str]]:
     result = {}
-    identifiers = []
+    if identifiers is None:
+        identifiers = []
     for domain in DOMAINS:
         indices = record.created.get(domain, ())
         if not indices:
@@ -655,9 +682,12 @@ def edit_mesh_topology(
     initial_mesh_reference = _mesh_reference(initial_mesh)
     operation = _validate_operation(params.get("operation"), len(initial_mesh.materials))
     operation_type = str(operation["type"])
-    selection = _selection(book, operation, obj, initial_mesh)
-    if operation_type == "grid_fill":
-        preflight_grid(initial_mesh, selection)
+    patch = prepare_patch(book, obj, initial_mesh, operation) if is_patch(operation) else None
+    selection = (
+        patch.selection if patch is not None else _selection(book, operation, obj, initial_mesh)
+    )
+    if patch is not None and patch.no_op:
+        return no_op_result(transaction, obj, patch, data_scope)
     before_map_evidence = _map_evidence(obj, initial_mesh)
     before_revision = mesh_revision_id(initial_mesh)
     before_attributes = _attribute_signature(initial_mesh)
@@ -718,7 +748,11 @@ def edit_mesh_topology(
         component_baseline = _bmesh_baseline(bm)
         requested = {_DOMAIN_COLLECTION[selection.domain]: _index_page(list(selection.indices))}
         lineage = _start_lineage(bm)
-        evidence = _operate(bm, obj, selection, operation, len(mesh.materials))
+        evidence = (
+            apply_patch_plan(bm, patch, operation)
+            if patch is not None
+            else _operate(bm, obj, selection, operation, len(mesh.materials))
+        )
         bm.normal_update()
         components = _component_changes(bm, component_baseline)
         components["affected"] = requested
@@ -733,6 +767,8 @@ def edit_mesh_topology(
             )
         relations, created, deleted = _finish_lineage(bm, lineage, operation_type)
         lineage = None
+        if patch is not None:
+            check_deadline(reserve_seconds=1.0)
         writeback_started = True
         write_bmesh_exact(bm, mesh)
         migration_result = finish_topology_attributes(obj, mesh, topology_attribute_evidence)
@@ -800,6 +836,19 @@ def edit_mesh_topology(
                 relations=relations,
                 created=created,
                 deleted=deleted,
+                creation_evidence=(
+                    {
+                        "vertices": [
+                            {"index": i, "grid_parameter": patch.lattice.get(i)}
+                            for i in created["VERTEX"]
+                        ],
+                        "boundary": patch.boundary,
+                        "attributes": patch.attributes["evidence"],
+                        "fallback": "NONE",
+                    }
+                    if patch is not None
+                    else None
+                ),
             )
             book.add_component_map(component_map)
             rebound_result = remap_selection(
@@ -814,7 +863,7 @@ def edit_mesh_topology(
             rebound = rebound_result["selection"]
             rebound_selection_id = str(rebound["selection_id"])
             created_selections, created_selection_ids = _created_selections(
-                book, component_map, obj, mesh
+                book, component_map, obj, mesh, created_selection_ids
             )
         else:
             rebound_record = book.add_selection(

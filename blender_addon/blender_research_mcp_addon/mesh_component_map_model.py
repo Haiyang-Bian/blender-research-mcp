@@ -60,6 +60,7 @@ class ComponentMapRecord:
     separation_id: str | None = None
     join_id: str | None = None
     branch_role: str | None = None
+    creation_evidence: dict[str, Any] | None = None
 
     @property
     def relation_count(self) -> int:
@@ -92,6 +93,7 @@ class ComponentMapRecord:
             "separation_id": self.separation_id,
             "join_id": self.join_id,
             "branch_role": self.branch_role,
+            "has_creation_evidence": self.creation_evidence is not None,
             "before": {
                 "object_name": self.before_object_name,
                 "object_identity": self.before_object_identity,
@@ -132,6 +134,7 @@ def make_component_map(
     separation_id: str | None = None,
     join_id: str | None = None,
     branch_role: str | None = None,
+    creation_evidence: dict[str, Any] | None = None,
 ) -> ComponentMapRecord:
     if map_kind not in {
         "SINGLE",
@@ -154,6 +157,7 @@ def make_component_map(
         "separation_id": separation_id,
         "join_id": join_id,
         "branch_role": branch_role,
+        "creation_evidence": creation_evidence,
         "before": before,
         "after": after,
         "relations": {
@@ -195,6 +199,7 @@ def make_component_map(
         separation_id=separation_id,
         join_id=join_id,
         branch_role=branch_role,
+        creation_evidence=creation_evidence,
     )
 
 
@@ -230,15 +235,11 @@ def _compose_domain(
 ) -> tuple[tuple[ComponentRelation, ...], tuple[int, ...], tuple[int, ...]]:
     first = records[0]
     first_rows = first.relations.get(domain, ())
-    mapping: dict[int, set[int]] = {
-        row.source_index: set(row.target_indices) for row in first_rows
-    }
+    mapping: dict[int, set[int]] = {row.source_index: set(row.target_indices) for row in first_rows}
     for deleted_index in first.deleted.get(domain, ()):
         mapping.setdefault(deleted_index, set())
 
-    histories: dict[int, set[str]] = {
-        row.source_index: {row.relation} for row in first_rows
-    }
+    histories: dict[int, set[str]] = {row.source_index: {row.relation} for row in first_rows}
     ancestorless = set(first.created.get(domain, ()))
 
     for record in records[1:]:
@@ -281,9 +282,7 @@ def _compose_domain(
         has_split = len(targets) > 1
         has_merge = any(len(reverse_sources[target]) > 1 for target in targets)
         history = histories.get(source, set())
-        complex_history = "DERIVED" in history or (
-            "SPLIT" in history and "MERGED" in history
-        )
+        complex_history = "DERIVED" in history or ("SPLIT" in history and "MERGED" in history)
         if complex_history or (has_split and has_merge):
             relation = "DERIVED"
         elif has_split:
@@ -358,6 +357,13 @@ def compose_component_maps(
         created=created,
         deleted=deleted,
         map_kind="COMPOSED",
+        creation_evidence={
+            "source_creation_maps": [
+                record.component_map_id
+                for record in records
+                if record.creation_evidence is not None
+            ]
+        },
         source_component_map_ids=tuple(record.component_map_id for record in records),
         step_count=sum(record.step_count for record in records),
     )
@@ -392,9 +398,7 @@ def remap_relation_values(
     remapped_weights = None
     if source_weights is not None:
         remapped_weights = tuple(
-            max(mapped[index])
-            if weight_merge == "MAX"
-            else sum(mapped[index]) / len(mapped[index])
+            max(mapped[index]) if weight_merge == "MAX" else sum(mapped[index]) / len(mapped[index])
             for index in indices
         )
     return indices, remapped_weights, tuple(missing)

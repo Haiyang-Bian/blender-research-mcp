@@ -1,17 +1,17 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.17.3 bounded boundary diagnostics and Grid Fill contract correction
-- Current milestone: 0.17.3 boundary diagnostics on transaction-v13 snapshots
-- Next milestone: 0.17.4 explicit patch authoring, then 0.17.5 integrated acceptance
+- Status: 0.17.4 explicit boundary patch authoring and attribute creation
+- Current milestone: 0.17.4 exact references on transaction-v13 snapshots
+- Next milestone: 0.17.5 integrated workflow and real checkpoint acceptance
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.17.3
+- Package and add-on version: 0.17.4
 - Protocol version: 1
 - Development transport port: 9877
 
 Approved [explicit boundary roadmap](roadmap/0.17.x-explicit-boundary-patching.md)
 implements the requirements in 0.17.3–0.17.5. The 0.18–0.20 capability sequence remains
-unchanged. 0.17.3 adds stateless boundary inspection and bounded Grid Fill diagnosis;
-explicit authoring and real-character acceptance remain separate later gates.
+unchanged. Boundary inspection and explicit authoring are implemented; integrated
+workflows and real-character acceptance remain separate 0.17.5 gates.
 
 ## 1. Why this project exists
 

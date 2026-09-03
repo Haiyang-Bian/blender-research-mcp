@@ -38,7 +38,14 @@ async def run(args):
                 "--python-exit-code",
                 "1",
                 "--python",
-                str(ROOT / "scripts/blender_boundary_regression.py"),
+                str(
+                    ROOT
+                    / (
+                        "scripts/blender_patch_regression.py"
+                        if args.explicit
+                        else "scripts/blender_boundary_regression.py"
+                    )
+                ),
                 "--",
                 "--report",
                 str(directory / "rna.json"),
@@ -168,6 +175,7 @@ async def run(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--explicit", action="store_true")
     parser.add_argument("--blender-executable", type=Path, required=True)
     parser.add_argument("--port", type=int, default=9918)
     asyncio.run(run(parser.parse_args()))

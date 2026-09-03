@@ -10,7 +10,7 @@ from blender_research_mcp.server import MaterialInputValue, create_server
 
 def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     server = create_server()
-    assert server._mcp_server.version == "0.17.3"
+    assert server._mcp_server.version == "0.17.4"
     tools = asyncio.run(server.list_tools())
     assert [tool.name for tool in tools] == [
         "application.status",
@@ -442,7 +442,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     ]
     operation_schema = mesh_edit.inputSchema["properties"]["operation"]
     assert operation_schema["discriminator"]["propertyName"] == "type"
-    assert len(operation_schema["oneOf"]) == 24
+    assert len(operation_schema["oneOf"]) == 26
     mesh_uv_edit = tools_by_name["mesh.uv.edit"]
     assert mesh_uv_edit.annotations is not None
     assert mesh_uv_edit.annotations.readOnlyHint is False
