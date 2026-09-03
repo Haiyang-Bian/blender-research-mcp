@@ -269,7 +269,7 @@ CAPABILITIES = [
 CAPABILITY_VERSIONS = {
     "transport": 1,
     "context": 1,
-    "viewport_capture": 3,
+    "viewport_capture": 4,
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
@@ -290,12 +290,12 @@ CAPABILITY_VERSIONS = {
     "mesh_topology": 6,
     "mesh_selection": 2,
     "mesh_surface_query": 1,
-    "mesh_deformation": 1,
-    "mesh_validation": 2,
+    "mesh_deformation": 2,
+    "mesh_validation": 3,
     "mesh_component_map": 5,
     "mesh_component_catalog": 1,
     "mesh_separation": 2,
-    "mesh_batch": 5,
+    "mesh_batch": 6,
     "mesh_join": 1,
     "mesh_uv": 1,
     "mesh_weights": 1,
@@ -1219,6 +1219,13 @@ class AddonState:
                         f"Capture view reference does not exist: {view_reference_capture_id}",
                         kind="not_found",
                     )
+            from .mesh_boundary_overlay import prepare_overlay
+
+            boundary_overlay = prepare_overlay(
+                self.mesh_resources,
+                bpy.data.objects.get(object_name),
+                params.get("boundary_annotations"),
+            )
             with self.suppress_generation():
                 result, evidence_data = capture_viewport(
                     object_name,
@@ -1229,6 +1236,7 @@ class AddonState:
                     str(params.get("overlays", "CURRENT")),
                     params.get("orbit"),
                     view_reference,
+                    boundary_overlay,
                 )
             capture_id = str(uuid.uuid4())
             evidence = CaptureEvidence(
@@ -1391,9 +1399,7 @@ class AddonState:
                 collection, delta = create_collection(transaction, params)
                 bpy.context.view_layer.update()
             self._record_delta(transaction, delta)
-            result = organization_result(
-                transaction, changed=True, collection=collection
-            )
+            result = organization_result(transaction, changed=True, collection=collection)
             result.update(
                 {
                     "status": transaction.status,
@@ -1896,9 +1902,7 @@ class AddonState:
         self._validate_transaction_guards(transaction)
         result = self._transaction_result(transaction)
         finalized: list[dict[str, Any]] = []
-        contains_join = any(
-            delta.kind == "mesh_join" for delta in transaction.structural_deltas()
-        )
+        contains_join = any(delta.kind == "mesh_join" for delta in transaction.structural_deltas())
         with self.suppress_generation(defer_view_update=contains_join):
             for delta in transaction.deltas:
                 item = finalize_modifier_delta(delta)

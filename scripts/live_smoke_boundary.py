@@ -155,6 +155,10 @@ async def run(args):
                     "finish": finish,
                 }
             )
+        if args.explicit:
+            from patch_workflow_cases import exercise
+
+            await exercise(client, report, directory)
         report["context_after"] = await client.call("context.get", read_only=True)
         assert collaboration.ui_projection(report["context_before"]) == collaboration.ui_projection(
             report["context_after"]

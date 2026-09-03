@@ -80,8 +80,12 @@ SelectionSet 和距离规则时才焊接接缝；自动门禁与确定性 Blende
 0.17.4 实现定向四边/闭环四角 Grid Fill、精确 create_edge/create_face 和开链
 bridge，统一走现有事务写入器。生成前检查局部相交和属性来源；新 UV、权重
 使用固定边界插值，独立 UV 岛需要显式选择。ComponentMap 分别报告真实血缘
-和创建证据。全量测试、合成属性压力及 Blender 回滚/重连已通过；真实角色
-验收留在 0.17.5。
+和创建证据。全量测试、合成属性压力及 Blender 回滚/重连已通过。
+0.17.5 完成局部质量检查、累计位移限制、嵌套 batch 引用与边界图像标注。
+真实检查点的独立副本已完成侧带、中央补片、固定边界拟合、三层 UV 整理、
+骨骼权重验证及 rollback / commit → save → reload。逐组件审计确认旧坐标、
+权重、UV/Pin、Seam、绑定及其余对象保持不变；艺术与纹理布局评价仍待确认。
+完整指标、参考未覆盖区域和可复用示例见上述验收记录。
 补丁与既有 Join/Weld/batch、UV/权重实机回归见
 [0.17.2 验收记录](docs/validation/2026-09-03-mesh-recovery-and-join-hotfix.md)。
 既有验收记录见

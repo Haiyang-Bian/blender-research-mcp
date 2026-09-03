@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import math
 import struct
+from array import array
 from collections import deque
 from typing import Any
 
@@ -528,17 +529,20 @@ def _run_uv_operator(
                 ),
             )
         }
-        for loop_index, item in enumerate(temporary_layer.data):
-            selected = loop_index in selected_loops
-            if hasattr(item, "select"):
-                item.select = selected
-            if hasattr(item, "select_edge"):
-                item.select_edge = selected
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_all(action="DESELECT")
         bpy.ops.object.mode_set(mode="OBJECT")
         for face in temporary_mesh.polygons:
             face.select = int(face.index) in faces
+        # Creating a legacy UV selection attribute can reallocate CustomData and
+        # invalidate the RNA iterator. Reacquire the layer for each typed bulk write.
+        flags = array("b", (int(i in selected_loops) for i in range(len(temporary_mesh.loops))))
+        temporary_mesh.uv_layers[layer_name].vertex_selection.foreach_set("value", flags)
+        temporary_mesh.uv_layers[layer_name].edge_selection.foreach_set("value", flags)
+        if operation.get("pin_policy") == "IGNORE":
+            temporary_mesh.uv_layers[layer_name].pin.foreach_set(
+                "value", array("b", [0]) * len(temporary_mesh.loops)
+            )
         bpy.ops.object.mode_set(mode="EDIT")
         if operation["type"] == "unwrap":
             kwargs = _operator_kwargs(
@@ -585,12 +589,12 @@ def _run_uv_operator(
                 "Isolated UV result does not match the target layer",
                 kind="blender_api",
             )
-        for index in range(len(target.data)):
-            target.data[index].uv = source.data[index].uv
+        for index in selected_loops:
+            target.uv[index].vector = source.uv[index].vector
         if operation["type"] == "pack":
             tile = Vector((float(operation.get("tile_u", 0)), float(operation.get("tile_v", 0))))
-            for index in range(len(target.data)):
-                target.data[index].uv += tile
+            for index in selected_loops:
+                target.uv[index].vector += tile
     finally:
         with contextlib.suppress(Exception):
             if bpy.context.mode != "OBJECT":

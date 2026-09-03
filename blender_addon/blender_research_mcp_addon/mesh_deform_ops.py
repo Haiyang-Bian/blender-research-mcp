@@ -11,6 +11,7 @@ import bpy
 from mathutils import Matrix, Vector
 
 from .capture_model import CaptureBook, CaptureEvidence
+from .execution_budget import check_deadline
 from .lookdev_ops import session_identity
 from .mesh_ops import (
     MAX_EDGES,
@@ -54,6 +55,7 @@ DEFORM_OPERATIONS = {
 
 
 def _closed(operation: Any, required: set[str], optional: set[str]) -> dict[str, Any]:
+    optional = optional | {"maximum_displacement"}
     if not isinstance(operation, dict):
         raise MeshOperationError("MESH_OPERATION_INVALID", "operation must be an object")
     missing = required - set(operation)
@@ -98,6 +100,8 @@ def _validate_operation(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise MeshOperationError("MESH_OPERATION_INVALID", "operation must be an object")
     operation_type = raw.get("type")
+    if "maximum_displacement" in raw:
+        _number(raw["maximum_displacement"], "maximum_displacement", 0, 1_000_000)
     common = {"type", "selection_id"}
     if operation_type == "set_positions":
         operation = _closed(raw, common | {"positions"}, {"mode", "space"})
@@ -177,15 +181,11 @@ def _validate_operation(raw: Any) -> dict[str, Any]:
             if _vector(plane["normal"], "plane.normal").length_squared == 0:
                 raise MeshOperationError("MESH_OPERATION_INVALID", "plane normal is zero")
         return operation
-    raise MeshOperationError(
-        "MESH_OPERATION_INVALID", f"Unsupported deformation: {operation_type}"
-    )
+    raise MeshOperationError("MESH_OPERATION_INVALID", f"Unsupported deformation: {operation_type}")
 
 
 def _validate_projection_options(operation: dict[str, Any]) -> None:
-    maximum = _number(
-        operation.get("maximum_distance"), "maximum_distance", 0, 1_000_000
-    )
+    maximum = _number(operation.get("maximum_distance"), "maximum_distance", 0, 1_000_000)
     if maximum == 0:
         raise MeshOperationError(
             "MESH_OPERATION_INVALID", "maximum_distance must be greater than 0"
@@ -233,6 +233,29 @@ def _selected_vertices(bm: Any, selection: SelectionRecord) -> list[Any]:
     return [bm.verts[index] for index in selection.indices]
 
 
+def _move(vertex: Any, target: Any, operation: dict[str, Any]) -> None:
+    check_deadline()
+    limit = operation.get("maximum_displacement")
+    if limit is not None:
+        travel = operation["_travel"]
+        distance = (operation["_distance_matrix"] @ (target - vertex.co)).length
+        cumulative = travel.get(vertex.index, 0.0) + distance
+        if cumulative > limit:
+            raise MeshOperationError(
+                "MESH_EDIT_FAILED",
+                "Cumulative vertex displacement exceeds the requested limit",
+                details={
+                    "reason": "DISPLACEMENT_LIMIT",
+                    "vertex": vertex.index,
+                    "cumulative_displacement_world": cumulative,
+                    "maximum_displacement": limit,
+                    "writeback": False,
+                },
+            )
+        travel[vertex.index] = cumulative
+    vertex.co = target
+
+
 def _set_positions(
     bm: Any,
     obj: Any,
@@ -255,7 +278,7 @@ def _set_positions(
             value = inverse @ value if mode == "ABSOLUTE" else inverse_direction @ value
         target = value if mode == "ABSOLUTE" else vertex.co + value
         weight = _weight(selection, index)
-        vertex.co = vertex.co.lerp(target, weight)
+        _move(vertex, vertex.co.lerp(target, weight), operation)
     return {"affected_vertices": len(vertices), "mode": mode, "space": space}
 
 
@@ -284,7 +307,7 @@ def _smooth_or_relax(
             amount = factor * _weight(selection, position)
             targets.append((vertex, vertex.co + displacement * amount))
         for vertex, target in targets:
-            vertex.co = target
+            _move(vertex, target, operation)
     return {
         "affected_vertices": len(vertices),
         "iterations": iterations,
@@ -399,7 +422,7 @@ def _project(
             details={"misses": misses, "selected": len(vertices)},
         )
     for vertex, target, weight in targets:
-        vertex.co = vertex.co.lerp(target, weight)
+        _move(vertex, vertex.co.lerp(target, weight), operation)
     return {
         "affected_vertices": len(targets),
         "misses": misses,
@@ -431,9 +454,7 @@ def _shrinkwrap(
             if target is None:
                 iteration_misses += 1
                 continue
-            targets.append(
-                (vertex, inverse @ target[0], factor * _weight(selection, position))
-            )
+            targets.append((vertex, inverse @ target[0], factor * _weight(selection, position)))
         if iteration_misses and operation.get("on_miss", "KEEP") == "ERROR":
             raise MeshOperationError(
                 "MESH_EDIT_FAILED",
@@ -441,19 +462,17 @@ def _shrinkwrap(
                 details={"misses": iteration_misses, "selected": len(vertices)},
             )
         for vertex, target, weight in targets:
-            vertex.co = vertex.co.lerp(target, weight)
+            _move(vertex, vertex.co.lerp(target, weight), operation)
         misses = iteration_misses
     return {"affected_vertices": len(vertices) - misses, "misses": misses, "iterations": iterations}
 
 
-def _inflate(
-    bm: Any, selection: SelectionRecord, operation: dict[str, Any]
-) -> dict[str, Any]:
+def _inflate(bm: Any, selection: SelectionRecord, operation: dict[str, Any]) -> dict[str, Any]:
     vertices = _selected_vertices(bm, selection)
     amount = float(operation["amount"])
     bm.normal_update()
     for position, vertex in enumerate(vertices):
-        vertex.co += vertex.normal * amount * _weight(selection, position)
+        _move(vertex, vertex.co + vertex.normal * amount * _weight(selection, position), operation)
     return {"affected_vertices": len(vertices), "amount": amount}
 
 
@@ -524,7 +543,7 @@ def _flatten(
     for position, (vertex, point) in enumerate(zip(vertices, points, strict=True)):
         target = point - normal * (point - origin).dot(normal)
         amount = factor * _weight(selection, position)
-        vertex.co = vertex.co.lerp(inverse @ target, amount)
+        _move(vertex, vertex.co.lerp(inverse @ target, amount), operation)
     return {
         "affected_vertices": len(vertices),
         "plane_origin": list(origin),
@@ -587,6 +606,7 @@ def edit_mesh_deform(
     obj, initial_mesh, data_scope, _refs = _validate_mesh_target(params)
     initial_mesh_reference = _mesh_reference(initial_mesh)
     operation = _validate_operation(params.get("operation"))
+    operation = {**operation, "_travel": {}, "_distance_matrix": obj.matrix_world.to_3x3()}
     operation_type = str(operation["type"])
     selection_id = operation.get("selection_id")
     if not isinstance(selection_id, str) or not selection_id:
@@ -637,9 +657,7 @@ def edit_mesh_deform(
         if operation_type == "set_positions":
             evidence = _set_positions(bm, obj, selection, operation)
         elif operation_type in {"smooth", "relax"}:
-            evidence = _smooth_or_relax(
-                bm, selection, operation, relax=operation_type == "relax"
-            )
+            evidence = _smooth_or_relax(bm, selection, operation, relax=operation_type == "relax")
         elif operation_type == "project":
             evidence = _project(bm, obj, selection, surface, capture, operation)
         elif operation_type == "shrinkwrap":
@@ -648,6 +666,11 @@ def edit_mesh_deform(
             evidence = _inflate(bm, selection, operation)
         else:
             evidence = _flatten(bm, obj, selection, operation)
+        if operation.get("maximum_displacement") is not None:
+            evidence["maximum_cumulative_displacement_world"] = max(
+                operation["_travel"].values(), default=0.0
+            )
+            evidence["displacement_limit"] = operation["maximum_displacement"]
         bm.normal_update()
         components = _component_changes(bm, component_baseline)
         components["affected"] = requested

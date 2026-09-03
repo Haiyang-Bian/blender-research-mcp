@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+from types import SimpleNamespace
 from typing import Any
 
 from mathutils import Vector
@@ -10,6 +12,14 @@ from mathutils.geometry import tessellate_polygon
 
 from .execution_budget import check_deadline
 from .mesh_patch_ops import fail
+
+
+def coordinate_epsilon(coords: Any, indices: Any, requested: float) -> float:
+    """Account for the float32 coordinates stored by Blender, including translation."""
+    magnitude = max((abs(float(c)) for i in indices for c in coords[i]), default=0.0)
+    exponent = math.frexp(magnitude)[1] if magnitude else -126
+    # Two float32 ULPs cover quantized subdivision/intersection coordinates.
+    return max(requested, math.ldexp(1.0, exponent - 23), 1e-10)
 
 
 def _inside(p: Any, tri: list[Any], epsilon: float) -> bool:
@@ -63,12 +73,16 @@ def segment_contacts(a: Any, b: Any, tri: list[Any], epsilon: float) -> list[Any
 def illegal_contact(
     a_ids: tuple[int, ...], b_ids: tuple[int, ...], coords: Any, epsilon: float
 ) -> bool:
-    a, b = [coords[i] for i in a_ids], [coords[i] for i in b_ids]
+    # mathutils uses float coordinates. Rebase before interpolating contacts so
+    # small patches translated away from the origin retain their local accuracy.
+    origin = coords[a_ids[0]]
+    relative = {i: coords[i] - origin for i in set(a_ids) | set(b_ids)}
+    a, b = [relative[i] for i in a_ids], [relative[i] for i in b_ids]
     contacts = []
     for tri, target in ((a, b), (b, a)):
         for p, q in zip(tri, (*tri[1:], tri[0]), strict=True):
             contacts.extend(segment_contacts(p, q, target, epsilon))
-    shared = [coords[i] for i in set(a_ids) & set(b_ids)]
+    shared = [relative[i] for i in set(a_ids) & set(b_ids)]
     for point in contacts:
         if any((point - vertex).length <= epsilon for vertex in shared):
             continue
@@ -79,7 +93,8 @@ def illegal_contact(
 
 
 def triangles(indices: tuple[int, ...], coords: Any, epsilon: float) -> list[tuple[int, ...]]:
-    points = [coords[i] for i in indices]
+    origin = coords[indices[0]]
+    points = [coords[i] - origin for i in indices]
     exact_corners = {tuple(point): index for point, index in zip(points, indices, strict=True)}
     if len(exact_corners) != len(indices):
         fail("DEGENERATE_FACE", "Face corners have coincident coordinates", vertices=indices)
@@ -126,7 +141,7 @@ def check_candidate(mesh: Any, plan: Any) -> None:
             for axis in range(3)
         )
     )
-    epsilon = max(span * 1e-7, 1e-10)
+    epsilon = coordinate_epsilon(coords, used, span * 1e-7)
     old_cycles = {frozenset(face.vertices) for face in mesh.polygons}
     for edge in plan.edges:
         if any(set(edge) <= set(face.vertices) for face in mesh.polygons):
@@ -267,4 +282,24 @@ def check_candidate(mesh: Any, plan: Any) -> None:
         "new_non_manifold": 0,
         "new_degenerate": 0,
         "new_intersections": 0,
+    }
+    from .mesh_local_quality import local_quality
+
+    existing = local_quality(
+        mesh,
+        SimpleNamespace(
+            domain="VERTEX", indices=tuple(sorted(used & set(range(len(mesh.vertices)))))
+        ),
+        "SELECTION_AND_NEIGHBORS",
+        epsilon * epsilon,
+    )
+    if not existing["complete"]:
+        fail("QUALITY_BUDGET_EXCEEDED", "Existing neighborhood quality coverage is incomplete")
+    plan.evidence["existing_neighborhood"] = existing
+    plan.evidence["introduced_issues"] = {
+        "duplicate_faces": [],
+        "degenerate_faces": [],
+        "non_manifold_edges": [],
+        "intersection_faces": [],
+        "orientation_edges": [],
     }

@@ -536,6 +536,7 @@ def capture_viewport(
     overlays: str = "CURRENT",
     orbit: dict[str, Any] | None = None,
     view_reference: CaptureEvidence | None = None,
+    boundary_overlay: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if view not in {"FRONT", "RIGHT", "TOP", "BACK", "LEFT", "BOTTOM", "CURRENT"}:
         raise ContextOperationError("VIEW_INVALID", f"Unsupported view: {view}", kind="validation")
@@ -573,10 +574,7 @@ def capture_viewport(
         viewport_id = view_reference.viewport_id
     snapshot = capture_context(viewport_id)
     viewport = _find_viewport(snapshot)
-    if (
-        view_reference is not None
-        and view_reference.view_layer != viewport.window.view_layer.name
-    ):
+    if view_reference is not None and view_reference.view_layer != viewport.window.view_layer.name:
         raise ContextOperationError(
             "CAPTURE_REFERENCE_STALE",
             "The comparison view reference belongs to a different View Layer",
@@ -688,6 +686,13 @@ def capture_viewport(
                 kind="blender_api",
                 retryable=True,
             )
+        annotation = None
+        if boundary_overlay is not None:
+            from .mesh_boundary_overlay import paint_overlay
+
+            rgba, annotation = paint_overlay(
+                rgba, width, height, perspective_matrix, boundary_overlay
+            )
         data = encode_rgba_png(width, height, rgba, bottom_up=True)
         png_width, png_height = _png_size(data)
         result = {
@@ -709,6 +714,7 @@ def capture_viewport(
             "max_size": max_size,
             "mime_type": "image/png",
             "backend": "gpu_offscreen",
+            **({"boundary_annotations": annotation} if annotation is not None else {}),
             "focus_requirement": "none_when_window_exists",
             "native_sha256": hashlib.sha256(data).hexdigest(),
             "projection_kind": projection_kind,
@@ -770,10 +776,7 @@ def capture_viewport(
 def _window_for_capture(evidence: CaptureEvidence) -> Any:
     for window in bpy.context.window_manager.windows:
         if window.as_pointer() == evidence.window_id:
-            if (
-                window.scene.name != evidence.scene
-                or window.view_layer.name != evidence.view_layer
-            ):
+            if window.scene.name != evidence.scene or window.view_layer.name != evidence.view_layer:
                 break
             return window
     raise ContextOperationError(

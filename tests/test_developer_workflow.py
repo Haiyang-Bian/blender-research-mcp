@@ -22,12 +22,12 @@ def load_quality_gate_module():
 
 
 def test_build_version_sources_are_synchronized() -> None:
-    assert PACKAGE_VERSION == "0.17.4"
-    assert addon_build.project_version() == "0.17.4"
-    assert addon_build.addon_runtime_version() == "0.17.4"
-    assert addon_build.addon_manifest_version() == "0.17.4"
-    assert addon_build.resolve_build_version("0.17.4") == "0.17.4"
-    assert addon_build.default_output("0.17.4").name == "blender-research-mcp-addon-0.17.4.zip"
+    assert PACKAGE_VERSION == "0.17.5"
+    assert addon_build.project_version() == "0.17.5"
+    assert addon_build.addon_runtime_version() == "0.17.5"
+    assert addon_build.addon_manifest_version() == "0.17.5"
+    assert addon_build.resolve_build_version("0.17.5") == "0.17.5"
+    assert addon_build.default_output("0.17.5").name == "blender-research-mcp-addon-0.17.5.zip"
 
 
 def test_build_rejects_requested_version_mismatch() -> None:

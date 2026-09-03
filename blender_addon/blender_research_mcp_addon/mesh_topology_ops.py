@@ -682,7 +682,16 @@ def edit_mesh_topology(
     initial_mesh_reference = _mesh_reference(initial_mesh)
     operation = _validate_operation(params.get("operation"), len(initial_mesh.materials))
     operation_type = str(operation["type"])
-    patch = prepare_patch(book, obj, initial_mesh, operation) if is_patch(operation) else None
+    try:
+        patch = prepare_patch(book, obj, initial_mesh, operation) if is_patch(operation) else None
+    except (MeshOperationError, MeshResourceError) as exc:
+        exc.details.update(writeback=False, recovery="NOT_NEEDED")
+        exc.details.setdefault("phase", "preflight")
+        exc.details.setdefault(
+            "next_steps",
+            ["Inspect current boundary evidence and reduce the operation if a budget was exceeded"],
+        )
+        raise
     selection = (
         patch.selection if patch is not None else _selection(book, operation, obj, initial_mesh)
     )
@@ -844,6 +853,7 @@ def edit_mesh_topology(
                         ],
                         "boundary": patch.boundary,
                         "attributes": patch.attributes["evidence"],
+                        "quality": patch.evidence,
                         "fallback": "NONE",
                     }
                     if patch is not None

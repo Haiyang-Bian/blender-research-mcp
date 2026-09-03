@@ -1,17 +1,66 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.17.4 explicit boundary patch authoring and attribute creation
-- Current milestone: 0.17.4 exact references on transaction-v13 snapshots
-- Next milestone: 0.17.5 integrated workflow and real checkpoint acceptance
+- Status: 0.17.5 explicit boundary patch workflow, engineering acceptance complete
+- Current milestone: 0.17.5 local validation, bounded deformation, batch and capture
+- Next milestone: 0.18 Shape Key authoring
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.17.4
+- Package and add-on version: 0.17.5
 - Protocol version: 1
 - Development transport port: 9877
 
 Approved [explicit boundary roadmap](roadmap/0.17.x-explicit-boundary-patching.md)
 implements the requirements in 0.17.3–0.17.5. The 0.18–0.20 capability sequence remains
-unchanged. Boundary inspection and explicit authoring are implemented; integrated
-workflows and real-character acceptance remain separate 0.17.5 gates.
+unchanged. Boundary inspection, explicit authoring, integrated workflows and the
+real checkpoint-copy engineering gates are complete. Artistic approval, texture
+placement and the four reference-uncovered initial-form vertices remain explicitly
+separate from engineering acceptance. See the linked acceptance record.
+
+### Explicit patch workflow contract
+
+0.17.5 advertises `mesh_validation: 3`, `mesh_deformation: 2`, `mesh_batch: 6` and
+`viewport_capture: 4`. Selection remains 2, topology 6, ComponentMap 5, protocol 1,
+transactions 13. Optional fields are sent only after their capability gate; legacy
+requests retain their original fields and scope.
+
+`mesh.validate` accepts `scope=SELECTION` or `SELECTION_AND_NEIGHBORS` for
+LOCAL_QUALITY, NON_MANIFOLD, DEGENERATE, ORIENTATION and SELF_INTERSECTION.
+Vertex/edge selections expand to incident faces; the neighbor scope adds one
+vertex-adjacent face ring. Intersections include the surrounding Mesh. Results
+include denominators, remaining boundary edges, issue indices and intersection
+pairs, complete/unchecked coverage, and connected face components. In this new
+scope, tolerance is a local length and the area threshold is its square. Contact
+checks report a numerical floor derived from extent and two float32 coordinate ULPs;
+contact arithmetic is rebased locally. Shared vertices/edges excuse only contact
+on that shared geometry. Existing neighborhood issues and introduced candidate
+issues are separate in mesh.edit evidence and Map creation evidence. A standalone
+validation is explicitly CURRENT_STATE_ONLY; compare recorded baselines through
+the Map rather than inferring history from current indices. Intentional open ends
+are reported even when the requested central seam is completely closed.
+
+All seven deformation operations optionally accept `maximum_displacement`, in
+world units. The limit measures each vertex's cumulative travel across iterations,
+including round trips, not only its net offset. A violation restores the call.
+Build a separate fixed-boundary SelectionSet and derive editable interior/transition
+sets from Maps: a sewn boundary may no longer be a topological boundary.
+
+Batch v6 resolves nested `vertex_aliases`, path `selection_alias`/`start_vertex_alias`
+and closed-loop `corner_aliases`. Exact vertices require singleton SURVIVED remaps;
+paths are reconstructed and validated after every remap. Known live patch geometry
+is preflighted before the guard; conditions depending on earlier writes are checked
+at runtime and restore the transaction begin baseline on failure. Deformation rebinds
+all same-topology target selections. Incomplete validation cannot satisfy assertions.
+
+`viewport.capture.boundary_annotations` accepts up to four directed paths and 64
+problem vertex references, with a 4096-vertex drawing budget. Colors, starts, arrows
+and problem crosses are composited into the call-local image. The metadata declares
+PROJECTED_XRAY visibility; annotations do not create scene objects or real selection.
+
+The request's absolute queue deadline reaches search, generation, attribute solving
+and local checks. Patch output is capped at 4096 faces; native writeback reserves time
+and remains non-interruptible, as does recovery. UV unwrap/pack uses typed temporary
+UV selection storage and writes only selected loops; tile offsets never touch old
+unselected UVs. UV_OVERLAP tests positive area above 1e-12, excluding legal edge/point
+contact. These changes preserve the old attribute and transaction policies.
 
 ## 1. Why this project exists
 

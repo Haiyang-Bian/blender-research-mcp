@@ -29,6 +29,27 @@ Preserved UV layers require compatible boundary sources. Explicit
 for later unwrap/pack. Inspect creation provenance with ComponentMap direction
 CREATION_EVIDENCE. Inspect remaining bridge end boundaries before the next patch.
 
+With validation >= 3, request explicit local scope and inspect coverage/denominators,
+remaining intended boundaries and introduced issues against the stored baseline.
+LOCAL_QUALITY reports all local open edges; an intentional open end is not evidence
+that a different requested seam failed to close. Scope tolerance is a local length;
+the returned area threshold is squared and contact precision is reported separately.
+With deformation >= 2, set maximum_displacement in world units and on_miss=ERROR
+for acceptance. The limit is cumulative across iterations. Keep fixed seam vertices
+outside the editable set even after the seam becomes internal. A missing reference
+leaves a labelled initial form; it does not justify an original-surface claim.
+
+Batch >= 6 supports exact vertex_aliases, directed path selection_alias/start_vertex_alias
+and closed-loop corner_aliases. Never guess when remapping an exact vertex becomes
+ambiguous. Capture >= 4 accepts boundary_annotations.paths and problem_vertices;
+the overlay is projected x-ray evidence, not a scene helper or occlusion proof.
+For skin checks, select verified deform groups. MMD edge-scale/order groups are
+metadata and must not be normalized or counted as bone influences. Preserve old
+locked weights; any explicit assignment on newly created vertices must report its source.
+Independent UV islands need explicit unwrap/pack and a reviewed target tile. UV validity
+does not establish texture or artistic approval. Save/reload changes session material
+identities: compare persistent topology/coordinates/UV/weights and rediscover resources.
+
 ## Follow application and project intent
 
 Treat application launch and project opening as separate decisions:

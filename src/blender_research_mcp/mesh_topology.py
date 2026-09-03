@@ -102,6 +102,12 @@ class ClosedLoopBoundary(BaseModel):
 PatchBoundary = Annotated[FourPathsBoundary | ClosedLoopBoundary, Field(discriminator="type")]
 
 
+class BoundaryAnnotations(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    paths: Annotated[tuple[DirectedPath, ...], Field(max_length=4)] = ()
+    problem_vertices: Annotated[tuple[SelectionId, ...], Field(max_length=64)] = ()
+
+
 class BridgeOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

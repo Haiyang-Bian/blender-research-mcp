@@ -10,7 +10,7 @@ from blender_research_mcp.server import MaterialInputValue, create_server
 
 def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     server = create_server()
-    assert server._mcp_server.version == "0.17.4"
+    assert server._mcp_server.version == "0.17.5"
     tools = asyncio.run(server.list_tools())
     assert [tool.name for tool in tools] == [
         "application.status",
@@ -326,7 +326,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "RAYCAST",
     ]
     validation = tools_by_name["mesh.validate"]
-    assert len(validation.inputSchema["properties"]["check"]["enum"]) == 15
+    assert len(validation.inputSchema["properties"]["check"]["enum"]) == 16
     assert "layer_name" in validation.inputSchema["properties"]
     assert "expected_uv_fingerprint" in validation.inputSchema["properties"]
     assert "expected_weights_fingerprint" in validation.inputSchema["properties"]

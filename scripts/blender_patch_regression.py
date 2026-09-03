@@ -334,7 +334,16 @@ def run(args):
     report["cases"].append({"name": obj.name, "result": result})
     attribute_cases(report)
     rejection_cases(report)
+    from blender_patch_quality_regression import run as quality_cases
+
+    quality_cases(report)
     fixture("Boundary Live")
+    mesh = bpy.data.meshes.new("Patch Reference Mesh")
+    mesh.from_pydata(
+        [(-1, -1, 0.05), (5, -1, 0.05), (5, 5, 0.05), (-1, 5, 0.05)], [], [(0, 1, 2, 3)]
+    )
+    reference = bpy.data.objects.new("Patch Reference", mesh)
+    bpy.context.scene.collection.objects.link(reference)
     report["status"] = "passed"
     args.report.write_text(json.dumps(report, indent=2), encoding="utf-8")
     if args.save:

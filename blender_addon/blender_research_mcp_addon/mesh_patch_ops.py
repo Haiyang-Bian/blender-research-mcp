@@ -26,6 +26,26 @@ def fail(reason: str, message: str, **details: Any) -> None:
             "phase": "preflight",
             "writeback": False,
             "recovery": "NOT_NEEDED",
+            "next_steps": [
+                {
+                    "SEGMENT_MISMATCH": (
+                        "Subdivide the shorter side explicitly, remap references, then retry"
+                    ),
+                    "ATTRIBUTE_SOURCE_AMBIGUOUS": (
+                        "Specify material/UV creation policy "
+                        "or repair the boundary attribute sources"
+                    ),
+                    "OUTPUT_BUDGET_EXCEEDED": (
+                        "Release unused resources or split the patch into smaller operations"
+                    ),
+                    "QUALITY_BUDGET_EXCEEDED": (
+                        "Reduce the patch or neighborhood size and inspect coverage again"
+                    ),
+                    "SELF_INTERSECTION": (
+                        "Inspect the reported faces and choose non-crossing connections"
+                    ),
+                }.get(reason, "Inspect the reported components and resubmit exact references")
+            ],
             **details,
         },
     )

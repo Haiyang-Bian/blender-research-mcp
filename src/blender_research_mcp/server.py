@@ -119,6 +119,7 @@ from blender_research_mcp.mesh_resources import (
 )
 from blender_research_mcp.mesh_separation import MeshObjectName
 from blender_research_mcp.mesh_topology import (
+    BoundaryAnnotations,
     ComponentMapDirection,
     ComponentMapDomain,
     ComponentMapId,
@@ -935,6 +936,7 @@ def create_server(
                 "sample_limit": sample_limit,
             },
             read_only=True,
+            deadline_ms=MAX_DEADLINE_MS,
         )
 
     @server.tool(
@@ -946,9 +948,11 @@ def create_server(
         annotations=READ_ONLY,
         structured_output=True,
     )
+    @mesh_errors
     async def mesh_validate(
         selection_id: SelectionId,
         check: ValidationCheck,
+        scope: Literal["SELECTION", "SELECTION_AND_NEIGHBORS"] | None = None,
         surface_id: SurfaceId | None = None,
         layer_name: Annotated[str, Field(min_length=1, max_length=255)] | None = None,
         expected_uv_fingerprint: Annotated[str, Field(min_length=64, max_length=64)] | None = None,
@@ -969,11 +973,14 @@ def create_server(
         sample_limit: Annotated[StrictInt, Field(ge=0, le=256)] = 64,
     ) -> dict[str, Any]:
         await require_capability(client, "mesh_validation")
+        if scope is not None or check == "LOCAL_QUALITY":
+            client.require_capability("mesh_validation", 3)
         return await client.call(
             "mesh.validate",
             {
                 "selection_id": selection_id,
                 "check": check,
+                **({"scope": scope} if scope is not None else {}),
                 "surface_id": surface_id,
                 "layer_name": layer_name,
                 "expected_uv_fingerprint": expected_uv_fingerprint,
@@ -988,6 +995,7 @@ def create_server(
                 "sample_limit": sample_limit,
             },
             read_only=True,
+            deadline_ms=MAX_DEADLINE_MS,
         )
 
     @server.tool(
@@ -1079,9 +1087,12 @@ def create_server(
         display_mode: DisplayMode = "CURRENT",
         overlays: OverlaysMode = "CURRENT",
         orbit: OrbitRequest | None = None,
+        boundary_annotations: BoundaryAnnotations | None = None,
     ) -> CallToolResult:
         if view == "CURRENT" and orbit is not None:
             raise ValueError("orbit requires a semantic base view rather than CURRENT")
+        if boundary_annotations is not None:
+            await require_capability(client, "viewport_capture", 4)
         image_bytes, result = await capture_image(
             client,
             object_name=object_name,
@@ -1091,6 +1102,9 @@ def create_server(
             display_mode=display_mode,
             overlays=overlays,
             orbit=orbit.model_dump() if orbit is not None else None,
+            boundary_annotations=boundary_annotations.model_dump(mode="json")
+            if boundary_annotations is not None
+            else None,
         )
         await settle_capture_generation(client, result)
         return CallToolResult(
@@ -2038,6 +2052,8 @@ def create_server(
     ) -> dict[str, Any]:
         await require_capability(client, "mesh_topology")
         operation_payload = operation.model_dump(exclude_none=True)
+        if operation_payload.get("maximum_displacement") is not None:
+            client.require_capability("mesh_deformation", 2)
         explicit_patch = (
             operation.type in {"create_edge", "create_face"}
             or (operation.type == "grid_fill" and operation_payload.get("boundary") is not None)
@@ -2558,6 +2574,7 @@ def create_server(
         annotations=SCENE_MUTATION,
         structured_output=True,
     )
+    @mesh_errors
     async def mesh_batch_execute(
         transaction_id: TransactionId,
         targets: BatchTargets,
@@ -2602,6 +2619,11 @@ def create_server(
             requires_batch_v4 = True
         for payload in step_payloads:
             step_type = payload["type"]
+            if step_type == "mesh_validate" and (
+                payload.get("scope") or payload.get("check") == "LOCAL_QUALITY"
+            ):
+                client.require_capability("mesh_batch", 6)
+                client.require_capability("mesh_validation", 3)
             if step_type == "uv_edit":
                 await require_capability(client, "mesh_uv")
                 requires_batch_v2 = True
@@ -2625,6 +2647,23 @@ def create_server(
                 requires_batch_v2 = True
             elif step_type == "mesh_edit":
                 operation_payload = payload.get("operation", {})
+                if operation_payload.get("maximum_displacement") is not None:
+                    client.require_capability("mesh_batch", 6)
+                    client.require_capability("mesh_deformation", 2)
+                patch = operation_payload.get("type") in {"create_edge", "create_face"} or bool(
+                    operation_payload.get("boundary")
+                    or operation_payload.get("paths")
+                    or operation_payload.get("uv_creation")
+                    or operation_payload.get("allow_hidden")
+                )
+                if patch:
+                    client.require_capability("mesh_batch", 6)
+                    client.require_capability("mesh_topology", 6)
+                    client.require_capability("mesh_component_map", 5)
+                elif operation_payload.get("type") in {"grid_fill", "bridge"}:
+                    for key, default in (("allow_hidden", False), ("uv_creation", {}), ("cuts", 0)):
+                        if operation_payload.get(key) == default:
+                            operation_payload.pop(key, None)
                 if operation_payload.get("type") == "weld_vertices":
                     await require_capability(client, "mesh_join")
                     client.require_capability("mesh_component_map", 4)
