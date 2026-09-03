@@ -87,6 +87,7 @@ from blender_research_mcp.mesh_component_catalog import (
     ComponentCatalogMetrics,
     ComponentIdentities,
 )
+from blender_research_mcp.mesh_errors import mesh_errors
 from blender_research_mcp.mesh_join import (
     MeshJoinAttributes,
     MeshJoinDependencies,
@@ -656,6 +657,32 @@ def create_server(
             "mesh.selection.inspect",
             {"selection_id": selection_id, "offset": offset, "limit": limit},
             read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.boundary.inspect",
+        description="Inspect exact chains and bounded rail candidates without scene writes.",
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    @mesh_errors
+    async def mesh_boundary_inspect(
+        selection_id: SelectionId,
+        expected_mesh_fingerprint: (
+            Annotated[str, Field(min_length=64, max_length=64)] | None
+        ) = None,
+        component: Literal["SUMMARY", "COMPONENTS", "VERTICES", "PAIRINGS"] = "SUMMARY",
+        offset: Annotated[StrictInt, Field(ge=0, le=2_000_000)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=4096)] = 256,
+        maximum_visits: Annotated[StrictInt, Field(ge=1, le=100_000)] = 20_000,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_selection", 2)
+        return await client.call(
+            "mesh.boundary.inspect",
+            {"selection_id": selection_id, "expected_mesh_fingerprint": expected_mesh_fingerprint,
+             "component": component, "offset": offset, "limit": limit,
+             "maximum_visits": maximum_visits},
+            read_only=True, deadline_ms=MAX_DEADLINE_MS,
         )
 
     @server.tool(
@@ -1997,6 +2024,7 @@ def create_server(
         annotations=SCENE_MUTATION,
         structured_output=True,
     )
+    @mesh_errors
     async def mesh_edit(
         transaction_id: TransactionId,
         object_name: ObjectName,
@@ -2080,6 +2108,7 @@ def create_server(
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,
             read_only=False,
+            deadline_ms=MAX_DEADLINE_MS,
         )
 
     @server.tool(

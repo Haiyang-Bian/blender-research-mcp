@@ -71,6 +71,12 @@ SelectionSet 和距离规则时才焊接接缝；自动门禁与确定性 Blende
 0.17.2 修复了拓扑操作失败后重建 Vertex Group 导致的事务回退死锁、大网格边表
 重排导致的 ComponentMap 错位，以及多层 UV/Pin Join 的原生崩溃与空材质槽处理。
 失败恢复保留未改变的 Group identity；边映射按写回后的实际连接关系验证。
+0.17.3 新增只读 `mesh.boundary.inspect`，以当前指纹分页报告边界分类、
+定向路径、两组端点配对、侧轨歧义和搜索预算。旧 Grid Fill 的失败在写前
+返回结构化诊断；单闭环要求明确四角，两个闭环使用 bridge。合法的周围
+分叉不会仅因度数大于 2 被拒绝。边界补面后续阶段与现场证据见
+[分期路线图](docs/roadmap/0.17.x-explicit-boundary-patching.md)和
+[验收记录](docs/validation/2026-09-03-explicit-boundary-patching.md)。
 补丁与既有 Join/Weld/batch、UV/权重实机回归见
 [0.17.2 验收记录](docs/validation/2026-09-03-mesh-recovery-and-join-hotfix.md)。
 既有验收记录见

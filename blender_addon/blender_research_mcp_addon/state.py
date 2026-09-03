@@ -68,6 +68,7 @@ from .material_authoring_ops import (
 )
 from .mesh_attribute_transfer_ops import transfer_attribute
 from .mesh_batch_ops import MeshBatchExecutionError, execute_mesh_batch
+from .mesh_boundary_ops import inspect_boundary
 from .mesh_component_catalog_ops import (
     inspect_component_catalog,
     prepare_component_catalog,
@@ -197,6 +198,7 @@ CAPABILITIES = [
     "mesh.selection.query",
     "mesh.selection.derive",
     "mesh.selection.inspect",
+    "mesh.boundary.inspect",
     "mesh.selection.release",
     "mesh.component_catalog.prepare",
     "mesh.component_catalog.inspect",
@@ -286,7 +288,7 @@ CAPABILITY_VERSIONS = {
     "modifier_state": 1,
     "modifier_authoring": 1,
     "mesh_topology": 5,
-    "mesh_selection": 1,
+    "mesh_selection": 2,
     "mesh_surface_query": 1,
     "mesh_deformation": 1,
     "mesh_validation": 2,
@@ -585,6 +587,7 @@ class AddonState:
                 details=exc.details,
             )
         except MeshOperationError as exc:
+            exc.details.setdefault("scene_generation", self.scene_generation)
             self.last_error = f"{exc.code}: {exc}"
             return self._error(
                 request_id,
@@ -1056,6 +1059,11 @@ class AddonState:
                     int(params.get("offset", 0)),
                     int(params.get("limit", 256)),
                 )
+            result["scene_generation"] = self.scene_generation
+            return result
+        if command == "mesh.boundary.inspect":
+            with self.suppress_generation():
+                result = inspect_boundary(self.mesh_resources, params)
             result["scene_generation"] = self.scene_generation
             return result
         if command == "mesh.selection.query":

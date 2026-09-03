@@ -1,18 +1,17 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.17.2 Mesh failure recovery, exact edge lineage and UV/Pin Join
-  stabilization; 0.17.0 Mesh composition remains implemented
-- Current milestone: 0.17.2 transaction-v13 recovery patch
-- Next milestone: 0.18.0 bounded Shape-Key structure authoring
+- Status: 0.17.3 bounded boundary diagnostics and Grid Fill contract correction
+- Current milestone: 0.17.3 boundary diagnostics on transaction-v13 snapshots
+- Next milestone: 0.17.4 explicit patch authoring, then 0.17.5 integrated acceptance
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.17.2
+- Package and add-on version: 0.17.3
 - Protocol version: 1
 - Development transport port: 9877
 
-Pending requirement review: [explicit boundary and surface patching](requirements/explicit-boundary-surface-patching.md)
-records the 0.17.2 Grid Fill contract/diagnostic gaps and proposed exact-connection,
-four-sided patch, and open-chain bridge controls. It does not change the current
-public tool surface or the approved 0.18–0.20 sequence.
+Approved [explicit boundary roadmap](roadmap/0.17.x-explicit-boundary-patching.md)
+implements the requirements in 0.17.3–0.17.5. The 0.18–0.20 capability sequence remains
+unchanged. 0.17.3 adds stateless boundary inspection and bounded Grid Fill diagnosis;
+explicit authoring and real-character acceptance remain separate later gates.
 
 ## 1. Why this project exists
 

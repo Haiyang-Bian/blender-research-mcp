@@ -175,7 +175,7 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
         '"object_parenting": 1',
         '"library_inspection": 1',
         '"library_append": 1',
-        '"mesh_selection": 1',
+            '"mesh_selection": 2',
         '"mesh_surface_query": 1',
         '"mesh_deformation": 1',
         '"mesh_validation": 2',

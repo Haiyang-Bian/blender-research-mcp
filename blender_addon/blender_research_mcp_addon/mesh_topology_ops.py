@@ -11,6 +11,7 @@ import bmesh
 import bpy
 
 from .lookdev_ops import session_identity
+from .mesh_boundary_ops import auto_boundary, graph_from_bmesh, preflight_grid
 from .mesh_component_map import remap_selection
 from .mesh_component_map_model import (
     DOMAINS,
@@ -469,29 +470,30 @@ def _operate(
             raise MeshOperationError("MESH_BOUNDARY_INVALID", "Fill created no faces")
         _set_face_properties(faces, operation, material_count)
         return {"boundary_loops": len(loops), "created_faces": len(faces)}
-    components = _boundary_components(selected)
-    degrees = [_component_degrees(component) for component in components]
-    valid = (len(components) == 1 and all(degree == 2 for degree in degrees[0])) or (
-        len(components) == 2
-        and all(sum(degree == 1 for degree in item) in {0, 2} for item in degrees)
-        and all(all(degree in {1, 2} for degree in item) for item in degrees)
-    )
-    if not valid:
-        raise MeshOperationError(
-            "MESH_BOUNDARY_INVALID",
-            "Grid fill requires one closed boundary or two compatible boundary chains",
+    boundary = auto_boundary(graph_from_bmesh(bm), selection.indices)
+    permitted = {index for side in boundary["edges"] for index in side}
+    # Restrict the native rail search on this detached working BMesh only.
+    # Restore flags before writeback, including on a native exception.
+    flags = [(edge, bool(edge.hide)) for edge in bm.edges]
+    try:
+        for edge, _hidden in flags:
+            if len(edge.link_faces) <= 1 and edge.index not in permitted:
+                edge.hide = True
+        result = bmesh.ops.grid_fill(
+            bm, edges=selected, mat_nr=_material_index(operation, material_count) or 0,
+            use_smooth=bool(operation.get("smooth", False)),
+            use_interp_simple=bool(operation.get("use_interp_simple", False)),
         )
-    result = bmesh.ops.grid_fill(
-        bm,
-        edges=selected,
-        mat_nr=_material_index(operation, material_count) or 0,
-        use_smooth=bool(operation.get("smooth", False)),
-        use_interp_simple=bool(operation.get("use_interp_simple", False)),
-    )
+    finally:
+        for edge, hidden in flags:
+            edge.hide = hidden
     faces = _new_faces(result)
     if not faces:
-        raise MeshOperationError("MESH_BOUNDARY_INVALID", "Grid fill created no faces")
-    return {"boundary_components": len(components), "created_faces": len(faces)}
+        raise MeshOperationError(
+            "MESH_BOUNDARY_INVALID", "Native Grid Fill rejected a validated boundary",
+            details={"reason": "NATIVE_GRID_REJECTED", "phase": "generation", "boundary": boundary},
+        )
+    return {"boundary_components": 2, "created_faces": len(faces), "boundary": boundary}
 
 
 @dataclass
@@ -654,6 +656,8 @@ def edit_mesh_topology(
     operation = _validate_operation(params.get("operation"), len(initial_mesh.materials))
     operation_type = str(operation["type"])
     selection = _selection(book, operation, obj, initial_mesh)
+    if operation_type == "grid_fill":
+        preflight_grid(initial_mesh, selection)
     before_map_evidence = _map_evidence(obj, initial_mesh)
     before_revision = mesh_revision_id(initial_mesh)
     before_attributes = _attribute_signature(initial_mesh)
@@ -708,6 +712,7 @@ def edit_mesh_topology(
     component_map = None
     created_selection_ids: list[str] = []
     rebound_selection_id = None
+    writeback_started = False
     try:
         bm.from_mesh(mesh)
         component_baseline = _bmesh_baseline(bm)
@@ -728,6 +733,7 @@ def edit_mesh_topology(
             )
         relations, created, deleted = _finish_lineage(bm, lineage, operation_type)
         lineage = None
+        writeback_started = True
         write_bmesh_exact(bm, mesh)
         migration_result = finish_topology_attributes(obj, mesh, topology_attribute_evidence)
         if unsupported_attributes(mesh):
@@ -847,6 +853,7 @@ def edit_mesh_topology(
             _remove_new_guard(transaction, guard)
         if new_weight_guard and weight_guard is not None:
             transaction.remove_weight_snapshot_guard(weight_guard)
+        exc.details.update(writeback=writeback_started, recovery="CALL_RESTORED")
         raise
     except Exception as exc:
         if component_map is not None:

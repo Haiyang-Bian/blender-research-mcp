@@ -8,8 +8,10 @@ in this order when starting a new implementation task:
    - [Post-0.16 model-editing completeness direction](requirements/model-editing-completeness.md)
      — accepted 0.17–0.20 capability sequence.
    - [Explicit boundary and surface-patching requirements](requirements/explicit-boundary-surface-patching.md)
-     — proposed Grid Fill diagnostics, exact connections, rails, and reviewed patch workflows;
-       not an implemented capability or an approved version change.
+     — approved 0.17.3–0.17.5 boundary diagnostics and explicit patching sequence.
+   - [Explicit boundary roadmap](roadmap/0.17.x-explicit-boundary-patching.md)
+     and [acceptance](validation/2026-09-03-explicit-boundary-patching.md)
+     — staged implementation and evidence; full real-character acceptance is separate.
    - [0.17.0 cross-object Mesh composition roadmap](roadmap/0.17.0-cross-object-mesh-composition.md)
      — implemented exact join, lineage branches, seam welding, and bounded live gate.
    - [0.17.0 cross-object Mesh composition validation](validation/2026-09-01-cross-object-mesh-composition.md)

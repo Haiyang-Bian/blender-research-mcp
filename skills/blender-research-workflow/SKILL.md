@@ -7,6 +7,14 @@ description: Launch Blender, manage .blend projects, inspect and diagnose scenes
 
 Use the semantic `blender_research` MCP as the source of truth for live Blender state.
 
+With `mesh_selection >= 2`, use `mesh.boundary.inspect` before Grid Fill. Supply an
+EDGE SelectionSet and bind subsequent pages to the returned Mesh fingerprint.
+Read component classification, both endpoint pairings and coverage: UNKNOWN means
+the budget could not prove an answer; AMBIGUOUS requires an explicit choice.
+A single closed loop requires four explicit corners, and two closed loops use
+bridge. Do not retry an unchanged invalid boundary or treat sorted indices as a
+directed path. Inspection creates no scene or selection resources.
+
 ## Follow application and project intent
 
 Treat application launch and project opening as separate decisions:
