@@ -161,8 +161,9 @@ def _branch_mesh(
             )
         relations, created, deleted = _finish_lineage(bm, lineage, "separate")
         lineage = None
-        bm.to_mesh(mesh)
-        mesh.update(calc_edges=True, calc_edges_loose=True)
+        from .mesh_ops import write_bmesh_exact
+
+        write_bmesh_exact(bm, mesh)
         return relations, created, deleted
     finally:
         if lineage is not None:
@@ -414,6 +415,9 @@ def separate_mesh(
             for collection in source_collections:
                 if duplicate.name not in collection.objects:
                     collection.objects.link(duplicate)
+                    refresh_structure_guard_if_present(
+                        transaction, "collection", collection
+                    )
 
         phase = "source_branch"
         source_relations, source_created, source_deleted = _branch_mesh(

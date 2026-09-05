@@ -329,6 +329,7 @@ class ApplicationManager:
                 status = await self.client.call("project.status", read_only=True)
             except BridgeError as exc:
                 if exc.error.code not in {
+                    "APPLICATION_NOT_RUNNING",
                     "SESSION_NOT_FOUND",
                     "SESSION_STALE",
                     "CONNECT_FAILED",

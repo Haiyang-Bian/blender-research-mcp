@@ -1,8 +1,20 @@
 # Blender Research MCP：0.16 之后的模型编辑完整性方向
 
-- Status: accepted direction after the validated 0.16.0 milestone
-- Current implementation baseline: 0.16.0 / protocol 1 / transactions 12
-- Next implementation milestone: 0.17.0 cross-object Mesh composition
+- Status: active direction after the validated 0.16.0 milestone
+- Current implementation baseline: 0.17.5 / protocol 1 / transactions 13;
+  recorded deterministic/recovery/patch gates passed; subsequent quality reports open;
+  the separate cross-object character cage gate remains pending
+- Next model-structure milestone: 0.18.0 Shape Key structure and migration
+- Next planned delivery: correctness hardening and staged character rendering, as linked below
+
+[明确边界与分块补面](explicit-boundary-surface-patching.md)已在 0.17.3–0.17.5 实现，
+原有合成与真实副本工程验收通过；后续发现的相交判定和位移数值反例仍需专项修复。
+
+2026-09-05 新增[渲染与已有动画开发计划](../roadmap/2026-09-05-rendering-and-animation-review.md)：
+建议在模型结构主线之前插入正确性修复、静态 NPR/相机对照、生产渲染作业与已有动画采样。
+这些工作可以按[独立任务/工作树方案](../roadmap/2026-09-05-parallel-development.md)并行开发、
+串行集成；不要求为使用已有角色动画先实现完整 Shape Key、骨架或 Modifier 创作。
+下述 0.18 → 0.19 → 0.20 的相对顺序保持，新版本槽位仍是计划，未实现或发布。
 
 ## 1. 目的
 
@@ -16,16 +28,18 @@ RNA、Operator 或脚本。目标是让 Agent 能通过封闭、可检查、可�
 
 ## 2. 当前能力基线
 
-| 领域 | 0.16 状态 | 主要边界 |
+| 领域 | 当前状态（历史验收需结合对应记录） | 主要边界 |
 |---|---|---|
 | 对象与场景 | 已验证 | 创建、复制、删除、TRS、可见性、Collection、父级 |
 | 基础 Mesh | 已验证 | 精确组件检查、变形及有界拓扑操作 |
 | 语义资源 | 已验证 | SelectionSet、SurfaceRef、ComponentMap、ComponentCatalog |
 | 属性 | 已验证 | 材质槽、UV、Seam、Pin、Vertex Group 与权重 |
-| 模块化 | 已验证 | materialize、extract、separate、Library append、batch v4 |
+| 模块化 | 已验证 | materialize、extract、separate、Library append、batch v6；各版覆盖以验收记录为准 |
 | 绑定 | 已验证 | 检查并绑定到现有 Armature |
 | 证据与恢复 | 已验证 | 定量验证、视口证据、事务、断连恢复、原生保存接管 |
-| 跨对象几何合成 | 未实现 | 对象可组织但不能合为一个连续 Mesh |
+| 跨对象几何合成 | 0.17 已实现 | 精确 BASE join 与显式 SelectionSet weld；确定性实机门通过，同会话压力与角色笼拼接待关闭 |
+| 明确边界补面 | 0.17.3–0.17.5 已实现 | 原验收通过；新相交/位移反例进入 0.17.6 修复计划 |
+| 角色渲染工作流 | 新增计划 | NPR 模板隔离、相机对照、长期作业与已有动画有限采样；不等于动画创作 |
 | Shape Key 结构 | 未实现 | 只能设置既有值或实体化当前结果 |
 | 骨架创作 | 未实现 | 不能创建/编辑骨骼、姿态或动画 |
 | Modifier 最终化 | 未实现 | 可编辑四类栈，但不能 Apply |
@@ -34,6 +48,9 @@ RNA、Operator 或脚本。目标是让 Agent 能通过封闭、可检查、可�
 ## 3. 版本顺序
 
 ### 0.17：跨对象 Mesh 合成与接缝焊接
+
+实现状态：代码、schema、事务、自动门禁及确定性 Blender 4.2.23
+commit/save/reload 门完成；同会话聚合压力和真实角色笼拼接仍待关闭。
 
 - 将多个精确 Mesh 对象合成为一个独立输出；
 - 统一材质槽、UV Layer 与 Vertex Group schema；

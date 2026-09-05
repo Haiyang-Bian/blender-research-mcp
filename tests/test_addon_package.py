@@ -129,6 +129,8 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
         "mesh.surface.prepare",
         "mesh.surface.query",
         "mesh.validate",
+        "mesh.join.preflight",
+        "mesh.join",
         "mesh.edit",
         "mesh.uv.edit",
         "mesh.weights.edit",
@@ -152,16 +154,17 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
     ):
         assert command in state
     for capability in (
-        '"transactions": 12',
+        '"transactions": 13',
         '"scene_inspection": 1',
         '"object_authoring": 1',
         '"object_settings": 1',
         '"modifier_authoring": 1',
-        '"mesh_topology": 4',
-        '"mesh_component_map": 3',
+        '"mesh_topology": 6',
+        '"mesh_component_map": 5',
         '"mesh_component_catalog": 1',
         '"mesh_separation": 2',
-        '"mesh_batch": 4',
+        '"mesh_batch": 6',
+        '"mesh_join": 1',
         '"mesh_uv": 1',
         '"mesh_weights": 1',
         '"mesh_attribute_transfer": 1',
@@ -172,10 +175,10 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
         '"object_parenting": 1',
         '"library_inspection": 1',
         '"library_append": 1',
-        '"mesh_selection": 1',
+        '"mesh_selection": 2',
         '"mesh_surface_query": 1',
-        '"mesh_deformation": 1',
-        '"mesh_validation": 2',
+        '"mesh_deformation": 2',
+        '"mesh_validation": 3',
         '"material_authoring": 1',
         '"image_assets": 1',
         '"world_authoring": 1',
@@ -212,6 +215,44 @@ def test_addon_registers_structural_authoring_without_expanding_compact_panel() 
     assert 'session_identity("node", link.from_node) != background_identity' in world_render
     assert "bpy.data.images.load(str(output_path), check_existing=False)" in world_render
     assert "os.replace(temporary_path, output_path)" in world_render
+
+
+def test_transactional_object_placement_refreshes_owned_collection_guards() -> None:
+    sources = {
+        name: (SOURCE / name).read_text(encoding="utf-8")
+        for name in (
+            "authoring_ops.py",
+            "library_ops.py",
+            "mesh_join_ops.py",
+            "mesh_materialization_ops.py",
+            "mesh_separation_ops.py",
+        )
+    }
+    for name, source in sources.items():
+        assert "refresh_structure_guard_if_present" in source, name
+    assert sources["authoring_ops.py"].count(
+        'refresh_structure_guard_if_present(transaction, "collection", collection)'
+    ) >= 3
+    assert (
+        'refresh_structure_guard_if_present(transaction, "collection", collection)'
+        in sources["mesh_materialization_ops.py"]
+    )
+
+
+def test_uv_inspection_defers_global_metrics_for_paged_components() -> None:
+    addon = (SOURCE / "mesh_uv_ops.py").read_text(encoding="utf-8")
+    server = (
+        Path(__file__).parents[1] / "src" / "blender_research_mcp" / "server.py"
+    ).read_text(encoding="utf-8")
+    uv_tool = server.split("async def mesh_uv_inspect", 1)[1].split(
+        "async def mesh_weights_inspect", 1
+    )[0]
+
+    assert 'compute_islands = component in {"SUMMARY", "ISLANDS"}' in addon
+    assert 'compute_degenerate_faces = component == "SUMMARY"' in addon
+    assert "MESH_UV_GLOBAL_METRICS_DEFERRED" in addon
+    assert "fingerprint=mesh_state_fingerprint" in addon
+    assert "deadline_ms=MAX_DEADLINE_MS" in uv_tool
 
 
 def test_addon_supports_session_only_managed_enable_without_saved_preferences() -> None:
@@ -252,14 +293,16 @@ def test_mesh_authoring_uses_bounded_data_api_snapshots_without_operators() -> N
     assert "_copy_mesh_snapshot(mesh, snapshot)" in restore
     assert "bmesh.new()" not in restore
     assert "def _restore_attributes(" in source
-    assert 'foreach_set("vertex_index"' in source
+    assert "write_bmesh_exact(bm, mesh)" in source
+    assert "bm.from_mesh(snapshot)" in source
+    assert "mesh.clear_geometry()" not in source
     assert "mesh.copy()" in source
-    assert "mesh.clear_geometry()" in source
     assert "bmesh.ops" in source
     assert "bpy.ops" not in source
 
     resources = (SOURCE / "mesh_resource_model.py").read_text(encoding="utf-8")
-    assert "MAX_SELECTIONS = 64" in resources
+    assert "MAX_SELECTIONS = 192" in resources
+    assert "MAX_COMPONENT_MAPS = 128" in resources
     assert "MAX_SELECTION_COMPONENTS = 2_000_000" in resources
     assert "MAX_SURFACES = 8" in resources
     assert "MAX_SURFACE_TRIANGLES = 2_000_000" in resources

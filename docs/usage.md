@@ -35,9 +35,13 @@
    Compact connected-component evidence and cross-object assembly require
    `mesh_component_catalog: 1`, `collection_authoring: 1`,
    `object_parenting: 1`, `mesh_batch: 3`, and `transactions: 11`.
+   Controlled local Library ingress requires `library_inspection: 1`,
+   `library_append: 1`, `mesh_batch: 4`, and `transactions: 12`. Exact cross-object
+   composition and seam welding require `mesh_join: 1`, `mesh_component_map: 4`,
+   `mesh_topology: 5`, `mesh_batch: 5`, and `transactions: 13`.
 
 Manual installation remains available through
-`artifacts/blender-research-mcp-addon-0.16.0.zip`. Managed launch instead materializes
+`artifacts/blender-research-mcp-addon-0.17.2.zip`. Managed launch instead materializes
 the version-matched add-on and fixed bootstrap for the current session without changing
 Blender preferences or the startup file.
 
@@ -421,6 +425,29 @@ Catalogs are session resources and are cleared on file load or add-on restart. T
 do not replace ComponentMaps: use Catalogs to choose connected shells in one revision,
 then use branch Maps and SelectionSet remapping after topology or extraction changes.
 
+Collections created earlier in the same transaction may receive later Agent-created,
+materialized, separated, joined, duplicated, or appended objects. In 0.17.1 these are
+recognized as transaction-owned changes and rollback restores the whole chain. A
+Collection changed by the user after the latest Agent write remains a hard structure
+conflict and is never force-restored.
+
+In 0.17.2, an invalid fill/grid-fill boundary does not recreate unchanged Vertex
+Groups or invalidate a previous successful write's guard. A rejected standalone
+operation restores that call's state; the transaction can then continue or roll back.
+Batch runtime errors still roll back the entire transaction. Real external Group,
+Mesh or Collection changes remain conflicts, not permission to refresh guards.
+
+Use new ComponentMaps after upgrading: Maps already returned by an older add-on
+cannot be repaired retrospectively. Edge-derived subdivision vertices are reported
+as CREATED, while edge descendants preserve exact connectivity. Join preserves
+unassigned faces with an empty material slot when other sources have materials.
+
+These fixes run inside the Blender add-on. Restarting only the MCP client does not
+update an already-running add-on. Load 0.17.2 and verify `connection.ping.addon_version`
+before retrying. Do not force-refresh evidence or automatically save/reload an old
+conflicted user scene; the user's choice of visible state versus saved state remains
+authoritative. The regression harness operates exclusively on temporary projects.
+
 ## Inspect and append a controlled local Library
 
 Use `library.inspect` with an absolute `.blend` path before importing anything. Retain
@@ -447,6 +474,36 @@ Prefer `mesh.materialize` for a working copy of an object already in the current
 Use a Library only for an external reusable template. Fit visible high-confidence anchor
 regions to the evaluated target and preserve the template/cage prior where source
 geometry is hidden; do not claim that an occluded original surface was reconstructed.
+
+## Join exact Mesh objects and weld only reviewed boundaries
+
+Use `mesh.join.preflight` before joining 2–32 BASE Mesh objects. Retain every source
+object/Mesh identity, user set, revision, Mesh/UV/weight/Shape-Key/Modifier fingerprint,
+the exact output Collection, coordinate frame, and explicit attribute/dependency policy.
+`WORLD` writes world coordinates under an identity output transform;
+`SOURCE_OBJECT` writes all sources into one inspected source object's local frame. If
+evaluated Shape Keys or Modifiers are intended, first use `mesh.materialize`; join never
+silently evaluates them.
+
+Begin or continue a transaction and repeat the exact preflight evidence with `mesh.join`.
+The result is a new independent object plus one JOIN_BRANCH ComponentMap per source,
+source-domain SelectionSets, and one boundary-vertex SelectionSet per source. `KEEP`
+preserves sources; `DELETE_ON_COMMIT` only hides/unlinks them until commit and restores
+them on rollback. Join itself deliberately leaves coincident shells disconnected.
+
+After reviewing mapped boundaries, call `mesh.edit` with `type="weld_vertices"` on the
+joined revision. Prefer `CROSS_SELECTIONS` for seams so accepted pairs cross source
+groups; use `ALL_SELECTED` only when same-set welding is intended. Supply a positive
+maximum distance, deterministic LOWEST_INDEX/CENTER destination, and weight merge
+policy. A no-match call is a true no-op. A changed response reports MERGED lineage,
+vertex reduction, boundary deltas, rebound selections, and attribute effects.
+
+Use batch v5 when append/alignment/fitting/join/weld/weight/bind/validation is one atomic
+workflow. Each source declares its branch Map and boundary aliases; subsequent weld or
+topology maps are composed separately along every source lineage. Review
+`assembly_manifest.mesh_joins`, source disposition, attribute schema, boundary evidence,
+and branch maps before commit. Runtime failure rolls back the complete active
+transaction; native save accepts the visible complete batch in Blender main-thread order.
 
 ## Select, fit, and validate a Mesh region
 
@@ -617,6 +674,10 @@ Codex after the first installation so automatic skill discovery can see it.
   fall back to arbitrary Python.
 - `STRUCTURE_CONFLICT`: preserve user state, stop the batch, and re-inspect identities,
   users, slots, nodes, links, World, Camera, and transaction status.
+- `REQUEST_TIMEOUT`: the request exceeded its declared deadline and was not retried.
+  Re-inspect connection and transaction status before deciding whether to repeat it;
+  do not reinterpret this as `CONNECTION_LOST`. For paged UV evidence, request the
+  smallest component page and use `SUMMARY` only when global island metrics are needed.
 - `SHARED_OBJECT_DATA_CONFIRMATION_REQUIRED`: inspect the Light/Camera data users and
   proceed only when the user's requested scope includes all of them.
 - `OBJECT_DATA_IDENTITY_MISMATCH` or `OBJECT_DATA_USERS_MISMATCH`: discard the stale

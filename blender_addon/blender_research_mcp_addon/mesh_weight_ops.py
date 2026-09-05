@@ -318,11 +318,15 @@ def _restore_schemas(
                 f"Weight user identity changed: {name}",
                 kind="conflict",
             )
-        while obj.vertex_groups:
-            obj.vertex_groups.remove(obj.vertex_groups[-1])
-        for group_name, locked in schemas[name]:
-            group = obj.vertex_groups.new(name=group_name)
-            group.lock_weight = locked
+        # A rejected topology operation usually never touched this schema.
+        # Recreating identical Groups would change their session identities and
+        # invalidate a guard owned by an earlier successful call.
+        if _group_schema(obj, identities=False) != schemas[name]:
+            while obj.vertex_groups:
+                obj.vertex_groups.remove(obj.vertex_groups[-1])
+            for group_name, locked in schemas[name]:
+                group = obj.vertex_groups.new(name=group_name)
+                group.lock_weight = locked
         objects.append(obj)
     return tuple(objects)
 
@@ -464,7 +468,12 @@ def _restore_call_state(
 ) -> None:
     try:
         objects = _restore_schemas(object_identities, schemas)
-        _write_weights(objects[0], weights)
+        if _capture_weights(mesh) != weights:
+            _write_weights(objects[0], weights)
+        if any(_group_schema(obj, identities=False) != schemas[obj.name] for obj in objects):
+            raise RuntimeError("Restored Vertex Group schema differs from the call snapshot")
+        if _capture_weights(mesh) != weights:
+            raise RuntimeError("Restored weights differ from the call snapshot")
     except Exception as restore_error:
         raise MeshWeightOperationError(
             "MESH_WEIGHT_RESTORE_FAILED",

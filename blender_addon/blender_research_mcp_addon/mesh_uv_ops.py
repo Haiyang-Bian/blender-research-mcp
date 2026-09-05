@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import math
 import struct
+from array import array
 from collections import deque
 from typing import Any
 
@@ -256,7 +257,11 @@ def inspect_uv(
     items: list[dict[str, Any]] = []
     total = 0
     warnings: list[dict[str, Any]] = []
-    islands: list[tuple[int, ...]] = _islands(mesh, layer) if layer is not None else []
+    compute_islands = component in {"SUMMARY", "ISLANDS"}
+    compute_degenerate_faces = component == "SUMMARY"
+    islands: list[tuple[int, ...]] = (
+        _islands(mesh, layer) if layer is not None and compute_islands else []
+    )
     if component == "FACES" and layer is not None:
         total = len(mesh.polygons)
         for face in mesh.polygons[offset : min(total, offset + limit)]:
@@ -278,15 +283,20 @@ def inspect_uv(
             )
     elif component == "LOOPS" and layer is not None:
         total = len(mesh.loops)
-        face_by_loop = [0] * total
-        corner_by_loop = [0] * total
+        page_stop = min(total, offset + limit)
+        face_by_loop: dict[int, int] = {}
+        corner_by_loop: dict[int, int] = {}
         for face in mesh.polygons:
-            for corner, loop_index in enumerate(
-                range(int(face.loop_start), int(face.loop_start + face.loop_total))
-            ):
+            face_start = int(face.loop_start)
+            face_stop = face_start + int(face.loop_total)
+            if face_stop <= offset:
+                continue
+            if face_start >= page_stop:
+                break
+            for loop_index in range(max(face_start, offset), min(face_stop, page_stop)):
                 face_by_loop[loop_index] = int(face.index)
-                corner_by_loop[loop_index] = corner
-        for loop_index in range(offset, min(total, offset + limit)):
+                corner_by_loop[loop_index] = loop_index - face_start
+        for loop_index in range(offset, page_stop):
             uv = layer.data[loop_index]
             items.append(
                 {
@@ -334,12 +344,17 @@ def inspect_uv(
                 }
             )
     elif component == "SEAMS":
-        seams = [int(edge.index) for edge in mesh.edges if edge.use_seam]
-        total = len(seams)
-        items = [
-            {"edge_index": index, "vertices": list(mesh.edges[index].vertices)}
-            for index in seams[offset : min(total, offset + limit)]
-        ]
+        for edge in mesh.edges:
+            if not edge.use_seam:
+                continue
+            if offset <= total < offset + limit:
+                items.append(
+                    {
+                        "edge_index": int(edge.index),
+                        "vertices": list(edge.vertices),
+                    }
+                )
+            total += 1
     if offset > total:
         raise MeshUVOperationError(
             "MESH_PAGINATION_INVALID", f"offset {offset} exceeds UV item count {total}"
@@ -349,6 +364,39 @@ def inspect_uv(
         warnings.append({"code": "MESH_UV_ITEMS_TRUNCATED", "next_offset": stop})
     if layer is None and component != "SUMMARY":
         warnings.append({"code": "MESH_UV_LAYER_MISSING"})
+    deferred_metrics = []
+    if layer is not None and not compute_islands:
+        deferred_metrics.append("islands")
+    if layer is not None and not compute_degenerate_faces:
+        deferred_metrics.append("degenerate_faces")
+    if deferred_metrics:
+        warnings.append(
+            {
+                "code": "MESH_UV_GLOBAL_METRICS_DEFERRED",
+                "metrics": deferred_metrics,
+                "hint": "Request component=SUMMARY for complete aggregate metrics",
+            }
+        )
+    mesh_state_fingerprint = mesh_fingerprint(mesh)
+    active_layer_index = (
+        list(mesh.uv_layers).index(layer) if layer is not None else None
+    )
+    degenerate_faces = (
+        sum(
+            _uv_area(
+                [
+                    tuple(float(value) for value in layer.data[index].uv)
+                    for index in range(
+                        int(face.loop_start), int(face.loop_start + face.loop_total)
+                    )
+                ]
+            )
+            <= 1e-12
+            for face in mesh.polygons
+        )
+        if layer is not None and compute_degenerate_faces
+        else None
+    )
     return {
         "object": {"name": obj.name, "session_identity": session_identity("object", obj)},
         "mesh": {
@@ -356,39 +404,24 @@ def inspect_uv(
             "session_identity": session_identity("mesh", mesh),
             "users": int(mesh.users),
         },
-        "mesh_fingerprint": mesh_fingerprint(mesh),
-        "mesh_revision_id": mesh_revision_id(mesh),
+        "mesh_fingerprint": mesh_state_fingerprint,
+        "mesh_revision_id": mesh_revision_id(
+            mesh, fingerprint=mesh_state_fingerprint
+        ),
         "uv_fingerprint": uv_fingerprint(mesh),
-        "layer": _layer_summary(mesh, layer, list(mesh.uv_layers).index(layer))
-        if layer is not None
+        "layer": summaries[active_layer_index]
+        if active_layer_index is not None
         else None,
         "layers": summaries,
         "counts": {
             "layers": len(mesh.uv_layers),
             "seams": sum(bool(edge.use_seam) for edge in mesh.edges),
-            "pinned": sum(
-                bool(getattr(item, "pin_uv", False))
-                for current in mesh.uv_layers
-                for item in current.data
-            ),
+            "pinned": sum(int(summary["pinned_count"]) for summary in summaries),
             "unmapped": 0
             if layer is not None and len(layer.data) == len(mesh.loops)
             else len(mesh.loops),
-            "degenerate_faces": sum(
-                _uv_area(
-                    [
-                        tuple(float(value) for value in layer.data[index].uv)
-                        for index in range(
-                            int(face.loop_start), int(face.loop_start + face.loop_total)
-                        )
-                    ]
-                )
-                <= 1e-12
-                for face in mesh.polygons
-            )
-            if layer is not None
-            else 0,
-            "islands": len(islands),
+            "degenerate_faces": degenerate_faces,
+            "islands": len(islands) if layer is not None and compute_islands else None,
         },
         "component": component,
         "items": items,
@@ -496,17 +529,20 @@ def _run_uv_operator(
                 ),
             )
         }
-        for loop_index, item in enumerate(temporary_layer.data):
-            selected = loop_index in selected_loops
-            if hasattr(item, "select"):
-                item.select = selected
-            if hasattr(item, "select_edge"):
-                item.select_edge = selected
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_all(action="DESELECT")
         bpy.ops.object.mode_set(mode="OBJECT")
         for face in temporary_mesh.polygons:
             face.select = int(face.index) in faces
+        # Creating a legacy UV selection attribute can reallocate CustomData and
+        # invalidate the RNA iterator. Reacquire the layer for each typed bulk write.
+        flags = array("b", (int(i in selected_loops) for i in range(len(temporary_mesh.loops))))
+        temporary_mesh.uv_layers[layer_name].vertex_selection.foreach_set("value", flags)
+        temporary_mesh.uv_layers[layer_name].edge_selection.foreach_set("value", flags)
+        if operation.get("pin_policy") == "IGNORE":
+            temporary_mesh.uv_layers[layer_name].pin.foreach_set(
+                "value", array("b", [0]) * len(temporary_mesh.loops)
+            )
         bpy.ops.object.mode_set(mode="EDIT")
         if operation["type"] == "unwrap":
             kwargs = _operator_kwargs(
@@ -553,12 +589,12 @@ def _run_uv_operator(
                 "Isolated UV result does not match the target layer",
                 kind="blender_api",
             )
-        for index in range(len(target.data)):
-            target.data[index].uv = source.data[index].uv
+        for index in selected_loops:
+            target.uv[index].vector = source.uv[index].vector
         if operation["type"] == "pack":
             tile = Vector((float(operation.get("tile_u", 0)), float(operation.get("tile_v", 0))))
-            for index in range(len(target.data)):
-                target.data[index].uv += tile
+            for index in selected_loops:
+                target.uv[index].vector += tile
     finally:
         with contextlib.suppress(Exception):
             if bpy.context.mode != "OBJECT":

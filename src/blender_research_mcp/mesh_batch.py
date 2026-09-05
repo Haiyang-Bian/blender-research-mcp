@@ -32,6 +32,7 @@ from blender_research_mcp.mesh_component_catalog import (
     ComponentCatalogMetrics,
     ComponentIdentities,
 )
+from blender_research_mcp.mesh_join import MeshJoinAttributes, MeshJoinDependencies
 from blender_research_mcp.mesh_modular import (
     ArmatureTarget,
     ExtractOutputPolicy,
@@ -152,9 +153,7 @@ class BatchLibraryInput(BaseModel):
     type: Literal["library"]
     alias: BatchAlias
     path: str = Field(min_length=1, max_length=32767)
-    expected_file_sha256: str = Field(
-        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
-    )
+    expected_file_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     expected_size_bytes: Annotated[StrictInt, Field(ge=12)]
 
 
@@ -247,6 +246,7 @@ class BatchSelectionDeriveStep(BaseModel):
 class BatchSetPositions(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["set_positions"]
+    maximum_displacement: FiniteNumber | None = Field(default=None, ge=0, le=1_000_000)
     selection_alias: BatchAlias
     mode: Literal["ABSOLUTE", "OFFSET"] = "ABSOLUTE"
     space: CoordinateSpace = "LOCAL"
@@ -256,6 +256,7 @@ class BatchSetPositions(BaseModel):
 class BatchSmooth(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["smooth", "relax"]
+    maximum_displacement: FiniteNumber | None = Field(default=None, ge=0, le=1_000_000)
     selection_alias: BatchAlias
     iterations: Annotated[StrictInt, Field(ge=1, le=64)] = 1
     factor: FiniteNumber = Field(default=0.5, ge=0, le=1)
@@ -265,6 +266,7 @@ class BatchSmooth(BaseModel):
 class BatchProject(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["project"]
+    maximum_displacement: FiniteNumber | None = Field(default=None, ge=0, le=1_000_000)
     selection_alias: BatchAlias
     surface_alias: BatchAlias
     direction: Literal["CLOSEST_POINT", "NORMAL", "AXIS", "VECTOR", "VIEW_RAY"] = "CLOSEST_POINT"
@@ -299,6 +301,7 @@ class BatchProject(BaseModel):
 class BatchShrinkwrap(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["shrinkwrap"]
+    maximum_displacement: FiniteNumber | None = Field(default=None, ge=0, le=1_000_000)
     selection_alias: BatchAlias
     surface_alias: BatchAlias
     iterations: Annotated[StrictInt, Field(ge=1, le=16)] = 1
@@ -312,6 +315,7 @@ class BatchShrinkwrap(BaseModel):
 class BatchInflate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["inflate"]
+    maximum_displacement: FiniteNumber | None = Field(default=None, ge=0, le=1_000_000)
     selection_alias: BatchAlias
     amount: FiniteNumber = Field(ge=-100_000, le=100_000)
 
@@ -337,6 +341,7 @@ class BatchBestFitPlane(BaseModel):
 class BatchFlatten(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["flatten"]
+    maximum_displacement: FiniteNumber | None = Field(default=None, ge=0, le=1_000_000)
     selection_alias: BatchAlias
     plane: Annotated[BatchExplicitPlane | BatchBestFitPlane, Field(discriminator="type")] = Field(
         default_factory=BatchBestFitPlane
@@ -393,14 +398,49 @@ class BatchSplit(BaseModel):
     attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
 
 
+class BatchDirectedPath(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    selection_alias: BatchAlias
+    start_vertex_alias: BatchAlias
+
+
+class BatchFourPaths(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["FOUR_PATHS"]
+    paths: tuple[BatchDirectedPath, BatchDirectedPath, BatchDirectedPath, BatchDirectedPath]
+
+
+class BatchClosedLoop(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["CLOSED_LOOP"]
+    selection_alias: BatchAlias
+    corner_aliases: tuple[BatchAlias, BatchAlias, BatchAlias, BatchAlias]
+
+
 class BatchBridge(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["bridge"]
-    selection_alias: BatchAlias
+    selection_alias: BatchAlias | None = None
+    paths: tuple[BatchDirectedPath, BatchDirectedPath] | None = None
+    cuts: Annotated[StrictInt, Field(ge=0, le=32)] = 0
+    allow_hidden: StrictBool = False
+    uv_creation: dict[str, Literal["BOUNDARY_INTERPOLATE", "INDEPENDENT_ISLAND"]] = Field(
+        default_factory=dict
+    )
     twist_offset: Annotated[StrictInt, Field(ge=-4096, le=4096)] = 0
     material_slot_index: Annotated[StrictInt, Field(ge=0, le=63)] | None = None
     smooth: StrictBool = False
     attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
+
+    @model_validator(mode="after")
+    def exclusive_input(self) -> BatchBridge:
+        if (self.selection_alias is None) == (self.paths is None):
+            raise ValueError("Provide exactly one of selection_alias and paths")
+        if self.paths is None and (self.cuts or self.allow_hidden or self.uv_creation):
+            raise ValueError("Open-bridge options require paths")
+        if self.paths is not None and self.twist_offset:
+            raise ValueError("Path starts define correspondence")
+        return self
 
 
 class BatchFill(BaseModel):
@@ -417,11 +457,62 @@ class BatchFill(BaseModel):
 class BatchGridFill(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["grid_fill"]
-    selection_alias: BatchAlias
+    selection_alias: BatchAlias | None = None
+    boundary: Annotated[BatchFourPaths | BatchClosedLoop, Field(discriminator="type")] | None = None
+    allow_hidden: StrictBool = False
+    uv_creation: dict[str, Literal["BOUNDARY_INTERPOLATE", "INDEPENDENT_ISLAND"]] = Field(
+        default_factory=dict
+    )
     use_interp_simple: StrictBool = False
     material_slot_index: Annotated[StrictInt, Field(ge=0, le=63)] | None = None
     smooth: StrictBool = False
     attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
+
+    @model_validator(mode="after")
+    def exclusive_input(self) -> BatchGridFill:
+        if (self.selection_alias is None) == (self.boundary is None):
+            raise ValueError("Provide exactly one of selection_alias and boundary")
+        return self
+
+
+class BatchCreateEdge(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["create_edge"]
+    vertex_aliases: tuple[BatchAlias, BatchAlias]
+    allow_hidden: StrictBool = False
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
+
+
+class BatchCreateFace(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["create_face"]
+    vertex_aliases: Annotated[tuple[BatchAlias, ...], Field(min_length=3, max_length=4)]
+    allow_hidden: StrictBool = False
+    material_slot_index: Annotated[StrictInt, Field(ge=0, le=63)] | None = None
+    smooth: StrictBool = False
+    uv_creation: dict[str, Literal["BOUNDARY_INTERPOLATE", "INDEPENDENT_ISLAND"]] = Field(
+        default_factory=dict
+    )
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
+
+
+class BatchWeldVertices(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["weld_vertices"]
+    selection_aliases: Annotated[tuple[BatchAlias, ...], Field(min_length=1, max_length=8)]
+    mode: Literal["ALL_SELECTED", "CROSS_SELECTIONS"] = "CROSS_SELECTIONS"
+    maximum_distance: FiniteNumber = Field(gt=0, le=1_000_000)
+    destination: Literal["LOWEST_INDEX", "CENTER"] = "LOWEST_INDEX"
+    weight_merge: Literal["MAX", "AVERAGE", "SUM_NORMALIZE"] = "MAX"
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
+
+    @model_validator(mode="after")
+    def exact_selection_groups(self) -> BatchWeldVertices:
+        if len(set(self.selection_aliases)) != len(self.selection_aliases):
+            raise ValueError("selection_aliases must be unique")
+        if self.mode == "CROSS_SELECTIONS" and len(self.selection_aliases) < 2:
+            raise ValueError("CROSS_SELECTIONS requires at least two selections")
+        return self
 
 
 BatchMeshOperation = Annotated[
@@ -437,7 +528,10 @@ BatchMeshOperation = Annotated[
     | BatchSplit
     | BatchBridge
     | BatchFill
-    | BatchGridFill,
+    | BatchGridFill
+    | BatchWeldVertices
+    | BatchCreateEdge
+    | BatchCreateFace,
     Field(discriminator="type"),
 ]
 
@@ -639,9 +733,7 @@ class BatchLibraryExport(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_object_name: str = Field(min_length=1, max_length=255)
-    expected_entry_identity: str = Field(
-        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
-    )
+    expected_entry_identity: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     output_alias: BatchAlias
     alias_kind: Literal["OBJECT", "MESH_TARGET", "ARMATURE"]
 
@@ -691,6 +783,83 @@ class BatchMeshSurfacePrepareStep(BaseModel):
     target_alias: BatchAlias
     geometry: SurfaceGeometry = "EVALUATED"
     output_surface_alias: BatchAlias
+
+
+class BatchMeshJoinSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_alias: BatchAlias
+    map_alias: BatchAlias
+    boundary_selection_alias: BatchAlias
+    selection_aliases: Annotated[tuple[BatchAlias, ...], Field(max_length=8)] = ()
+    rebound_selection_aliases: Annotated[tuple[BatchAlias, ...], Field(max_length=8)] = ()
+
+    @model_validator(mode="after")
+    def paired_rebound_aliases(self) -> BatchMeshJoinSource:
+        if len(self.selection_aliases) != len(self.rebound_selection_aliases):
+            raise ValueError(
+                "selection_aliases and rebound_selection_aliases must have equal length"
+            )
+        if len(set(self.selection_aliases)) != len(self.selection_aliases):
+            raise ValueError("selection_aliases must be unique per source")
+        return self
+
+
+class BatchJoinWorldCoordinates(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["WORLD"]
+
+
+class BatchJoinSourceCoordinates(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["SOURCE_OBJECT"]
+    source_target_alias: BatchAlias
+
+
+BatchJoinCoordinateFrame = Annotated[
+    BatchJoinWorldCoordinates | BatchJoinSourceCoordinates,
+    Field(discriminator="type"),
+]
+
+
+class BatchMeshJoinStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["mesh_join"]
+    sources: Annotated[tuple[BatchMeshJoinSource, ...], Field(min_length=2, max_length=32)]
+    output_target_alias: BatchAlias
+    new_object_name: str = Field(min_length=1, max_length=255)
+    new_mesh_name: str = Field(min_length=1, max_length=255)
+    collection_alias: BatchAlias
+    coordinate_frame: BatchJoinCoordinateFrame
+    source_disposition: Literal["KEEP", "DELETE_ON_COMMIT"] = "KEEP"
+    attributes: MeshJoinAttributes
+    dependencies: MeshJoinDependencies
+
+    @model_validator(mode="after")
+    def exact_sources_and_output(self) -> BatchMeshJoinStep:
+        target_aliases = [source.target_alias for source in self.sources]
+        aliases = [
+            alias
+            for source in self.sources
+            for alias in (
+                source.map_alias,
+                source.boundary_selection_alias,
+                *source.rebound_selection_aliases,
+            )
+        ]
+        if len(set(target_aliases)) != len(target_aliases):
+            raise ValueError("mesh_join source target aliases must be unique")
+        if len(set(aliases)) != len(aliases):
+            raise ValueError("mesh_join output aliases must be unique")
+        if self.new_object_name == self.new_mesh_name:
+            raise ValueError("new_object_name and new_mesh_name must be distinct")
+        if (
+            isinstance(self.coordinate_frame, BatchJoinSourceCoordinates)
+            and self.coordinate_frame.source_target_alias not in target_aliases
+        ):
+            raise ValueError("SOURCE_OBJECT frame must reference one of the join sources")
+        return self
 
 
 class BatchUVSeamSetOperation(BaseModel):
@@ -919,6 +1088,7 @@ class BatchMeshValidateStep(BaseModel):
     type: Literal["mesh_validate"]
     selection_alias: BatchAlias
     check: ValidationCheck
+    scope: Literal["SELECTION", "SELECTION_AND_NEIGHBORS"] | None = None
     output_alias: BatchAlias
     surface_alias: BatchAlias | None = None
     tolerance: FiniteNumber = Field(default=1e-6, ge=0, le=1)
@@ -973,7 +1143,8 @@ BatchStep = Annotated[
     | BatchRigBindStep
     | BatchLibraryAppendStep
     | BatchObjectSetStep
-    | BatchMeshSurfacePrepareStep,
+    | BatchMeshSurfacePrepareStep
+    | BatchMeshJoinStep,
     Field(discriminator="type"),
 ]
 

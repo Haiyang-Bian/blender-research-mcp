@@ -19,6 +19,8 @@ from blender_research_mcp.mesh_resources import (
 from blender_research_mcp.mesh_topology import (
     BisectOperation,
     BridgeOperation,
+    CreateEdgeOperation,
+    CreateFaceOperation,
     FillOperation,
     GridFillOperation,
     LoopCutOperation,
@@ -211,6 +213,26 @@ class MergeVerticesOperation(BaseModel):
         return self
 
 
+class WeldVerticesOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["weld_vertices"]
+    selection_ids: Annotated[tuple[str, ...], Field(min_length=1, max_length=8)]
+    mode: Literal["ALL_SELECTED", "CROSS_SELECTIONS"] = "CROSS_SELECTIONS"
+    maximum_distance: FiniteNumber = Field(gt=0, le=1_000_000)
+    destination: Literal["LOWEST_INDEX", "CENTER"] = "LOWEST_INDEX"
+    weight_merge: Literal["MAX", "AVERAGE", "SUM_NORMALIZE"] = "MAX"
+    attribute_policy: MeshAttributePolicy = Field(default_factory=MeshAttributePolicy)
+
+    @model_validator(mode="after")
+    def validate_selections(self) -> WeldVerticesOperation:
+        if len(set(self.selection_ids)) != len(self.selection_ids):
+            raise ValueError("selection_ids must be unique")
+        if self.mode == "CROSS_SELECTIONS" and len(self.selection_ids) < 2:
+            raise ValueError("CROSS_SELECTIONS requires at least two SelectionSets")
+        return self
+
+
 class FaceSettingsOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -255,6 +277,7 @@ MeshOperation = Annotated[
     | DeleteOperation
     | DissolveOperation
     | MergeVerticesOperation
+    | WeldVerticesOperation
     | FaceSettingsOperation
     | NormalsOperation
     | SetPositionsOperation
@@ -270,6 +293,8 @@ MeshOperation = Annotated[
     | SplitOperation
     | BridgeOperation
     | FillOperation
-    | GridFillOperation,
+    | GridFillOperation
+    | CreateEdgeOperation
+    | CreateFaceOperation,
     Field(discriminator="type"),
 ]

@@ -215,12 +215,12 @@ def _mesh_fingerprint_sections(mesh: Any) -> dict[str, str]:
     return sections
 
 
-def mesh_revision_id(mesh: Any) -> str:
+def mesh_revision_id(mesh: Any, *, fingerprint: str | None = None) -> str:
     """Return session-scoped content evidence for one exact Mesh revision."""
 
     hasher = hashlib.sha256()
     _hash_text(hasher, session_identity("mesh", mesh))
-    _hash_text(hasher, mesh_fingerprint(mesh))
+    _hash_text(hasher, fingerprint if fingerprint is not None else mesh_fingerprint(mesh))
     _hash_text(hasher, int(mesh.users))
     for object_name, object_identity in mesh_user_refs(mesh):
         _hash_text(hasher, object_name)
@@ -826,13 +826,12 @@ def _restore_uv_layers(mesh: Any, snapshot: Any) -> None:
                 mesh.uv_layers.remove(mesh.uv_layers[-1])
             for source in source_layers:
                 mesh.uv_layers.new(name=source.name, do_init=False)
-        for index, source in enumerate(source_layers):
-            target = mesh.uv_layers[index]
-            for prop, typecode, width in (
-                ("uv", "f", 2),
-                ("pin_uv", "b", 1),
-                ("select", "b", 1),
-                ("select_edge", "b", 1),
+        for source in source_layers:
+            for prop, typecode, width, accessor, value_prop in (
+                ("uv", "f", 2, "uv", "vector"),
+                ("pin_uv", "b", 1, "pin", "value"),
+                ("select", "b", 1, "vertex_selection", "value"),
+                ("select_edge", "b", 1, "edge_selection", "value"),
             ):
                 stage = f"data:{source.name}:{prop}"
                 if len(source.data) and not hasattr(source.data[0], prop):
@@ -844,18 +843,15 @@ def _restore_uv_layers(mesh: Any, snapshot: Any) -> None:
                     "select_edge": ".es.",
                 }.get(prop)
                 if auxiliary_prefix is not None:
-                    auxiliary_name = f"{auxiliary_prefix}{target.name}"
+                    auxiliary_name = f"{auxiliary_prefix}{source.name}"
                     auxiliary = mesh.attributes.get(auxiliary_name)
-                    if auxiliary is None and any(values):
-                        first_true = next(
-                            item_index for item_index, value in enumerate(values) if value
-                        )
-                        setattr(target.data[first_true], prop, True)
-                        auxiliary = mesh.attributes.get(auxiliary_name)
-                    if auxiliary is None:
+                    if auxiliary is None and not any(values):
                         continue
                 if values:
-                    target.data.foreach_set(prop, values)
+                    # The legacy UV-loop bulk setter can allocate optional
+                    # CustomData while holding stale layer pointers. Use the
+                    # typed attribute accessor and reacquire it per property.
+                    getattr(mesh.uv_layers[source.name], accessor).foreach_set(value_prop, values)
         for prop in ("active_render", "active_clone"):
             stage = f"role:{prop}"
             active_index = next(
@@ -911,7 +907,6 @@ def _copy_mesh_snapshot(mesh: Any, snapshot: Any) -> None:
             ("use_edge_sharp", "b", 1),
         )
     }
-    loops = _foreach_values(snapshot.loops, "vertex_index", "i", 1)
     polygons = {
         prop: _foreach_values(snapshot.polygons, prop, typecode, width)
         for prop, typecode, width in (
@@ -943,25 +938,22 @@ def _copy_mesh_snapshot(mesh: Any, snapshot: Any) -> None:
             mesh.polygons.foreach_set(prop, polygons[prop])
         return
 
-    _remove_protected_attributes(mesh)
-    mesh.clear_geometry()
-    mesh.vertices.add(len(snapshot.vertices))
-    mesh.edges.add(len(snapshot.edges))
-    mesh.loops.add(len(snapshot.loops))
-    mesh.polygons.add(len(snapshot.polygons))
-    mesh.vertices.foreach_set("co", vertices["co"])
-    mesh.edges.foreach_set("vertices", edges["vertices"])
-    mesh.loops.foreach_set("vertex_index", loops)
-    mesh.polygons.foreach_set("loop_start", polygons["loop_start"])
-    mesh.polygons.foreach_set("loop_total", polygons["loop_total"])
-    mesh.update(calc_edges=True, calc_edges_loose=True)
+    # clear_geometry() also clears Blender's Vertex Group schema. That destroys
+    # identities even when the failed call never changed a Group. BMesh replaces
+    # geometry while retaining the existing schema and exact snapshot edge order.
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(snapshot)
+        write_bmesh_exact(bm, mesh)
+    finally:
+        bm.free()
 
     mesh.materials.clear()
     for material in materials:
         mesh.materials.append(material)
     _restore_attributes(mesh, snapshot)
     _restore_uv_layers(mesh, snapshot)
-    mesh.update(calc_edges=True, calc_edges_loose=True)
+    mesh.update(calc_edges=False, calc_edges_loose=True)
     for prop in ("select", "hide"):
         mesh.vertices.foreach_set(prop, vertices[prop])
         mesh.edges.foreach_set(prop, edges[prop])
@@ -1236,6 +1228,9 @@ def _bmesh_baseline(bm: Any) -> dict[str, list[Any]]:
         "vertices": list(bm.verts),
         "edges": list(bm.edges),
         "faces": list(bm.faces),
+        "vertices_native_keys": [hash(item) for item in bm.verts],
+        "edges_native_keys": [hash(item) for item in bm.edges],
+        "faces_native_keys": [hash(item) for item in bm.faces],
     }
 
 
@@ -1260,13 +1255,14 @@ def _component_changes(bm: Any, baseline: dict[str, list[Any]]) -> dict[str, Any
     created = {}
     deleted = {}
     for kind in ("vertices", "edges", "faces"):
-        before_items = baseline[kind]
-        before_set = set(before_items)
+        before_keys = baseline[f"{kind}_native_keys"]
+        before_set = set(before_keys)
+        current_set = {hash(item) for item in current[kind]}
         created[kind] = _index_page(
-            [int(item.index) for item in current[kind] if item not in before_set]
+            [int(item.index) for item in current[kind] if hash(item) not in before_set]
         )
         deleted[kind] = _index_page(
-            [index for index, item in enumerate(before_items) if not item.is_valid]
+            [index for index, key in enumerate(before_keys) if key not in current_set]
         )
     return {"created": created, "deleted": deleted}
 
@@ -2049,6 +2045,26 @@ def _remove_temporary_mesh(mesh: Any) -> None:
         bpy.data.meshes.remove(mesh)
 
 
+def write_bmesh_exact(bm: Any, mesh: Any) -> None:
+    """Publish a complete BMesh without rebuilding its already complete edge table."""
+
+    for sequence in (bm.verts, bm.edges, bm.faces):
+        sequence.index_update()
+    edges = [tuple(sorted(vertex.index for vertex in edge.verts)) for edge in bm.edges]
+    faces = [tuple(vertex.index for vertex in face.verts) for face in bm.faces]
+    bm.to_mesh(mesh)
+    # calc_edges=True uses a parallel hash table on larger meshes and can reorder
+    # edges. ComponentMaps were made against BMesh order, not that new table.
+    mesh.update(calc_edges=False, calc_edges_loose=True)
+    if (
+        edges != [tuple(sorted(edge.vertices)) for edge in mesh.edges]
+        or faces != [tuple(face.vertices) for face in mesh.polygons]
+    ):
+        raise MeshOperationError(
+            "MESH_LINEAGE_GENERATION_FAILED", "Mesh writeback changed exact component order"
+        )
+
+
 def _restore_failed_edit(
     mesh: Any,
     call_snapshot: Any,
@@ -2234,8 +2250,7 @@ def edit_mesh(
                     index for index in deleted["VERTEX"] if index not in merged_sources
                 )
             lineage = None
-        bm.to_mesh(mesh)
-        mesh.update(calc_edges=True, calc_edges_loose=True)
+        write_bmesh_exact(bm, mesh)
         attribute_effects = (
             finish_topology_attributes(obj, mesh, topology_attribute_evidence)
             if topology_attribute_evidence is not None
@@ -2421,6 +2436,7 @@ def touch_mesh_for_test(params: dict[str, Any]) -> dict[str, Any]:
             raise MeshOperationError("TEST_MESH_TOUCH_INVALID", "Mesh has no vertices")
         mesh.vertices[0].co.x += 0.125
         mesh.update()
+        bpy.context.view_layer.update()
     elif action == "topology":
         bm = bmesh.new()
         try:
@@ -2428,6 +2444,7 @@ def touch_mesh_for_test(params: dict[str, Any]) -> dict[str, Any]:
             bm.verts.new((0.0, 0.0, 0.0))
             bm.to_mesh(mesh)
             mesh.update()
+            bpy.context.view_layer.update()
         finally:
             bm.free()
     elif action == "shared_user":

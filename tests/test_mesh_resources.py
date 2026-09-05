@@ -648,6 +648,34 @@ def test_component_map_composition_tracks_survival_split_merge_and_creation() ->
     assert summary["transaction_ids"] == ["transaction-a", "transaction-b"]
 
 
+def test_join_branch_maps_do_not_report_other_sources_as_created() -> None:
+    module = load_component_map_model()
+    branch = module.make_component_map(
+        transaction_id="transaction",
+        operation="join",
+        before=_map_evidence("a", object_name="Head", object_identity="object:head"),
+        after=_map_evidence("b", object_name="Joined", object_identity="object:joined"),
+        after_users=1,
+        after_user_objects=(("Joined", "object:joined"),),
+        relations={
+            "VERTEX": (
+                module.ComponentRelation(0, (4,), "SURVIVED"),
+                module.ComponentRelation(1, (5,), "SURVIVED"),
+            )
+        },
+        created={"VERTEX": ()},
+        deleted={"VERTEX": ()},
+        map_kind="JOIN_BRANCH",
+        join_id="join:1",
+        branch_role="Head",
+    )
+    summary = branch.summary()
+    assert summary["map_kind"] == "JOIN_BRANCH"
+    assert summary["join_id"] == "join:1"
+    assert summary["branch_role"] == "Head"
+    assert summary["domains"]["VERTEX"]["created"] == 0
+
+
 def test_component_map_composition_classifies_plain_split_and_merge() -> None:
     module = load_component_map_model()
     first = module.make_component_map(

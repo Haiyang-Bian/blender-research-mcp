@@ -10,7 +10,7 @@ from blender_research_mcp.server import MaterialInputValue, create_server
 
 def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     server = create_server()
-    assert server._mcp_server.version == "0.16.0"
+    assert server._mcp_server.version == "0.17.5"
     tools = asyncio.run(server.list_tools())
     assert [tool.name for tool in tools] == [
         "application.status",
@@ -34,6 +34,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "mesh.selection.query",
         "mesh.selection.derive",
         "mesh.selection.inspect",
+        "mesh.boundary.inspect",
         "mesh.selection.release",
         "mesh.component_catalog.prepare",
         "mesh.component_catalog.inspect",
@@ -73,6 +74,8 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "modifier.set",
         "modifier.move",
         "modifier.delete",
+        "mesh.join.preflight",
+        "mesh.join",
         "mesh.edit",
         "mesh.uv.edit",
         "mesh.weights.edit",
@@ -223,6 +226,16 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert library_append.inputSchema["properties"]["output"]["discriminator"][
         "propertyName"
     ] == "type"
+    mesh_join_preflight = tools_by_name["mesh.join.preflight"]
+    assert mesh_join_preflight.annotations is not None
+    assert mesh_join_preflight.annotations.readOnlyHint is True
+    mesh_join = tools_by_name["mesh.join"]
+    assert mesh_join.annotations is not None
+    assert mesh_join.annotations.readOnlyHint is False
+    assert mesh_join.annotations.destructiveHint is True
+    assert mesh_join.annotations.idempotentHint is True
+    assert mesh_join.inputSchema["properties"]["sources"]["minItems"] == 2
+    assert mesh_join.inputSchema["properties"]["sources"]["maxItems"] == 32
     collection_create = tools_by_name["collection.create"]
     parent_schema = collection_create.inputSchema["properties"]["parent"]
     assert parent_schema["discriminator"]["propertyName"] == "type"
@@ -257,7 +270,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     assert mesh_batch.inputSchema["properties"]["steps"]["maxItems"] == 32
     step_schema = mesh_batch.inputSchema["properties"]["steps"]["items"]
     assert step_schema["discriminator"]["propertyName"] == "type"
-    assert len(step_schema["oneOf"]) == 20
+    assert len(step_schema["oneOf"]) == 21
     input_schema = mesh_batch.inputSchema["properties"]["inputs"]["items"]
     assert input_schema["discriminator"]["propertyName"] == "type"
     assert len(input_schema["oneOf"]) == 7
@@ -313,7 +326,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
         "RAYCAST",
     ]
     validation = tools_by_name["mesh.validate"]
-    assert len(validation.inputSchema["properties"]["check"]["enum"]) == 15
+    assert len(validation.inputSchema["properties"]["check"]["enum"]) == 16
     assert "layer_name" in validation.inputSchema["properties"]
     assert "expected_uv_fingerprint" in validation.inputSchema["properties"]
     assert "expected_weights_fingerprint" in validation.inputSchema["properties"]
@@ -429,7 +442,7 @@ def test_first_mcp_tool_uses_documented_dotted_name() -> None:
     ]
     operation_schema = mesh_edit.inputSchema["properties"]["operation"]
     assert operation_schema["discriminator"]["propertyName"] == "type"
-    assert len(operation_schema["oneOf"]) == 23
+    assert len(operation_schema["oneOf"]) == 26
     mesh_uv_edit = tools_by_name["mesh.uv.edit"]
     assert mesh_uv_edit.annotations is not None
     assert mesh_uv_edit.annotations.readOnlyHint is False
@@ -696,6 +709,129 @@ def test_batch_v4_rechecks_and_enriches_library_file_evidence(monkeypatch) -> No
     payload = fake.calls[-1][1]
     assert payload["inputs"][1]["expected_modified_ns"] == 123456789
     assert payload["steps"][0]["type"] == "library_append"
+
+
+def test_batch_v5_requires_join_capabilities_and_preserves_boundary_aliases(
+    monkeypatch,
+) -> None:
+    class FakeClient:
+        def __init__(self, *, port: int) -> None:
+            self.port = port
+            self.requirements: list[tuple[str, int]] = []
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        async def connect(self) -> object:
+            return object()
+
+        def require_capability(self, name: str, version: int = 1) -> None:
+            self.requirements.append((name, version))
+
+        async def call(self, command: str, params=None, **_kwargs):
+            payload = {} if params is None else params
+            self.calls.append((command, payload))
+            return {"command": command}
+
+        async def close(self) -> None:
+            return None
+
+    fake = FakeClient(port=9877)
+    monkeypatch.setattr(server_module, "BridgeClient", lambda **_kwargs: fake)
+    target = {
+        "object_name": "Head",
+        "expected_object_identity": "object:head",
+        "expected_mesh_identity": "mesh:head",
+        "expected_mesh_users": 1,
+        "expected_mesh_user_objects": [
+            {"object_name": "Head", "expected_object_identity": "object:head"}
+        ],
+        "expected_mesh_fingerprint": "a" * 64,
+    }
+    second = {
+        **target,
+        "object_name": "Body",
+        "expected_object_identity": "object:body",
+        "expected_mesh_identity": "mesh:body",
+        "expected_mesh_user_objects": [
+            {"object_name": "Body", "expected_object_identity": "object:body"}
+        ],
+    }
+    server = server_module.create_server()
+    asyncio.run(
+        server.call_tool(
+            "mesh.batch.execute",
+            {
+                "transaction_id": "tx-1",
+                "targets": [
+                    {"alias": "head", **target},
+                    {"alias": "body", **second},
+                ],
+                "inputs": [
+                    {
+                        "type": "collection",
+                        "alias": "modules",
+                        "collection_name": "Modules",
+                        "expected_collection_identity": "collection:1",
+                        "expected_collection_structure_fingerprint": "b" * 64,
+                    }
+                ],
+                "steps": [
+                    {
+                        "type": "mesh_join",
+                        "sources": [
+                            {
+                                "target_alias": "head",
+                                "map_alias": "head_map",
+                                "boundary_selection_alias": "head_boundary",
+                            },
+                            {
+                                "target_alias": "body",
+                                "map_alias": "body_map",
+                                "boundary_selection_alias": "body_boundary",
+                            },
+                        ],
+                        "output_target_alias": "joined",
+                        "new_object_name": "Joined",
+                        "new_mesh_name": "Joined Mesh",
+                        "collection_alias": "modules",
+                        "coordinate_frame": {"type": "WORLD"},
+                        "attributes": {
+                            "materials": "PRESERVE_BY_IDENTITY",
+                            "uv": "MERGE_BY_NAME",
+                            "weights": "MERGE_BY_NAME",
+                            "colors": "MERGE_BY_NAME",
+                            "generic": "ERROR_IF_PRESENT",
+                            "custom_normals": "DROP_RECALCULATE",
+                        },
+                        "dependencies": {
+                            "shape_keys": "ERROR_IF_PRESENT",
+                            "modifiers": "ERROR_IF_PRESENT",
+                        },
+                    },
+                    {
+                        "type": "mesh_edit",
+                        "target_alias": "joined",
+                        "data_scope": "OBJECT",
+                        "operation": {
+                            "type": "weld_vertices",
+                            "selection_aliases": ["head_boundary", "body_boundary"],
+                            "maximum_distance": 0.001,
+                        },
+                    },
+                ],
+                "expected_scene_generation": 4,
+                "idempotency_key": "123e4567-e89b-12d3-a456-426614174002",
+            },
+        )
+    )
+    assert ("mesh_join", 1) in fake.requirements
+    assert ("mesh_component_map", 4) in fake.requirements
+    assert ("mesh_topology", 5) in fake.requirements
+    assert ("mesh_batch", 5) in fake.requirements
+    assert ("transactions", 13) in fake.requirements
+    assert fake.calls[-1][1]["steps"][1]["operation"]["selection_aliases"] == (
+        "head_boundary",
+        "body_boundary",
+    )
 
 
 def test_material_input_value_preserves_json_types() -> None:

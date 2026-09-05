@@ -12,7 +12,6 @@ from typing import Any
 import bpy
 from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
-from mathutils.geometry import intersect_tri_tri_2d
 
 from .lookdev_ops import session_identity
 from .mesh_ops import mesh_revision_id
@@ -23,6 +22,7 @@ from .mesh_resource_model import (
     SelectionRecord,
     SurfaceRecord,
 )
+from .mesh_uv_geometry import triangle_overlap_area
 from .mesh_uv_ops import uv_fingerprint
 from .mesh_weight_ops import (
     _capture_weights,
@@ -485,7 +485,7 @@ def _uv_overlap_faces(mesh: Any, layer: Any, face_indices: tuple[int, ...]) -> t
                     "MESH_VALIDATION_BUDGET_EXCEEDED",
                     "UV overlap broad-phase exceeded the bounded candidate budget",
                 )
-            if intersect_tri_tri_2d(*current_points, *other_points):
+            if triangle_overlap_area(current_points, other_points) > 1e-12:
                 overlap.update((current_face, other_face))
         active.append(current)
     return tuple(sorted(overlap))
@@ -557,6 +557,7 @@ def _validate_uv(
         return {
             "check": check,
             "count": len(violations),
+            "minimum_overlap_area": 1e-12,
             "selection": _selection_from_indices(book, selection, "FACE", violations, check),
         }
     if check == "UV_STRETCH":
@@ -710,6 +711,30 @@ def validate_mesh(book: MeshResourceBook, params: dict[str, Any]) -> dict[str, A
     selection = book.selection(selection_id)
     obj, mesh = validate_selection(selection)
     tolerance = float(params.get("tolerance", 1e-6))
+    if params.get("scope") is not None or check == "LOCAL_QUALITY":
+        from .mesh_local_quality import local_quality
+
+        supported = {
+            "NON_MANIFOLD": ("EDGE", "non_manifold_edges"),
+            "DEGENERATE": ("FACE", "degenerate_faces"),
+            "ORIENTATION": ("EDGE", "orientation_edges"),
+            "SELF_INTERSECTION": ("FACE", "intersection_faces"),
+        }
+        if check not in supported and check != "LOCAL_QUALITY":
+            raise MeshResourceError(
+                "MESH_VALIDATION_INVALID", "scope is supported for local topology checks"
+            )
+        result = local_quality(mesh, selection, params.get("scope") or "SELECTION", tolerance)
+        result["check"] = check
+        if check in supported:
+            domain, key = supported[check]
+            indices = tuple(result["issues"][key])
+            result.update(
+                count=len(indices),
+                selection=_selection_from_indices(book, selection, domain, indices, check),
+                passed=result["complete"] and not indices,
+            )
+        return result
     if check in {"UV_BOUNDS", "UV_DEGENERATE", "UV_OVERLAP", "UV_STRETCH"}:
         return _validate_uv(book, selection, mesh, check, params)
     if check in {

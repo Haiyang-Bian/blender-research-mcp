@@ -7,6 +7,49 @@ description: Launch Blender, manage .blend projects, inspect and diagnose scenes
 
 Use the semantic `blender_research` MCP as the source of truth for live Blender state.
 
+With `mesh_selection >= 2`, use `mesh.boundary.inspect` before Grid Fill. Supply an
+EDGE SelectionSet and bind subsequent pages to the returned Mesh fingerprint.
+Read component classification, both endpoint pairings and coverage: UNKNOWN means
+the budget could not prove an answer; AMBIGUOUS requires an explicit choice.
+A single closed loop requires four explicit corners, and two closed loops use
+bridge. Do not retry an unchanged invalid boundary or treat sorted indices as a
+directed path. Inspection creates no scene or selection resources.
+
+With `mesh_topology >= 6` and `mesh_component_map >= 5`, author patches through
+`mesh.edit`. Exact vertices are singleton VERTEX SelectionSets; a directed path is
+`{selection_id: EDGE_ID, start_vertex: VERTEX_ID}`. Grid Fill accepts either the
+legacy selection_id or `boundary` with `type=FOUR_PATHS` and four cyclic paths, or
+`type=CLOSED_LOOP`, one EDGE selection_id and four cyclic corner vertex IDs.
+Opposite segment counts must match. Hidden explicit boundaries require allow_hidden.
+`create_edge` accepts two vertex IDs and is a no-op for an existing edge;
+`create_face` accepts three or four cyclic vertex IDs. Open `bridge` accepts two
+directed paths with equal counts, and cuts from 0 to 32. Starts define correspondence.
+Preserved UV layers require compatible boundary sources. Explicit
+`uv_creation={LAYER_NAME: INDEPENDENT_ISLAND}` creates a parameterized island marked
+for later unwrap/pack. Inspect creation provenance with ComponentMap direction
+CREATION_EVIDENCE. Inspect remaining bridge end boundaries before the next patch.
+
+With validation >= 3, request explicit local scope and inspect coverage/denominators,
+remaining intended boundaries and introduced issues against the stored baseline.
+LOCAL_QUALITY reports all local open edges; an intentional open end is not evidence
+that a different requested seam failed to close. Scope tolerance is a local length;
+the returned area threshold is squared and contact precision is reported separately.
+With deformation >= 2, set maximum_displacement in world units and on_miss=ERROR
+for acceptance. The limit is cumulative across iterations. Keep fixed seam vertices
+outside the editable set even after the seam becomes internal. A missing reference
+leaves a labelled initial form; it does not justify an original-surface claim.
+
+Batch >= 6 supports exact vertex_aliases, directed path selection_alias/start_vertex_alias
+and closed-loop corner_aliases. Never guess when remapping an exact vertex becomes
+ambiguous. Capture >= 4 accepts boundary_annotations.paths and problem_vertices;
+the overlay is projected x-ray evidence, not a scene helper or occlusion proof.
+For skin checks, select verified deform groups. MMD edge-scale/order groups are
+metadata and must not be normalized or counted as bone influences. Preserve old
+locked weights; any explicit assignment on newly created vertices must report its source.
+Independent UV islands need explicit unwrap/pack and a reviewed target tile. UV validity
+does not establish texture or artistic approval. Save/reload changes session material
+identities: compare persistent topology/coordinates/UV/weights and rediscover resources.
+
 ## Follow application and project intent
 
 Treat application launch and project opening as separate decisions:
@@ -157,6 +200,15 @@ fit only visible high-confidence anchors and preserve the template/cage prior wh
 source geometry is hidden. Keep weight transfer and `rig.bind` as separately verified
 steps. Prefer batch v4 when append, alignment, dynamic surfaces, fitting, organization,
 weights and binding must succeed or roll back as one chain.
+
+When several reviewed Mesh modules must become one editable base Mesh, use
+`mesh.join.preflight` and `mesh.join`, not Blender's selection-dependent Object Join.
+Materialize evaluated inputs first, choose WORLD or one exact source-object frame, and
+keep join separate from seam welding. Weld only revision-bound source boundary
+SelectionSets with an explicit distance; prefer `CROSS_SELECTIONS` for module seams.
+Use batch v5 when per-source JOIN_BRANCH lineage must continue through weld, weights,
+binding, and validation. Keep modules separate when independent transforms, modifiers,
+or interchange are still the user's intent.
 
 ## Ground image evidence
 

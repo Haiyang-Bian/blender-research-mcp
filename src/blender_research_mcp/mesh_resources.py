@@ -256,6 +256,7 @@ class SetPositionsOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["set_positions"]
+    maximum_displacement: FiniteNumber | None = Field(default=None, ge=0, le=1_000_000)
     selection_id: SelectionId
     mode: Literal["ABSOLUTE", "OFFSET"] = "ABSOLUTE"
     space: CoordinateSpace = "LOCAL"
@@ -266,6 +267,7 @@ class SmoothOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["smooth"]
+    maximum_displacement: FiniteNumber | None = Field(default=None, ge=0, le=1_000_000)
     selection_id: SelectionId
     iterations: Annotated[StrictInt, Field(ge=1, le=64)] = 1
     factor: FiniteNumber = Field(default=0.5, ge=0, le=1)
@@ -276,6 +278,7 @@ class RelaxOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["relax"]
+    maximum_displacement: FiniteNumber | None = Field(default=None, ge=0, le=1_000_000)
     selection_id: SelectionId
     iterations: Annotated[StrictInt, Field(ge=1, le=64)] = 1
     factor: FiniteNumber = Field(default=0.5, ge=0, le=1)
@@ -286,6 +289,7 @@ class ProjectOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["project"]
+    maximum_displacement: FiniteNumber | None = Field(default=None, ge=0, le=1_000_000)
     selection_id: SelectionId
     surface_id: SurfaceId
     direction: Literal["CLOSEST_POINT", "NORMAL", "AXIS", "VECTOR", "VIEW_RAY"] = "CLOSEST_POINT"
@@ -321,6 +325,7 @@ class ShrinkwrapOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["shrinkwrap"]
+    maximum_displacement: FiniteNumber | None = Field(default=None, ge=0, le=1_000_000)
     selection_id: SelectionId
     surface_id: SurfaceId
     iterations: Annotated[StrictInt, Field(ge=1, le=16)] = 1
@@ -335,6 +340,7 @@ class InflateOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["inflate"]
+    maximum_displacement: FiniteNumber | None = Field(default=None, ge=0, le=1_000_000)
     selection_id: SelectionId
     amount: FiniteNumber = Field(ge=-100_000, le=100_000)
 
@@ -366,6 +372,7 @@ class FlattenOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["flatten"]
+    maximum_displacement: FiniteNumber | None = Field(default=None, ge=0, le=1_000_000)
     selection_id: SelectionId
     plane: FlattenPlane = Field(default_factory=BestFitPlane)
     factor: FiniteNumber = Field(default=1, ge=0, le=1)
@@ -386,6 +393,7 @@ SemanticDeformOperation = (
 SurfaceGeometry = Literal["BASE", "EVALUATED"]
 SurfaceQueryMode = Literal["CLOSEST_POINT", "RAYCAST"]
 ValidationCheck = Literal[
+    "LOCAL_QUALITY",
     "NON_MANIFOLD",
     "DEGENERATE",
     "ORIENTATION",

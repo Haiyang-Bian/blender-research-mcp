@@ -18,11 +18,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .execution_budget import execution_deadline
 from .wire import MAX_RESPONSE_BYTES, PROTOCOL_VERSION, FrameDecoder, FramingError, encode_frame
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 9877
-ADDON_VERSION = "0.16.0"
+ADDON_VERSION = "0.17.5"
 ZERO_REQUEST_ID = "00000000-0000-0000-0000-000000000000"
 LAUNCH_ID_ENV = "BLENDER_RESEARCH_MCP_LAUNCH_ID"
 
@@ -34,6 +35,7 @@ class PendingRequest:
     response: dict[str, Any] | None = None
     cancelled: bool = False
     started: bool = False
+    deadline: float = float("inf")
 
 
 def runtime_directory() -> Path:
@@ -141,7 +143,8 @@ class ListenerRuntime:
             else:
                 try:
                     pending.started = True
-                    pending.response = dispatcher(pending.request)
+                    with execution_deadline(pending.deadline):
+                        pending.response = dispatcher(pending.request)
                     self.last_scene_generation = int(
                         pending.response.get("scene_generation", self.last_scene_generation)
                     )
@@ -227,11 +230,12 @@ class ListenerRuntime:
                 self.connected = True
                 self.status = "connected"
                 pending = PendingRequest(request=request, event=threading.Event())
-                self._requests.put(pending)
                 deadline_ms = request.get("deadline_ms", 5000)
                 if not isinstance(deadline_ms, int):
                     deadline_ms = 5000
                 deadline = time.monotonic() + min(max(deadline_ms, 100), 30_000) / 1000
+                pending.deadline = deadline
+                self._requests.put(pending)
                 while not self._stop.is_set() and not pending.event.wait(0.05):
                     if time.monotonic() >= deadline and not pending.started:
                         pending.cancelled = True

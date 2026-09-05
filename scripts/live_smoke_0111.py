@@ -78,6 +78,7 @@ async def mutate(
         expected_scene_generation=generation,
         idempotency_key=str(uuid4()),
         read_only=False,
+        deadline_ms=30_000,
     )
 
 

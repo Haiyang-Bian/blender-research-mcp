@@ -28,6 +28,22 @@ def inspect_component_map(book: MeshResourceBook, params: dict[str, Any]) -> dic
     direction = str(params.get("direction", "FORWARD"))
     offset = int(params.get("offset", 0))
     limit = int(params.get("limit", 256))
+    if direction == "CREATION_EVIDENCE":
+        if offset < 0 or not 1 <= limit <= 4096:
+            raise MeshResourceError("MESH_COMPONENT_MAP_INVALID", "Invalid evidence page")
+        evidence = record.creation_evidence or {}
+        values = evidence.get("vertices", [])
+        return {
+            "component_map": record.summary(),
+            "creation": {k: v for k, v in evidence.items() if k != "vertices"},
+            "items": values[offset : offset + limit],
+            "pagination": {
+                "offset": offset,
+                "limit": limit,
+                "total": len(values),
+                "truncated": offset + limit < len(values),
+            },
+        }
     if domain == "SUMMARY":
         return {"component_map": record.summary(), "page": None}
     if domain not in DOMAINS or direction not in {"FORWARD", "REVERSE", "CREATED", "DELETED"}:

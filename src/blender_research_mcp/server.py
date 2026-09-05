@@ -87,6 +87,14 @@ from blender_research_mcp.mesh_component_catalog import (
     ComponentCatalogMetrics,
     ComponentIdentities,
 )
+from blender_research_mcp.mesh_errors import mesh_errors
+from blender_research_mcp.mesh_join import (
+    MeshJoinAttributes,
+    MeshJoinDependencies,
+    MeshJoinOutput,
+    MeshJoinRequest,
+    MeshJoinSources,
+)
 from blender_research_mcp.mesh_modular import (
     ArmatureTarget,
     ExtractMeshTarget,
@@ -111,6 +119,7 @@ from blender_research_mcp.mesh_resources import (
 )
 from blender_research_mcp.mesh_separation import MeshObjectName
 from blender_research_mcp.mesh_topology import (
+    BoundaryAnnotations,
     ComponentMapDirection,
     ComponentMapDomain,
     ComponentMapId,
@@ -552,6 +561,7 @@ def create_server(
                 "offset": offset,
                 "limit": limit,
             },
+            deadline_ms=MAX_DEADLINE_MS,
             read_only=True,
         )
 
@@ -648,6 +658,38 @@ def create_server(
             "mesh.selection.inspect",
             {"selection_id": selection_id, "offset": offset, "limit": limit},
             read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.boundary.inspect",
+        description="Inspect exact chains and bounded rail candidates without scene writes.",
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    @mesh_errors
+    async def mesh_boundary_inspect(
+        selection_id: SelectionId,
+        expected_mesh_fingerprint: (
+            Annotated[str, Field(min_length=64, max_length=64)] | None
+        ) = None,
+        component: Literal["SUMMARY", "COMPONENTS", "VERTICES", "PAIRINGS"] = "SUMMARY",
+        offset: Annotated[StrictInt, Field(ge=0, le=2_000_000)] = 0,
+        limit: Annotated[StrictInt, Field(ge=1, le=4096)] = 256,
+        maximum_visits: Annotated[StrictInt, Field(ge=1, le=100_000)] = 20_000,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_selection", 2)
+        return await client.call(
+            "mesh.boundary.inspect",
+            {
+                "selection_id": selection_id,
+                "expected_mesh_fingerprint": expected_mesh_fingerprint,
+                "component": component,
+                "offset": offset,
+                "limit": limit,
+                "maximum_visits": maximum_visits,
+            },
+            read_only=True,
+            deadline_ms=MAX_DEADLINE_MS,
         )
 
     @server.tool(
@@ -762,6 +804,8 @@ def create_server(
         limit: Annotated[StrictInt, Field(ge=1, le=4096)] = 256,
     ) -> dict[str, Any]:
         await require_capability(client, "mesh_component_map")
+        if direction == "CREATION_EVIDENCE":
+            client.require_capability("mesh_component_map", 5)
         return await client.call(
             "mesh.component_map.inspect",
             {
@@ -892,6 +936,7 @@ def create_server(
                 "sample_limit": sample_limit,
             },
             read_only=True,
+            deadline_ms=MAX_DEADLINE_MS,
         )
 
     @server.tool(
@@ -903,9 +948,11 @@ def create_server(
         annotations=READ_ONLY,
         structured_output=True,
     )
+    @mesh_errors
     async def mesh_validate(
         selection_id: SelectionId,
         check: ValidationCheck,
+        scope: Literal["SELECTION", "SELECTION_AND_NEIGHBORS"] | None = None,
         surface_id: SurfaceId | None = None,
         layer_name: Annotated[str, Field(min_length=1, max_length=255)] | None = None,
         expected_uv_fingerprint: Annotated[str, Field(min_length=64, max_length=64)] | None = None,
@@ -926,11 +973,14 @@ def create_server(
         sample_limit: Annotated[StrictInt, Field(ge=0, le=256)] = 64,
     ) -> dict[str, Any]:
         await require_capability(client, "mesh_validation")
+        if scope is not None or check == "LOCAL_QUALITY":
+            client.require_capability("mesh_validation", 3)
         return await client.call(
             "mesh.validate",
             {
                 "selection_id": selection_id,
                 "check": check,
+                **({"scope": scope} if scope is not None else {}),
                 "surface_id": surface_id,
                 "layer_name": layer_name,
                 "expected_uv_fingerprint": expected_uv_fingerprint,
@@ -945,6 +995,7 @@ def create_server(
                 "sample_limit": sample_limit,
             },
             read_only=True,
+            deadline_ms=MAX_DEADLINE_MS,
         )
 
     @server.tool(
@@ -1036,9 +1087,12 @@ def create_server(
         display_mode: DisplayMode = "CURRENT",
         overlays: OverlaysMode = "CURRENT",
         orbit: OrbitRequest | None = None,
+        boundary_annotations: BoundaryAnnotations | None = None,
     ) -> CallToolResult:
         if view == "CURRENT" and orbit is not None:
             raise ValueError("orbit requires a semantic base view rather than CURRENT")
+        if boundary_annotations is not None:
+            await require_capability(client, "viewport_capture", 4)
         image_bytes, result = await capture_image(
             client,
             object_name=object_name,
@@ -1048,6 +1102,9 @@ def create_server(
             display_mode=display_mode,
             overlays=overlays,
             orbit=orbit.model_dump() if orbit is not None else None,
+            boundary_annotations=boundary_annotations.model_dump(mode="json")
+            if boundary_annotations is not None
+            else None,
         )
         await settle_capture_generation(client, result)
         return CallToolResult(
@@ -1462,9 +1519,7 @@ def create_server(
             transaction_id=transaction_id,
             collection_name=collection_name,
             expected_collection_identity=expected_collection_identity,
-            expected_collection_structure_fingerprint=(
-                expected_collection_structure_fingerprint
-            ),
+            expected_collection_structure_fingerprint=(expected_collection_structure_fingerprint),
             object_name=object_name,
             expected_object_identity=expected_object_identity,
             expected_object_collections_fingerprint=expected_object_collections_fingerprint,
@@ -1496,9 +1551,7 @@ def create_server(
             transaction_id=transaction_id,
             collection_name=collection_name,
             expected_collection_identity=expected_collection_identity,
-            expected_collection_structure_fingerprint=(
-                expected_collection_structure_fingerprint
-            ),
+            expected_collection_structure_fingerprint=(expected_collection_structure_fingerprint),
             object_name=object_name,
             expected_object_identity=expected_object_identity,
             expected_object_collections_fingerprint=expected_object_collections_fingerprint,
@@ -1534,14 +1587,10 @@ def create_server(
                 "transaction_id": transaction_id,
                 "child_name": child_name,
                 "expected_child_identity": expected_child_identity,
-                "expected_child_structure_fingerprint": (
-                    expected_child_structure_fingerprint
-                ),
+                "expected_child_structure_fingerprint": (expected_child_structure_fingerprint),
                 "parent_name": parent_name,
                 "expected_parent_identity": expected_parent_identity,
-                "expected_parent_structure_fingerprint": (
-                    expected_parent_structure_fingerprint
-                ),
+                "expected_parent_structure_fingerprint": (expected_parent_structure_fingerprint),
                 "transform_mode": transform_mode,
             },
             expected_scene_generation=expected_scene_generation,
@@ -1578,14 +1627,10 @@ def create_server(
                 "transaction_id": transaction_id,
                 "child_name": child_name,
                 "expected_child_identity": expected_child_identity,
-                "expected_child_structure_fingerprint": (
-                    expected_child_structure_fingerprint
-                ),
+                "expected_child_structure_fingerprint": (expected_child_structure_fingerprint),
                 "expected_parent_name": expected_parent_name,
                 "expected_parent_identity": expected_parent_identity,
-                "expected_parent_structure_fingerprint": (
-                    expected_parent_structure_fingerprint
-                ),
+                "expected_parent_structure_fingerprint": (expected_parent_structure_fingerprint),
                 "transform_mode": transform_mode,
             },
             expected_scene_generation=expected_scene_generation,
@@ -1917,6 +1962,70 @@ def create_server(
         )
 
     @server.tool(
+        name="mesh.join.preflight",
+        description=(
+            "Validate exact source Meshes, coordinate frame, output names, attribute "
+            "schemas, dependencies, and budgets without changing Blender state."
+        ),
+        annotations=READ_ONLY,
+        structured_output=True,
+    )
+    async def mesh_join_preflight(
+        sources: MeshJoinSources,
+        output: MeshJoinOutput,
+        attributes: MeshJoinAttributes,
+        dependencies: MeshJoinDependencies,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_join")
+        request = MeshJoinRequest(
+            sources=sources,
+            output=output,
+            attributes=attributes,
+            dependencies=dependencies,
+        )
+        return await client.call(
+            "mesh.join.preflight",
+            request.model_dump(),
+            read_only=True,
+        )
+
+    @server.tool(
+        name="mesh.join",
+        description=(
+            "Create one independent exact base-Mesh output from two to thirty-two "
+            "guarded sources and return per-source JOIN_BRANCH lineage evidence."
+        ),
+        annotations=SCENE_MUTATION,
+        structured_output=True,
+    )
+    async def mesh_join(
+        transaction_id: TransactionId,
+        sources: MeshJoinSources,
+        output: MeshJoinOutput,
+        attributes: MeshJoinAttributes,
+        dependencies: MeshJoinDependencies,
+        expected_scene_generation: SceneGeneration,
+        idempotency_key: IdempotencyKey,
+    ) -> dict[str, Any]:
+        await require_capability(client, "mesh_join")
+        client.require_capability("transactions", 13)
+        request = MeshJoinRequest(
+            sources=sources,
+            output=output,
+            attributes=attributes,
+            dependencies=dependencies,
+        )
+        payload = request.model_dump()
+        payload["transaction_id"] = transaction_id
+        return await client.call(
+            "mesh.join",
+            payload,
+            expected_scene_generation=expected_scene_generation,
+            idempotency_key=idempotency_key,
+            read_only=False,
+        )
+
+    @server.tool(
         name="mesh.edit",
         description=(
             "Apply one bounded semantic edit to exact base-Mesh components inside the "
@@ -1925,6 +2034,7 @@ def create_server(
         annotations=SCENE_MUTATION,
         structured_output=True,
     )
+    @mesh_errors
     async def mesh_edit(
         transaction_id: TransactionId,
         object_name: ObjectName,
@@ -1942,6 +2052,24 @@ def create_server(
     ) -> dict[str, Any]:
         await require_capability(client, "mesh_topology")
         operation_payload = operation.model_dump(exclude_none=True)
+        if operation_payload.get("maximum_displacement") is not None:
+            client.require_capability("mesh_deformation", 2)
+        explicit_patch = (
+            operation.type in {"create_edge", "create_face"}
+            or (operation.type == "grid_fill" and operation_payload.get("boundary") is not None)
+            or (operation.type == "bridge" and operation_payload.get("paths") is not None)
+        )
+        if (
+            explicit_patch
+            or operation_payload.get("uv_creation")
+            or operation_payload.get("allow_hidden")
+        ):
+            client.require_capability("mesh_topology", 6)
+            client.require_capability("mesh_component_map", 5)
+        if operation.type in {"grid_fill", "bridge"} and not explicit_patch:
+            for key, default in (("allow_hidden", False), ("uv_creation", {}), ("cuts", 0)):
+                if operation_payload.get(key) == default:
+                    operation_payload.pop(key, None)
         attribute_policy = operation_payload.get("attribute_policy")
         if attribute_policy == MeshAttributePolicy().model_dump():
             operation_payload.pop("attribute_policy", None)
@@ -1956,8 +2084,15 @@ def create_server(
             "bridge",
             "fill",
             "grid_fill",
+            "create_edge",
+            "create_face",
         }
-        if operation.type in topology_v2_operations:
+        if operation.type == "weld_vertices":
+            await require_capability(client, "mesh_join")
+            client.require_capability("mesh_topology", 5)
+            client.require_capability("mesh_component_map", 4)
+            client.require_capability("transactions", 13)
+        elif operation.type in topology_v2_operations:
             await require_capability(client, "mesh_component_map")
             client.require_capability("mesh_topology", 2)
             client.require_capability("transactions", 7)
@@ -2003,6 +2138,7 @@ def create_server(
             expected_scene_generation=expected_scene_generation,
             idempotency_key=idempotency_key,
             read_only=False,
+            deadline_ms=MAX_DEADLINE_MS,
         )
 
     @server.tool(
@@ -2438,6 +2574,7 @@ def create_server(
         annotations=SCENE_MUTATION,
         structured_output=True,
     )
+    @mesh_errors
     async def mesh_batch_execute(
         transaction_id: TransactionId,
         targets: BatchTargets,
@@ -2457,6 +2594,7 @@ def create_server(
         requires_batch_v2 = False
         requires_batch_v3 = False
         requires_batch_v4 = False
+        requires_batch_v5 = False
         for payload in input_payloads:
             if payload["type"] != "library":
                 continue
@@ -2481,6 +2619,11 @@ def create_server(
             requires_batch_v4 = True
         for payload in step_payloads:
             step_type = payload["type"]
+            if step_type == "mesh_validate" and (
+                payload.get("scope") or payload.get("check") == "LOCAL_QUALITY"
+            ):
+                client.require_capability("mesh_batch", 6)
+                client.require_capability("mesh_validation", 3)
             if step_type == "uv_edit":
                 await require_capability(client, "mesh_uv")
                 requires_batch_v2 = True
@@ -2504,6 +2647,28 @@ def create_server(
                 requires_batch_v2 = True
             elif step_type == "mesh_edit":
                 operation_payload = payload.get("operation", {})
+                if operation_payload.get("maximum_displacement") is not None:
+                    client.require_capability("mesh_batch", 6)
+                    client.require_capability("mesh_deformation", 2)
+                patch = operation_payload.get("type") in {"create_edge", "create_face"} or bool(
+                    operation_payload.get("boundary")
+                    or operation_payload.get("paths")
+                    or operation_payload.get("uv_creation")
+                    or operation_payload.get("allow_hidden")
+                )
+                if patch:
+                    client.require_capability("mesh_batch", 6)
+                    client.require_capability("mesh_topology", 6)
+                    client.require_capability("mesh_component_map", 5)
+                elif operation_payload.get("type") in {"grid_fill", "bridge"}:
+                    for key, default in (("allow_hidden", False), ("uv_creation", {}), ("cuts", 0)):
+                        if operation_payload.get(key) == default:
+                            operation_payload.pop(key, None)
+                if operation_payload.get("type") == "weld_vertices":
+                    await require_capability(client, "mesh_join")
+                    client.require_capability("mesh_component_map", 4)
+                    client.require_capability("mesh_topology", 5)
+                    requires_batch_v5 = True
                 policy = operation_payload.get("attribute_policy")
                 if policy == MeshAttributePolicy().model_dump():
                     operation_payload.pop("attribute_policy", None)
@@ -2557,6 +2722,11 @@ def create_server(
             elif step_type == "mesh_surface_prepare":
                 await require_capability(client, "mesh_surface_query")
                 requires_batch_v4 = True
+            elif step_type == "mesh_join":
+                await require_capability(client, "mesh_join")
+                client.require_capability("mesh_component_map", 4)
+                client.require_capability("mesh_topology", 5)
+                requires_batch_v5 = True
         if requires_batch_v2:
             client.require_capability("mesh_batch", 2)
             client.require_capability("mesh_topology", 4)
@@ -2567,6 +2737,9 @@ def create_server(
         if requires_batch_v4:
             client.require_capability("mesh_batch", 4)
             client.require_capability("transactions", 12)
+        if requires_batch_v5:
+            client.require_capability("mesh_batch", 5)
+            client.require_capability("transactions", 13)
         return await client.call(
             "mesh.batch.execute",
             {

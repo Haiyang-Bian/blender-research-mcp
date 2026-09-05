@@ -1,19 +1,83 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.16.0 controlled Library and template coverage validated
-- Current milestone: 0.16.0 transaction-v12 local Library append and batch v4 accepted
-- Next milestone: 0.17.0 exact cross-object Mesh composition and seam welding
+- Status: 0.17.5 implemented; recorded acceptance passed, subsequent correctness reports open
+- Current milestone: 0.17.5 local validation, bounded deformation, batch and capture
+- Next planned work: 0.17.6 correctness hardening, then staged rendering workflows
 - Primary Blender target: 4.2.23 LTS
-- Package and add-on version: 0.16.0
+- Package and add-on version: 0.17.5
 - Protocol version: 1
 - Development transport port: 9877
+
+Approved [explicit boundary roadmap](roadmap/0.17.x-explicit-boundary-patching.md)
+implements the requirements in 0.17.3–0.17.5. The 0.18–0.20 capability sequence remains
+unchanged. Boundary inspection, explicit authoring, integrated workflows and the
+real checkpoint-copy engineering gates are complete. Artistic approval, texture
+placement and the four reference-uncovered initial-form vertices remain explicitly
+separate from engineering acceptance. See the linked acceptance record.
+
+The [2026-09-05 issue review](roadmap/2026-09-05-rendering-and-animation-review.md)
+adds a proposed 0.17.6–0.17.9 sequence: correctness fixes, camera-based LookDev and
+isolated NPR templates, production render jobs, then bounded existing-animation
+sampling. The approved 0.18 Shape Key → 0.19 bone authoring → 0.20 Modifier finalization
+order remains intact. These new items are plans, not advertised capabilities.
+The earlier patch acceptance records retain their original scope; new intersection
+and displacement counterexamples are open and must pass their own regressions.
+Implementation can use [separate tasks/worktrees](roadmap/2026-09-05-parallel-development.md)
+with explicit file ownership and serial integration of shared protocol/transaction changes.
+
+### Explicit patch workflow contract
+
+0.17.5 advertises `mesh_validation: 3`, `mesh_deformation: 2`, `mesh_batch: 6` and
+`viewport_capture: 4`. Selection remains 2, topology 6, ComponentMap 5, protocol 1,
+transactions 13. Optional fields are sent only after their capability gate; legacy
+requests retain their original fields and scope.
+
+`mesh.validate` accepts `scope=SELECTION` or `SELECTION_AND_NEIGHBORS` for
+LOCAL_QUALITY, NON_MANIFOLD, DEGENERATE, ORIENTATION and SELF_INTERSECTION.
+Vertex/edge selections expand to incident faces; the neighbor scope adds one
+vertex-adjacent face ring. Intersections include the surrounding Mesh. Results
+include denominators, remaining boundary edges, issue indices and intersection
+pairs, complete/unchecked coverage, and connected face components. In this new
+scope, tolerance is a local length and the area threshold is its square. Contact
+checks report a numerical floor derived from extent and two float32 coordinate ULPs;
+contact arithmetic is rebased locally. Shared vertices/edges excuse only contact
+on that shared geometry. Existing neighborhood issues and introduced candidate
+issues are separate in mesh.edit evidence and Map creation evidence. A standalone
+validation is explicitly CURRENT_STATE_ONLY; compare recorded baselines through
+the Map rather than inferring history from current indices. Intentional open ends
+are reported even when the requested central seam is completely closed.
+
+All seven deformation operations optionally accept `maximum_displacement`, in
+world units. The limit measures each vertex's cumulative travel across iterations,
+including round trips, not only its net offset. A violation restores the call.
+Build a separate fixed-boundary SelectionSet and derive editable interior/transition
+sets from Maps: a sewn boundary may no longer be a topological boundary.
+
+Batch v6 resolves nested `vertex_aliases`, path `selection_alias`/`start_vertex_alias`
+and closed-loop `corner_aliases`. Exact vertices require singleton SURVIVED remaps;
+paths are reconstructed and validated after every remap. Known live patch geometry
+is preflighted before the guard; conditions depending on earlier writes are checked
+at runtime and restore the transaction begin baseline on failure. Deformation rebinds
+all same-topology target selections. Incomplete validation cannot satisfy assertions.
+
+`viewport.capture.boundary_annotations` accepts up to four directed paths and 64
+problem vertex references, with a 4096-vertex drawing budget. Colors, starts, arrows
+and problem crosses are composited into the call-local image. The metadata declares
+PROJECTED_XRAY visibility; annotations do not create scene objects or real selection.
+
+The request's absolute queue deadline reaches search, generation, attribute solving
+and local checks. Patch output is capped at 4096 faces; native writeback reserves time
+and remains non-interruptible, as does recovery. UV unwrap/pack uses typed temporary
+UV selection storage and writes only selected loops; tile offsets never touch old
+unselected UVs. UV_OVERLAP tests positive area above 1e-12, excluding legal edge/point
+contact. These changes preserve the old attribute and transaction policies.
 
 ## 1. Why this project exists
 
 The workflow originally used the community ahujasid/blender-mcp. Its connected tool
 surface was useful for scene summaries, object information, viewport screenshots, and
 asset integrations, but existing-scene editing was effectively concentrated in one
-unrestricted execute_blender_code escape hatch. Blender Research MCP 0.16.0 now covers
+unrestricted execute_blender_code escape hatch. Blender Research MCP 0.17.0 now covers
 the validated observation/lifecycle/static-authoring path, unified typed object,
 Light, and Camera settings, four bounded non-destructive Modifier families, and exact
 base-Mesh component editing with transaction snapshots; the older bridge is no longer
@@ -488,6 +552,13 @@ deletion is finalized only after all commit guards pass. Rollback only overwrite
 that still matches the last Agent write. Blender Undo is not the transaction contract
 because user and Agent actions can interleave.
 
+Transaction-owned structure guards follow the same last-Agent-write rule. If a later
+operation in the same transaction places or removes an object in an already guarded
+Collection, that writer refreshes the expected Collection fingerprint. This is owned
+progress, not an external conflict. A user or unrelated operator changing that
+Collection after the last Agent write still produces `STRUCTURE_CONFLICT`, and rollback
+does not overwrite the user's structure.
+
 Transaction capability v4 adds `MeshEditDelta` and `MeshSnapshotGuard`. The first edit
 of one working Mesh owns one baseline `Mesh.copy()`; subsequent edits reuse it and
 advance the expected fingerprint. Component indices are never treated as persistent
@@ -503,6 +574,30 @@ Transaction capability v9 extends Mesh snapshot evidence with UV roles, coordina
 pins, seams, object Group schemas, and deform values. Shape-Key Meshes remain topology
 immutable but may receive topology-stable UV or weight changes. Attribute writes never
 make Blender or UV Editor selection part of the hard transaction state.
+
+Version 0.17.1 keeps transaction capability 13 and repairs an ownership-integration
+gap exposed by materializing into a Collection created earlier in the same transaction.
+It also treats paged UV inspection as bounded evidence: only `SUMMARY` computes global
+island and degenerate-face aggregates, while `LOOPS`, `FACES`, and `SEAMS` compute their
+requested page and report deferred global metrics. The MCP route uses the existing
+30-second protocol ceiling, and an actual request timeout remains `REQUEST_TIMEOUT`
+rather than being retried and surfaced as `CONNECTION_LOST`.
+
+Version 0.17.2 preserves unchanged Vertex Group identities during call recovery.
+Topology snapshots are restored through an exact BMesh write, not `clear_geometry`
+(which also removes Group schemas). Neither recovery nor conflict handling blindly
+refreshes a guard to accept unknown user changes. UV/Pin restoration and Join/Weld
+copying use typed, freshly acquired attribute accessors to avoid stale CustomData
+wrappers during optional-layer allocation.
+
+ComponentMaps use native BMesh element keys and explicit lineage tags, not Python
+wrapper identity or interpolated integer vertex tags. Edge-derived subdivision
+vertices are CREATED in the vertex domain, not guessed descendants of an endpoint.
+Completed BMesh writes retain their edge table and verify edge endpoints and face
+order before publishing Maps. Do not run `calc_edges=True` after establishing a
+Map: large-mesh edge regeneration can reorder the table without changing geometry.
+Join edge SelectionSets are sorted separately from source-index-ordered lineage.
+Public schemas, protocol 1, and transaction capability 13 remain unchanged.
 
 ## 9. Development phases
 
@@ -672,7 +767,9 @@ Completed on Blender 4.2.23 LTS with deterministic Library fixtures and a tempor
 
 ### Phase 13 — cross-object Mesh composition
 
-Status: accepted for 0.17.0 planning; implementation not started.
+Status: implemented for 0.17.0; deterministic Blender 4.2.23 commit/save/reload
+evidence passed. Aggregate same-process rollback stress and the real-character cage
+composition remain pending; see the validation record.
 
 - Preflight and join 2–32 exact BASE Mesh-object inputs into one independent output.
 - Reconcile material, UV, color and weight schemas only through explicit policies.
@@ -681,6 +778,9 @@ Status: accepted for 0.17.0 planning; implementation not started.
 - Weld revision-bound boundary SelectionSets as a separate deterministic topology
   operation.
 - Compose join and weld through batch v5 with guarded source retention or deletion.
+- Keep up to 192 SelectionSets and 128 ComponentMaps so one 32-source join can return
+  all promised branch/domain/boundary evidence without self-evicting; aggregate component
+  and relation budgets remain unchanged.
 
 See `docs/roadmap/0.17.0-cross-object-mesh-composition.md` and decision 0019.
 

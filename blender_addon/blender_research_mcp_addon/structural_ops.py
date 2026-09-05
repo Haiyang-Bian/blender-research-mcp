@@ -369,6 +369,10 @@ def _remove_data_block(kind: str, resource: Any) -> None:
 def restore_structural_delta(delta: StructuralDelta) -> dict[str, Any]:
     """Undo one validated structural delta.  Callers iterate in reverse order."""
 
+    if delta.kind == "mesh_join" and delta.action == "create_resource":
+        from .mesh_join_ops import restore_mesh_join
+
+        return restore_mesh_join(delta)
     if delta.action == "create_resource":
         resource = delta.payload["resource"]
         kind = str(delta.payload["resource_kind"])

@@ -7,10 +7,21 @@ in this order when starting a new implementation task:
    phases, and open decisions.
    - [Post-0.16 model-editing completeness direction](requirements/model-editing-completeness.md)
      — accepted 0.17–0.20 capability sequence.
+   - [Explicit boundary and surface-patching requirements](requirements/explicit-boundary-surface-patching.md)
+     — approved 0.17.3–0.17.5 boundary diagnostics and explicit patching sequence.
+   - [Explicit boundary roadmap](roadmap/0.17.x-explicit-boundary-patching.md)
+     and [acceptance](validation/2026-09-03-explicit-boundary-patching.md)
+     — staged implementation and evidence; full real-character acceptance is separate.
    - [0.17.0 cross-object Mesh composition roadmap](roadmap/0.17.0-cross-object-mesh-composition.md)
-     — next implementation plan for exact join, lineage branches, and seam welding.
+     — implemented exact join, lineage branches, seam welding, and bounded live gate.
+   - [0.17.0 cross-object Mesh composition validation](validation/2026-09-01-cross-object-mesh-composition.md)
+     — deterministic pass plus explicit aggregate-stress and character-cage gaps.
+   - [0.17.1 Collection rollback and bounded UV inspection validation](validation/2026-09-01-transaction-rollback-collection-guard.md)
+     — guarded nested-Collection recovery, disconnect rollback, and real-character UV paging.
+   - [0.17.2 Mesh recovery and Join hotfix](validation/2026-09-03-mesh-recovery-and-join-hotfix.md)
+     — Group identity preservation, verified edge lineage, and native UV/Pin regression evidence.
    - [Cross-object Mesh composition decision](decisions/0019-cross-object-mesh-composition.md)
-     — planned transaction-v13 Mesh-domain authority.
+     — implemented transaction-v13 Mesh-domain authority.
 2. [0.16.0 controlled Library and template coverage roadmap](roadmap/0.16.0-library-template-coverage.md)
    — accepted local Library evidence, transactional append, and batch-v4 direction.
 3. [Controlled Library and template coverage decision](decisions/0018-controlled-library-template-coverage.md)
@@ -103,7 +114,7 @@ ComponentCatalogs, exact Collection/object-parent organization, and cross-object
 automated and Blender 4.2.23 gates are recorded in
 [the 0.15.1 validation record](validation/2026-09-01-component-catalog-assembly.md).
 
-Version 0.16.0 is the current validated milestone. It adds SHA-bound local
+Version 0.16.0 is the latest fully live-validated milestone. It adds SHA-bound local
 Library inspection, transactionally guarded local-data append, and batch-v4 template
 coverage composition. See the
 [0.16 roadmap](roadmap/0.16.0-library-template-coverage.md) and
@@ -111,13 +122,25 @@ coverage composition. See the
 deterministic Blender, and `test-model.blend` coverage gates are recorded in
 [the 0.16 validation record](validation/2026-09-01-library-template-coverage.md).
 
-Version 0.17.0 is the next planned milestone. It will add read-only join preflight,
+Version 0.17.0 is implemented with automated acceptance and its deterministic Blender
+commit/save/reload gate complete. The aggregate same-process rollback stress and the
+real-character cage-composition gate remain pending. It adds read-only join preflight,
 transactional independent Mesh composition, one exact JOIN_BRANCH map per source,
 explicit SelectionSet-based seam welding, and batch v5. It deliberately precedes
 Shape-Key, bone-authoring, and Modifier-Apply authority. See the
 [0.17 roadmap](roadmap/0.17.0-cross-object-mesh-composition.md),
 [decision 0019](decisions/0019-cross-object-mesh-composition.md), and the
-[post-0.16 completeness direction](requirements/model-editing-completeness.md).
+[post-0.16 completeness direction](requirements/model-editing-completeness.md). Exact
+evidence and the remaining limitation are recorded in
+[the 0.17 validation record](validation/2026-09-01-cross-object-mesh-composition.md).
+
+Version 0.17.1 is the current validated patch. It refreshes transaction-owned
+Collection structure guards whenever a later Agent operation places or removes an
+object, while continuing to reject real external Collection edits. It also bounds
+non-summary UV inspection work, gives UV inspection the existing 30-second protocol
+deadline, and preserves `REQUEST_TIMEOUT` instead of masking it as a reconnect failure.
+The automated and Blender 4.2.23 evidence is recorded in
+[the 0.17.1 validation record](validation/2026-09-01-transaction-rollback-collection-guard.md).
 
 Version 0.12.0 adds session-local revision-bound SelectionSets, read-only evaluated
 SurfaceRefs, topology-preserving surface deformation, and quantitative Mesh validation;

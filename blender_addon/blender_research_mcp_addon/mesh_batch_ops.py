@@ -19,6 +19,7 @@ from .library_ops import (
     validate_library_source,
 )
 from .mesh_attribute_transfer_ops import transfer_attribute
+from .mesh_batch_patch import explicit_patch, patch_refs, resolve_patch_aliases
 from .mesh_component_catalog_ops import (
     prepare_component_catalog,
     select_component_catalog,
@@ -26,6 +27,7 @@ from .mesh_component_catalog_ops import (
 )
 from .mesh_component_map import compose_component_map, remap_selection
 from .mesh_deform_ops import DEFORM_OPERATIONS, edit_mesh_deform
+from .mesh_join_ops import join_meshes, preflight_join, weld_mesh_vertices
 from .mesh_materialization_ops import materialize_mesh
 from .mesh_ops import (
     MeshOperationError,
@@ -49,6 +51,7 @@ from .mesh_weight_ops import (
     group_schema_fingerprint,
     weights_fingerprint,
 )
+from .modifier_ops import modifier_stack_fingerprint
 from .object_settings_ops import apply_object_settings
 from .rig_ops import bind_rig, bone_schema_fingerprint
 from .scene_organization_ops import (
@@ -119,6 +122,35 @@ def _live_target(alias: str, obj: Any) -> dict[str, Any]:
         "uv_fingerprint": uv_fingerprint(mesh),
         "group_schema_fingerprint": group_schema_fingerprint(obj),
         "weights_fingerprint": weights_fingerprint(mesh),
+    }
+
+
+def _join_source_params(
+    target: dict[str, Any], selection_ids: list[str] | tuple[str, ...]
+) -> dict[str, Any]:
+    obj = bpy.data.objects.get(target["object_name"])
+    if obj is None or obj.type != "MESH" or obj.data is None:
+        _batch_error("MESH_BATCH_TARGET_MISMATCH", "Join source target disappeared")
+    mesh = obj.data
+    return {
+        "object_name": obj.name,
+        "expected_object_identity": session_identity("object", obj),
+        "expected_object_structure_fingerprint": structure_fingerprint("object", obj),
+        "mesh_name": mesh.name,
+        "expected_mesh_identity": session_identity("mesh", mesh),
+        "expected_mesh_users": int(mesh.users),
+        "expected_mesh_user_objects": [
+            {"object_name": name, "expected_object_identity": identity}
+            for name, identity in mesh_user_refs(mesh)
+        ],
+        "expected_mesh_fingerprint": mesh_fingerprint(mesh),
+        "expected_mesh_revision_id": mesh_revision_id(mesh),
+        "expected_uv_fingerprint": uv_fingerprint(mesh),
+        "expected_group_schema_fingerprint": group_schema_fingerprint(obj),
+        "expected_weights_fingerprint": weights_fingerprint(mesh),
+        "expected_shape_key_state_fingerprint": shape_key_state_fingerprint(obj),
+        "expected_modifier_stack_fingerprint": modifier_stack_fingerprint(obj),
+        "selection_ids": list(selection_ids),
     }
 
 
@@ -305,6 +337,44 @@ def _library_output_params(
     return result
 
 
+def _join_params(
+    step: dict[str, Any],
+    targets: dict[str, dict[str, Any]],
+    selections: dict[str, dict[str, Any]],
+    collections: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    sources = []
+    for source in step["sources"]:
+        target_alias = str(source["target_alias"])
+        selection_ids = [
+            selections[str(alias)]["selection_id"] for alias in source.get("selection_aliases", [])
+        ]
+        sources.append(_join_source_params(targets[target_alias], selection_ids))
+    collection = _collection_for_alias(str(step["collection_alias"]), collections)
+    coordinate = dict(step["coordinate_frame"])
+    if coordinate["type"] == "SOURCE_OBJECT":
+        target_alias = str(coordinate.pop("source_target_alias"))
+        source_obj = _object_for_alias(target_alias, targets, {})
+        coordinate.update(
+            {
+                "source_object_name": source_obj.name,
+                "expected_source_object_identity": session_identity("object", source_obj),
+            }
+        )
+    return {
+        "sources": sources,
+        "output": {
+            "new_object_name": step["new_object_name"],
+            "new_mesh_name": step["new_mesh_name"],
+            **_live_collection(collection),
+            "coordinate_frame": coordinate,
+            "source_disposition": step.get("source_disposition", "KEEP"),
+        },
+        "attributes": step["attributes"],
+        "dependencies": step["dependencies"],
+    }
+
+
 def _live_armature(obj: Any) -> dict[str, Any]:
     if obj.type != "ARMATURE" or obj.data is None:
         _batch_error(
@@ -475,9 +545,7 @@ def _preflight(
         elif kind == "collection":
             alias = _reserve(alias_kinds, raw.get("alias"), "collection")
             name = raw.get("collection_name")
-            collection = (
-                bpy.data.collections.get(name) if isinstance(name, str) else None
-            )
+            collection = bpy.data.collections.get(name) if isinstance(name, str) else None
             if collection is None:
                 _batch_error(
                     "MESH_BATCH_TARGET_MISMATCH", f"Collection input does not exist: {name}"
@@ -508,9 +576,7 @@ def _preflight(
                 )
             catalog = book.component_catalog(catalog_id)
             obj, _mesh = validate_component_catalog(catalog)
-            if session_identity("object", obj) != targets[target_alias][
-                "expected_object_identity"
-            ]:
+            if session_identity("object", obj) != targets[target_alias]["expected_object_identity"]:
                 _batch_error(
                     "MESH_BATCH_TARGET_MISMATCH",
                     f"ComponentCatalog input {alias} does not belong to {target_alias}",
@@ -553,11 +619,66 @@ def _preflight(
                 _require_alias(alias_kinds, alias, "selection")
             _reserve(alias_kinds, step.get("output_alias"), "selection")
         elif step_type == "mesh_edit":
-            _require_alias(alias_kinds, step.get("target_alias"), "target")
+            target_alias = _require_alias(alias_kinds, step.get("target_alias"), "target")
             operation = step.get("operation")
             if not isinstance(operation, dict):
                 _batch_error("MESH_BATCH_INVALID", "mesh_edit requires operation")
-            _require_alias(alias_kinds, operation.get("selection_alias"), "selection")
+            if operation.get("type") == "weld_vertices":
+                selection_aliases = operation.get("selection_aliases")
+                if not isinstance(selection_aliases, list):
+                    _batch_error(
+                        "MESH_BATCH_INVALID",
+                        "weld_vertices requires selection_aliases",
+                    )
+                for selection_alias in selection_aliases:
+                    resolved = _require_alias(alias_kinds, selection_alias, "selection")
+                    existing = input_selections.get(resolved)
+                    if existing is not None and existing["target_alias"] != target_alias:
+                        _batch_error(
+                            "MESH_BATCH_TARGET_MISMATCH",
+                            f"Selection {resolved} does not belong to {target_alias}",
+                        )
+                topology_steps += 1
+            elif explicit_patch(operation):
+                for alias, domain in patch_refs(operation):
+                    _require_alias(alias_kinds, alias, "selection")
+                    if alias in input_selections:
+                        binding = input_selections[alias]
+                        record = book.selection(binding["selection_id"])
+                        if binding["target_alias"] != target_alias or record.domain != domain:
+                            _batch_error(
+                                "MESH_BATCH_TARGET_MISMATCH",
+                                "Nested patch reference has wrong target or domain",
+                            )
+                        if domain == "VERTEX" and len(record.indices) != 1:
+                            _batch_error(
+                                "MESH_BATCH_INVALID", "Exact vertex alias must be a singleton"
+                            )
+                # Resolve known live inputs before entering the batch guard. A
+                # preceding write can change adjacency or geometry, so those
+                # conditions remain runtime checks with whole-transaction rollback.
+                prior_writes = any(
+                    previous["type"]
+                    not in {
+                        "selection_query",
+                        "selection_derive",
+                        "mesh_validate",
+                        "mesh_surface_prepare",
+                        "mesh_surface_query",
+                    }
+                    for previous in steps[:index]
+                )
+                if not prior_writes and all(
+                    alias in input_selections for alias, _ in patch_refs(operation)
+                ):
+                    from .mesh_patch_ops import prepare_patch, validate_patch
+
+                    obj, mesh = _validate_target(targets[target_alias])
+                    concrete = resolve_patch_aliases(operation, input_selections)
+                    concrete = validate_patch(concrete, len(mesh.materials))
+                    prepare_patch(book, obj, mesh, concrete)
+            else:
+                _require_alias(alias_kinds, operation.get("selection_alias"), "selection")
             if operation.get("type") in {"project", "shrinkwrap"}:
                 _require_alias(alias_kinds, operation.get("surface_alias"), "surface")
             if operation.get("type") in TOPOLOGY_OPERATIONS:
@@ -575,6 +696,71 @@ def _preflight(
                     if value is not None:
                         _reserve(alias_kinds, value, "selection")
             capacity += 1
+        elif step_type == "mesh_join":
+            source_aliases = []
+            for source in step.get("sources", []):
+                if not isinstance(source, dict):
+                    _batch_error("MESH_BATCH_INVALID", "mesh_join sources must be objects")
+                target_alias = _require_alias(alias_kinds, source.get("target_alias"), "target")
+                source_aliases.append(target_alias)
+                for selection_alias in source.get("selection_aliases", []):
+                    resolved = _require_alias(alias_kinds, selection_alias, "selection")
+                    existing = input_selections.get(resolved)
+                    if existing is not None and existing["target_alias"] != target_alias:
+                        _batch_error(
+                            "MESH_BATCH_TARGET_MISMATCH",
+                            f"Selection {resolved} does not belong to {target_alias}",
+                        )
+                _reserve(alias_kinds, source.get("map_alias"), "component_map")
+                _reserve(
+                    alias_kinds,
+                    source.get("boundary_selection_alias"),
+                    "selection",
+                )
+                for rebound_alias in source.get("rebound_selection_aliases", []):
+                    _reserve(alias_kinds, rebound_alias, "selection")
+            coordinate = step.get("coordinate_frame", {})
+            if (
+                coordinate.get("type") == "SOURCE_OBJECT"
+                and coordinate.get("source_target_alias") not in source_aliases
+            ):
+                _batch_error(
+                    "MESH_BATCH_INVALID",
+                    "SOURCE_OBJECT coordinate frame must reference a join source",
+                )
+            _require_alias(alias_kinds, step.get("collection_alias"), "collection")
+            _reserve(alias_kinds, step.get("output_target_alias"), "target")
+            object_name = step.get("new_object_name")
+            mesh_name = step.get("new_mesh_name")
+            if not isinstance(object_name, str) or object_name in reserved_object_names:
+                _batch_error(
+                    "MESH_BATCH_INVALID",
+                    f"Batch object output name is not unique: {object_name}",
+                )
+            if not isinstance(mesh_name, str) or mesh_name in reserved_mesh_names:
+                _batch_error(
+                    "MESH_BATCH_INVALID",
+                    f"Batch Mesh output name is not unique: {mesh_name}",
+                )
+            reserved_object_names.add(object_name)
+            reserved_mesh_names.add(mesh_name)
+            if (
+                all(alias in targets for alias in source_aliases)
+                and str(step["collection_alias"]) in input_collections
+            ):
+                preflight_join(
+                    book,
+                    _join_params(step, targets, input_selections, input_collections),
+                )
+            topology_steps += 1
+            capacity += 1 + (
+                len(source_aliases)
+                if step.get("source_disposition", "KEEP") == "DELETE_ON_COMMIT"
+                else 0
+            )
+            if step.get("source_disposition", "KEEP") == "DELETE_ON_COMMIT":
+                for source_alias in source_aliases:
+                    alias_kinds[source_alias] = "terminated_target"
         elif step_type == "mesh_separate":
             _require_alias(alias_kinds, step.get("target_alias"), "target")
             _require_alias(alias_kinds, step.get("selection_alias"), "selection")
@@ -585,9 +771,7 @@ def _preflight(
             topology_steps += 1
             capacity += 2
         elif step_type == "component_catalog_prepare":
-            selection_alias = _require_alias(
-                alias_kinds, step.get("selection_alias"), "selection"
-            )
+            selection_alias = _require_alias(alias_kinds, step.get("selection_alias"), "selection")
             existing_selection = input_selections.get(selection_alias)
             if existing_selection is not None:
                 record = book.selection(existing_selection["selection_id"])
@@ -606,9 +790,7 @@ def _preflight(
             existing_catalog = input_catalogs.get(catalog_alias)
             if existing_catalog is not None:
                 catalog = book.component_catalog(existing_catalog["component_catalog_id"])
-                available = {
-                    component.component_identity for component in catalog.components
-                }
+                available = {component.component_identity for component in catalog.components}
                 requested = step.get("component_identities")
                 if not isinstance(requested, list) or any(
                     identity not in available for identity in requested
@@ -619,9 +801,7 @@ def _preflight(
                     )
             _reserve(alias_kinds, step.get("output_selection_alias"), "selection")
         elif step_type == "mesh_materialize":
-            source_alias = _require_alias(
-                alias_kinds, step.get("source_target_alias"), "target"
-            )
+            source_alias = _require_alias(alias_kinds, step.get("source_target_alias"), "target")
             if step.get("collection_alias") is not None:
                 _require_alias(alias_kinds, step.get("collection_alias"), "collection")
             _reserve(alias_kinds, step.get("output_target_alias"), "target")
@@ -639,9 +819,7 @@ def _preflight(
             if source is not None and isinstance(evaluation, dict):
                 source_obj = bpy.data.objects.get(source["object_name"])
                 if source_obj is None:
-                    _batch_error(
-                        "MESH_BATCH_TARGET_MISMATCH", "Materialization source disappeared"
-                    )
+                    _batch_error("MESH_BATCH_TARGET_MISMATCH", "Materialization source disappeared")
                 if evaluation.get("type") == "SHAPE_KEYS_CURRENT" and (
                     shape_key_state_fingerprint(source_obj)
                     != evaluation.get("expected_shape_key_state_fingerprint")
@@ -660,12 +838,8 @@ def _preflight(
                     validate_surface(book.surface(surface_id))
             capacity += 1
         elif step_type == "mesh_extract":
-            target_alias = _require_alias(
-                alias_kinds, step.get("target_alias"), "target"
-            )
-            selection_alias = _require_alias(
-                alias_kinds, step.get("selection_alias"), "selection"
-            )
+            target_alias = _require_alias(alias_kinds, step.get("target_alias"), "target")
+            selection_alias = _require_alias(alias_kinds, step.get("selection_alias"), "selection")
             if step.get("collection_alias") is not None:
                 _require_alias(alias_kinds, step.get("collection_alias"), "collection")
             _reserve(alias_kinds, step.get("new_target_alias"), "target")
@@ -699,12 +873,8 @@ def _preflight(
                         "selection_id": input_selections[selection_alias]["selection_id"],
                         "new_object_name": new_name,
                         "output_policy": step.get("output_policy"),
-                        "source_attribute_policy": step.get(
-                            "source_attribute_policy", {}
-                        ),
-                        "extracted_attribute_policy": step.get(
-                            "extracted_attribute_policy", {}
-                        ),
+                        "source_attribute_policy": step.get("source_attribute_policy", {}),
+                        "extracted_attribute_policy": step.get("extracted_attribute_policy", {}),
                         "collection_name": collection_evidence.get("collection_name"),
                         "expected_collection_identity": collection_evidence.get(
                             "expected_collection_identity"
@@ -714,9 +884,7 @@ def _preflight(
             topology_steps += 1
             capacity += 2
         elif step_type == "library_append":
-            library_alias = _require_alias(
-                alias_kinds, step.get("library_alias"), "library"
-            )
+            library_alias = _require_alias(alias_kinds, step.get("library_alias"), "library")
             source = input_libraries[library_alias]
             entry = step.get("entry")
             output = step.get("output")
@@ -763,16 +931,10 @@ def _preflight(
                         "Collection Library output requires a parent",
                     )
                 if parent.get("type") == "COLLECTION_ALIAS":
-                    _require_alias(
-                        alias_kinds, parent.get("collection_alias"), "collection"
-                    )
+                    _require_alias(alias_kinds, parent.get("collection_alias"), "collection")
                 elif parent.get("type") == "SCENE_ROOT":
                     scene_name = parent.get("scene_name")
-                    scene = (
-                        bpy.data.scenes.get(scene_name)
-                        if isinstance(scene_name, str)
-                        else None
-                    )
+                    scene = bpy.data.scenes.get(scene_name) if isinstance(scene_name, str) else None
                     actual_parent = (
                         {
                             "expected_scene_identity": session_identity("scene", scene),
@@ -845,9 +1007,7 @@ def _preflight(
                     )
                 reserved_collection_names.add(new_name)
             exports = step.get("exports", [])
-            export_names = (
-                set(library_entry_names(source, "OBJECT")) if exports else set()
-            )
+            export_names = set(library_entry_names(source, "OBJECT")) if exports else set()
             for export in exports:
                 source_name = export.get("source_object_name")
                 expected_identity = export.get("expected_entry_identity")
@@ -900,11 +1060,7 @@ def _preflight(
                 _require_alias(alias_kinds, parent.get("collection_alias"), "collection")
             elif parent.get("type") == "SCENE_ROOT":
                 scene_name = parent.get("scene_name")
-                scene = (
-                    bpy.data.scenes.get(scene_name)
-                    if isinstance(scene_name, str)
-                    else None
-                )
+                scene = bpy.data.scenes.get(scene_name) if isinstance(scene_name, str) else None
                 actual = (
                     {
                         "expected_scene_identity": session_identity("scene", scene),
@@ -948,9 +1104,7 @@ def _preflight(
             capacity += 1
         elif step_type == "object_parent_clear":
             _require_alias_any(alias_kinds, step.get("child_alias"), ("target", "object"))
-            _require_alias_any(
-                alias_kinds, step.get("expected_parent_alias"), ("target", "object")
-            )
+            _require_alias_any(alias_kinds, step.get("expected_parent_alias"), ("target", "object"))
             capacity += 1
         elif step_type == "rig_bind":
             _require_alias(alias_kinds, step.get("mesh_target_alias"), "target")
@@ -1025,12 +1179,16 @@ def _edit_operation(
     selections: dict[str, dict[str, Any]],
     surfaces: dict[str, str],
 ) -> dict[str, Any]:
-    result = {
-        key: value
-        for key, value in operation.items()
-        if key not in {"selection_alias", "surface_alias"}
-    }
-    result["selection_id"] = selections[str(operation["selection_alias"])]["selection_id"]
+    if explicit_patch(operation):
+        return resolve_patch_aliases(operation, selections)
+    excluded = {"selection_alias", "selection_aliases", "surface_alias"}
+    result = {key: value for key, value in operation.items() if key not in excluded}
+    if operation.get("type") == "weld_vertices":
+        result["selection_ids"] = [
+            selections[str(alias)]["selection_id"] for alias in operation["selection_aliases"]
+        ]
+    else:
+        result["selection_id"] = selections[str(operation["selection_alias"])]["selection_id"]
     if operation.get("surface_alias") is not None:
         result["surface_id"] = surfaces[str(operation["surface_alias"])]
     return result
@@ -1101,6 +1259,19 @@ def _remap_target_selections(
     for alias, binding in selections.items():
         if binding["target_alias"] != target_alias:
             continue
+        if binding.get("exact_vertex"):
+            source = book.selection(binding["selection_id"])
+            record = book.component_map(component_map_id)
+            relations = {r.source_index: r for r in record.relations["VERTEX"]}
+            if len(source.indices) != 1 or any(
+                i not in relations
+                or relations[i].relation != "SURVIVED"
+                or len(relations[i].target_indices) != 1
+                for i in source.indices
+            ):
+                _batch_error(
+                    "MESH_BATCH_REFERENCE_AMBIGUOUS", "Exact vertex did not survive this operation"
+                )
         result = remap_selection(
             book,
             {
@@ -1136,6 +1307,8 @@ def _append_map(
 
 
 def _assert_validation(result: dict[str, Any], assertions: list[dict[str, Any]]) -> None:
+    if assertions and result.get("complete") is False:
+        _batch_error("MESH_BATCH_ASSERTION_FAILED", "Validation coverage is incomplete")
     distances = result.get("distances") if isinstance(result.get("distances"), dict) else {}
     for assertion in assertions:
         kind = assertion.get("type")
@@ -1184,6 +1357,13 @@ def execute_mesh_batch(
 ) -> dict[str, Any]:
     batch_id = str(uuid.uuid4())
     prepared = _preflight(transaction, book, params)
+    exact_vertices = {
+        alias
+        for step in params["steps"]
+        if step["type"] == "mesh_edit" and explicit_patch(step["operation"])
+        for alias, domain in patch_refs(step["operation"])
+        if domain == "VERTEX"
+    }
     targets: dict[str, dict[str, Any]] = prepared["targets"]
     selections: dict[str, dict[str, Any]] = prepared["selections"]
     surfaces: dict[str, str] = prepared["surfaces"]
@@ -1196,6 +1376,7 @@ def execute_mesh_batch(
     validations: dict[str, dict[str, Any]] = {}
     bindings: dict[str, dict[str, Any]] = {}
     library_appends: dict[str, dict[str, Any]] = {}
+    mesh_joins: dict[str, dict[str, Any]] = {}
     resources_before = _resource_counts(book)
     branches = {
         alias: {
@@ -1245,13 +1426,22 @@ def execute_mesh_batch(
                 report = result
             elif step_type == "mesh_edit":
                 target_alias = str(step["target_alias"])
+                for alias in exact_vertices & selections.keys():
+                    selections[alias]["exact_vertex"] = True
                 operation = _edit_operation(step["operation"], selections, surfaces)
-                selection_alias = str(step["operation"]["selection_alias"])
-                if selections[selection_alias]["target_alias"] != target_alias:
-                    _batch_error(
-                        "MESH_BATCH_TARGET_MISMATCH",
-                        f"Selection {selection_alias} does not belong to {target_alias}",
-                    )
+                selection_aliases = (
+                    [alias for alias, _domain in patch_refs(step["operation"])]
+                    if explicit_patch(step["operation"])
+                    else [str(alias) for alias in step["operation"]["selection_aliases"]]
+                    if operation["type"] == "weld_vertices"
+                    else [str(step["operation"]["selection_alias"])]
+                )
+                for selection_alias in selection_aliases:
+                    if selections[selection_alias]["target_alias"] != target_alias:
+                        _batch_error(
+                            "MESH_BATCH_TARGET_MISMATCH",
+                            f"Selection {selection_alias} does not belong to {target_alias}",
+                        )
                 call_params = {
                     **_target_params(targets[target_alias], str(step["data_scope"])),
                     "transaction_id": transaction.transaction_id,
@@ -1260,6 +1450,8 @@ def execute_mesh_batch(
                 operation_type = operation["type"]
                 if operation_type in DEFORM_OPERATIONS:
                     result = edit_mesh_deform(transaction, book, captures, call_params)
+                elif operation_type == "weld_vertices":
+                    result = weld_mesh_vertices(transaction, book, call_params)
                 elif operation_type in TOPOLOGY_OPERATIONS:
                     result = edit_mesh_topology(transaction, book, call_params)
                 else:
@@ -1272,18 +1464,29 @@ def execute_mesh_batch(
                 component_map = result.get("component_map")
                 remaps: list[dict[str, Any]] = []
                 composed = None
+                joined_branch_compositions: dict[str, Any] = {}
                 if isinstance(component_map, dict):
                     component_map_id = str(component_map["component_map_id"])
                     remaps = _remap_target_selections(
                         book, selections, target_alias, component_map_id
                     )
                     composed = _append_map(book, branches[target_alias], component_map_id)
+                    for branch_alias, branch_state in branches.items():
+                        if branch_alias.startswith(f"{target_alias}:"):
+                            joined_branch_compositions[branch_alias] = _append_map(
+                                book, branch_state, component_map_id
+                            )
                     if step.get("map_alias") is not None:
                         maps[str(step["map_alias"])] = component_map_id
                 elif result.get("rebound_selection") is not None:
-                    selections[selection_alias]["selection_id"] = result["rebound_selection"][
-                        "selection_id"
-                    ]
+                    if operation_type in DEFORM_OPERATIONS and result.get("changed"):
+                        remaps = _rebind_target_selections_same_topology(
+                            book, selections, target_alias, obj
+                        )
+                    else:
+                        selections[selection_aliases[0]]["selection_id"] = result[
+                            "rebound_selection"
+                        ]["selection_id"]
                 created_aliases = step.get("created_selection_aliases") or {}
                 created = result.get("created_selections") or {}
                 for domain_key, alias in created_aliases.items():
@@ -1300,7 +1503,78 @@ def execute_mesh_batch(
                             "remap_mode": "ALL_MAPPED",
                             "weight_merge": "MAX",
                         }
-                report = {**result, "automatic_remaps": remaps, "composed_component_map": composed}
+                report = {
+                    **result,
+                    "automatic_remaps": remaps,
+                    "composed_component_map": composed,
+                    "joined_branch_compositions": joined_branch_compositions,
+                }
+            elif step_type == "mesh_join":
+                call_params = _join_params(step, targets, selections, collections)
+                result = join_meshes(transaction, book, call_params)
+                changed = True
+                output_alias = str(step["output_target_alias"])
+                output_obj = bpy.data.objects.get(result["output_object"]["name"])
+                if output_obj is None:
+                    _batch_error("MESH_JOIN_FAILED", "Joined output Object disappeared")
+                targets[output_alias] = _live_target(output_alias, output_obj)
+                branches[output_alias] = {
+                    "direct_component_map_ids": [],
+                    "composed_component_map_id": None,
+                    "composed_component_map": None,
+                }
+                branch_reports = result["branches"]
+                for source_spec, branch in zip(step["sources"], branch_reports, strict=True):
+                    source_alias = str(source_spec["target_alias"])
+                    map_id = str(branch["component_map"]["component_map_id"])
+                    maps[str(source_spec["map_alias"])] = map_id
+                    boundary_alias = str(source_spec["boundary_selection_alias"])
+                    selections[boundary_alias] = {
+                        "selection_id": branch["boundary_selection"]["selection_id"],
+                        "target_alias": output_alias,
+                        "remap_mode": "ALL_MAPPED",
+                        "weight_merge": "MAX",
+                    }
+                    for input_alias, rebound_alias, rebound in zip(
+                        source_spec.get("selection_aliases", []),
+                        source_spec.get("rebound_selection_aliases", []),
+                        branch["rebound_selections"],
+                        strict=True,
+                    ):
+                        source_binding = selections[str(input_alias)]
+                        selections[str(rebound_alias)] = {
+                            "selection_id": rebound["selection_id"],
+                            "target_alias": output_alias,
+                            "remap_mode": source_binding["remap_mode"],
+                            "weight_merge": source_binding["weight_merge"],
+                        }
+                    prior_chain = list(branches[source_alias]["direct_component_map_ids"])
+                    joined_chain = {
+                        "direct_component_map_ids": prior_chain,
+                        "composed_component_map_id": branches[source_alias].get(
+                            "composed_component_map_id"
+                        ),
+                        "composed_component_map": branches[source_alias].get(
+                            "composed_component_map"
+                        ),
+                    }
+                    _append_map(book, joined_chain, map_id)
+                    branches[f"{output_alias}:{source_alias}"] = joined_chain
+                mesh_joins[output_alias] = {
+                    "join_id": result["join_id"],
+                    "source_aliases": [str(source["target_alias"]) for source in step["sources"]],
+                    "source_disposition": result["source_disposition"],
+                    "attribute_schemas": result["attribute_schemas"],
+                    "branches": [
+                        {
+                            "source_alias": str(source["target_alias"]),
+                            "component_map_id": branch["component_map"]["component_map_id"],
+                            "boundary_selection_id": branch["boundary_selection"]["selection_id"],
+                        }
+                        for source, branch in zip(step["sources"], branch_reports, strict=True)
+                    ],
+                }
+                report = result
             elif step_type == "mesh_separate":
                 target_alias = str(step["target_alias"])
                 selection_alias = str(step["selection_alias"])
@@ -1404,9 +1678,7 @@ def execute_mesh_batch(
                 source = targets[source_alias]
                 collection_alias = step.get("collection_alias")
                 collection_evidence = (
-                    collections[str(collection_alias)]
-                    if collection_alias is not None
-                    else {}
+                    collections[str(collection_alias)] if collection_alias is not None else {}
                 )
                 result = materialize_mesh(
                     transaction,
@@ -1443,9 +1715,7 @@ def execute_mesh_batch(
                     "composed_component_map_id": branches[source_alias].get(
                         "composed_component_map_id"
                     ),
-                    "composed_component_map": branches[source_alias].get(
-                        "composed_component_map"
-                    ),
+                    "composed_component_map": branches[source_alias].get("composed_component_map"),
                 }
                 component_map = result.get("component_map")
                 composed = None
@@ -1483,9 +1753,7 @@ def execute_mesh_batch(
                     )
                 collection_alias = step.get("collection_alias")
                 collection_evidence = (
-                    collections[str(collection_alias)]
-                    if collection_alias is not None
-                    else {}
+                    collections[str(collection_alias)] if collection_alias is not None else {}
                 )
                 result = extract_mesh(
                     transaction,
@@ -1525,14 +1793,10 @@ def execute_mesh_batch(
                     "composed_component_map_id": branches[target_alias].get(
                         "composed_component_map_id"
                     ),
-                    "composed_component_map": branches[target_alias].get(
-                        "composed_component_map"
-                    ),
+                    "composed_component_map": branches[target_alias].get("composed_component_map"),
                 }
                 source_composed = _append_map(book, branches[target_alias], source_map_id)
-                extracted_composed = _append_map(
-                    book, branches[new_target_alias], extracted_map_id
-                )
+                extracted_composed = _append_map(book, branches[new_target_alias], extracted_map_id)
                 maps[str(step["source_map_alias"])] = source_map_id
                 maps[str(step["extracted_map_alias"])] = extracted_map_id
                 selections[str(step["new_selection_alias"])] = {
@@ -1595,9 +1859,7 @@ def execute_mesh_batch(
                     object_name = str(step["output"]["new_object_name"])
                     obj = bpy.data.objects.get(object_name)
                     if obj is None:
-                        _batch_error(
-                            "LIBRARY_APPEND_FAILED", "Appended root Object disappeared"
-                        )
+                        _batch_error("LIBRARY_APPEND_FAILED", "Appended root Object disappeared")
                     _register_library_object(
                         root_alias,
                         root_kind,
@@ -1667,9 +1929,7 @@ def execute_mesh_batch(
                 changed = True
                 collection_alias = str(step["output_collection_alias"])
                 collections[collection_alias] = _live_collection(collection)
-                report = organization_result(
-                    transaction, changed=True, collection=collection
-                )
+                report = organization_result(transaction, changed=True, collection=collection)
             elif step_type in {"collection_link_object", "collection_unlink_object"}:
                 collection_alias = str(step["collection_alias"])
                 object_alias = str(step["object_alias"])
@@ -1700,16 +1960,12 @@ def execute_mesh_batch(
             elif step_type in {"object_parent_set", "object_parent_clear"}:
                 child_alias = str(step["child_alias"])
                 child = _object_for_alias(child_alias, targets, objects)
-                parent_alias = str(
-                    step.get("parent_alias") or step.get("expected_parent_alias")
-                )
+                parent_alias = str(step.get("parent_alias") or step.get("expected_parent_alias"))
                 parent = _object_for_alias(parent_alias, targets, objects)
                 parent_params = {
                     "child_name": child.name,
                     "expected_child_identity": session_identity("object", child),
-                    "expected_child_structure_fingerprint": structure_fingerprint(
-                        "object", child
-                    ),
+                    "expected_child_structure_fingerprint": structure_fingerprint("object", child),
                     "transform_mode": step["transform_mode"],
                 }
                 if step_type == "object_parent_set":
@@ -1744,9 +2000,7 @@ def execute_mesh_batch(
                     targets[child_alias] = _live_target(child_alias, child)
                 else:
                     objects[child_alias] = _live_object(child)
-                report = organization_result(
-                    transaction, changed=parent_changed, obj=child
-                )
+                report = organization_result(transaction, changed=parent_changed, obj=child)
             elif step_type == "rig_bind":
                 target_alias = str(step["mesh_target_alias"])
                 armature_alias = str(step["armature_alias"])
@@ -1760,9 +2014,7 @@ def execute_mesh_batch(
                             "expected_object_identity": target["expected_object_identity"],
                             "expected_mesh_identity": target["expected_mesh_identity"],
                             "expected_mesh_revision_id": target["mesh_revision_id"],
-                            "expected_group_schema_fingerprint": target[
-                                "group_schema_fingerprint"
-                            ],
+                            "expected_group_schema_fingerprint": target["group_schema_fingerprint"],
                             "expected_weights_fingerprint": target["weights_fingerprint"],
                         },
                         "armature_target": armatures[armature_alias],
@@ -1876,6 +2128,7 @@ def execute_mesh_batch(
                 validate_params = {
                     "selection_id": selections[selection_alias]["selection_id"],
                     "check": step["check"],
+                    **({"scope": step["scope"]} if step.get("scope") is not None else {}),
                     "surface_id": (
                         surfaces[str(surface_alias)] if surface_alias is not None else None
                     ),
@@ -1952,22 +2205,13 @@ def execute_mesh_batch(
         }
     )
     final_aliases.update(
-        {
-            alias: {"kind": "armature", "target": value}
-            for alias, value in sorted(armatures.items())
-        }
+        {alias: {"kind": "armature", "target": value} for alias, value in sorted(armatures.items())}
     )
     final_aliases.update(
-        {
-            alias: {"kind": "collection", **value}
-            for alias, value in sorted(collections.items())
-        }
+        {alias: {"kind": "collection", **value} for alias, value in sorted(collections.items())}
     )
     final_aliases.update(
-        {
-            alias: {"kind": "component_catalog", **value}
-            for alias, value in sorted(catalogs.items())
-        }
+        {alias: {"kind": "component_catalog", **value} for alias, value in sorted(catalogs.items())}
     )
     final_aliases.update(
         {
@@ -1996,9 +2240,7 @@ def execute_mesh_batch(
         }
     manifest = {
         "objects": manifest_objects,
-        "meshes": {
-            alias: target for alias, target in sorted(targets.items())
-        },
+        "meshes": {alias: target for alias, target in sorted(targets.items())},
         "collections": {
             alias: collection_summary(_collection_for_alias(alias, collections))
             for alias in sorted(collections)
@@ -2019,6 +2261,7 @@ def execute_mesh_batch(
             for alias, value in sorted(libraries.items())
         },
         "library_appends": library_appends,
+        "mesh_joins": mesh_joins,
         "component_catalogs": {
             alias: book.component_catalog(value["component_catalog_id"]).summary()
             for alias, value in sorted(catalogs.items())

@@ -13,7 +13,7 @@ from .state import AddonState
 bl_info = {
     "name": "Blender Research MCP",
     "author": "Blender Research MCP contributors",
-    "version": (0, 16, 0),
+    "version": (0, 17, 5),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Research MCP",
     "description": "Local semantic, observable, and reversible MCP bridge",

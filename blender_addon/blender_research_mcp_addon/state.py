@@ -68,6 +68,7 @@ from .material_authoring_ops import (
 )
 from .mesh_attribute_transfer_ops import transfer_attribute
 from .mesh_batch_ops import MeshBatchExecutionError, execute_mesh_batch
+from .mesh_boundary_ops import inspect_boundary
 from .mesh_component_catalog_ops import (
     inspect_component_catalog,
     prepare_component_catalog,
@@ -81,6 +82,7 @@ from .mesh_component_map import (
     remap_selection,
 )
 from .mesh_deform_ops import DEFORM_OPERATIONS, edit_mesh_deform
+from .mesh_join_ops import join_meshes, preflight_join, weld_mesh_vertices
 from .mesh_materialization_ops import materialize_mesh
 from .mesh_ops import (
     MeshOperationError,
@@ -190,11 +192,13 @@ CAPABILITIES = [
     "library.inspect",
     "object.geometry.inspect",
     "mesh.inspect",
+    "mesh.join.preflight",
     "mesh.uv.inspect",
     "mesh.weights.inspect",
     "mesh.selection.query",
     "mesh.selection.derive",
     "mesh.selection.inspect",
+    "mesh.boundary.inspect",
     "mesh.selection.release",
     "mesh.component_catalog.prepare",
     "mesh.component_catalog.inspect",
@@ -234,6 +238,7 @@ CAPABILITIES = [
     "modifier.move",
     "modifier.delete",
     "mesh.edit",
+    "mesh.join",
     "mesh.uv.edit",
     "mesh.weights.edit",
     "mesh.attribute.transfer",
@@ -264,11 +269,11 @@ CAPABILITIES = [
 CAPABILITY_VERSIONS = {
     "transport": 1,
     "context": 1,
-    "viewport_capture": 3,
+    "viewport_capture": 4,
     "viewport_raycast": 1,
     "geometry_inspection": 1,
     "lookdev_inspection": 1,
-    "transactions": 12,
+    "transactions": 13,
     "object_transform_scale": 1,
     "object_transform": 1,
     "object_settings": 1,
@@ -282,15 +287,16 @@ CAPABILITY_VERSIONS = {
     "object_visibility": 1,
     "modifier_state": 1,
     "modifier_authoring": 1,
-    "mesh_topology": 4,
-    "mesh_selection": 1,
+    "mesh_topology": 6,
+    "mesh_selection": 2,
     "mesh_surface_query": 1,
-    "mesh_deformation": 1,
-    "mesh_validation": 2,
-    "mesh_component_map": 3,
+    "mesh_deformation": 2,
+    "mesh_validation": 3,
+    "mesh_component_map": 5,
     "mesh_component_catalog": 1,
     "mesh_separation": 2,
-    "mesh_batch": 4,
+    "mesh_batch": 6,
+    "mesh_join": 1,
     "mesh_uv": 1,
     "mesh_weights": 1,
     "mesh_attribute_transfer": 1,
@@ -328,6 +334,7 @@ MUTATION_COMMANDS = {
     "modifier.move",
     "modifier.delete",
     "mesh.edit",
+    "mesh.join",
     "mesh.uv.edit",
     "mesh.weights.edit",
     "mesh.attribute.transfer",
@@ -481,13 +488,17 @@ class AddonState:
             self.scene_generation += 1
 
     @contextlib.contextmanager
-    def suppress_generation(self) -> Iterator[None]:
+    def suppress_generation(self, *, defer_view_update: bool = False) -> Iterator[None]:
         self._suppress_generation += 1
         try:
             yield
         finally:
             try:
-                if self._suppress_generation == 1 and self.active_command in MUTATION_COMMANDS:
+                if (
+                    self._suppress_generation == 1
+                    and self.active_command in MUTATION_COMMANDS
+                    and not defer_view_update
+                ):
                     view_layer = getattr(bpy.context, "view_layer", None)
                     if view_layer is not None:
                         view_layer.update()
@@ -576,6 +587,7 @@ class AddonState:
                 details=exc.details,
             )
         except MeshOperationError as exc:
+            exc.details.setdefault("scene_generation", self.scene_generation)
             self.last_error = f"{exc.code}: {exc}"
             return self._error(
                 request_id,
@@ -1049,6 +1061,11 @@ class AddonState:
                 )
             result["scene_generation"] = self.scene_generation
             return result
+        if command == "mesh.boundary.inspect":
+            with self.suppress_generation():
+                result = inspect_boundary(self.mesh_resources, params)
+            result["scene_generation"] = self.scene_generation
+            return result
         if command == "mesh.selection.query":
             with self.suppress_generation():
                 result = query_selection(self.mesh_resources, self.captures, params)
@@ -1202,6 +1219,13 @@ class AddonState:
                         f"Capture view reference does not exist: {view_reference_capture_id}",
                         kind="not_found",
                     )
+            from .mesh_boundary_overlay import prepare_overlay
+
+            boundary_overlay = prepare_overlay(
+                self.mesh_resources,
+                bpy.data.objects.get(object_name),
+                params.get("boundary_annotations"),
+            )
             with self.suppress_generation():
                 result, evidence_data = capture_viewport(
                     object_name,
@@ -1212,6 +1236,7 @@ class AddonState:
                     str(params.get("overlays", "CURRENT")),
                     params.get("orbit"),
                     view_reference,
+                    boundary_overlay,
                 )
             capture_id = str(uuid.uuid4())
             evidence = CaptureEvidence(
@@ -1374,9 +1399,28 @@ class AddonState:
                 collection, delta = create_collection(transaction, params)
                 bpy.context.view_layer.update()
             self._record_delta(transaction, delta)
-            result = organization_result(
-                transaction, changed=True, collection=collection
+            result = organization_result(transaction, changed=True, collection=collection)
+            result.update(
+                {
+                    "status": transaction.status,
+                    "delta_count": len(transaction.deltas),
+                    "delta_kinds": transaction.delta_kinds(),
+                }
             )
+            return result
+        if command == "mesh.join.preflight":
+            return preflight_join(self.mesh_resources, params)["public"]
+        if command == "mesh.join":
+            transaction = self._require_transaction(params, request)
+            self._validate_transaction_guards(transaction)
+            previous_count = len(transaction.deltas)
+            with self.suppress_generation():
+                result = join_meshes(transaction, self.mesh_resources, params)
+                bpy.context.view_layer.update()
+            if len(transaction.deltas) > previous_count:
+                self.scene_generation += 1
+                transaction.status = "active"
+                transaction.context_fingerprint = self._current_context_fingerprint(transaction)
             result.update(
                 {
                     "status": transaction.status,
@@ -1454,7 +1498,9 @@ class AddonState:
             with self.suppress_generation():
                 operation = params.get("operation")
                 operation_type = operation.get("type") if isinstance(operation, dict) else None
-                if operation_type in DEFORM_OPERATIONS:
+                if operation_type == "weld_vertices":
+                    result = weld_mesh_vertices(transaction, self.mesh_resources, params)
+                elif operation_type in DEFORM_OPERATIONS:
                     result = edit_mesh_deform(
                         transaction, self.mesh_resources, self.captures, params
                     )
@@ -1809,7 +1855,10 @@ class AddonState:
             self._validate_transaction_guards(transaction)
             result = self._transaction_result(transaction)
             finalized: list[dict[str, Any]] = []
-            with self.suppress_generation():
+            contains_join = any(
+                delta.kind == "mesh_join" for delta in transaction.structural_deltas()
+            )
+            with self.suppress_generation(defer_view_update=contains_join):
                 for delta in transaction.deltas:
                     item = finalize_modifier_delta(delta)
                     if item is not None:
@@ -1853,7 +1902,8 @@ class AddonState:
         self._validate_transaction_guards(transaction)
         result = self._transaction_result(transaction)
         finalized: list[dict[str, Any]] = []
-        with self.suppress_generation():
+        contains_join = any(delta.kind == "mesh_join" for delta in transaction.structural_deltas())
+        with self.suppress_generation(defer_view_update=contains_join):
             for delta in transaction.deltas:
                 item = finalize_modifier_delta(delta)
                 if item is not None:
@@ -2281,7 +2331,19 @@ class AddonState:
         validate_modifier_stack_guards(transaction)
         validate_mesh_snapshot_guards(transaction)
         validate_weight_snapshot_guards(transaction)
-        validate_structural_transaction(transaction)
+        try:
+            validate_structural_transaction(transaction)
+        except TransactionModelError as exc:
+            if exc.code == "STRUCTURE_CONFLICT" and any(
+                delta.kind == "mesh_join" for delta in transaction.structural_deltas()
+            ):
+                raise ContextOperationError(
+                    "MESH_JOIN_DATA_CONFLICT",
+                    "Joined output or guarded source structure changed outside the transaction",
+                    kind="conflict",
+                    details={"cause_code": exc.code, "cause": str(exc)},
+                ) from exc
+            raise
 
     def _set_object_settings(
         self,

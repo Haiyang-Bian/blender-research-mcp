@@ -59,6 +59,41 @@ extract、场景组织和 rig.bind 串成一次 transaction-v11 原子装配，�
 `mesh.batch.execute` v4。外部静态 Object/Collection/Mesh 模板可在精确文件与条目
 证据下成为本地可编辑数据，再接入对象对齐、动态 SurfaceRef、拟合、权重和绑定；
 Library Link/Override、脚本/驱动、Action、约束与 Geometry Nodes 继续拒绝。
+0.17.0 新增只读 `mesh.join.preflight`、事务型 `mesh.join`、显式
+`mesh.edit(weld_vertices)` 和 `mesh.batch.execute` v5。跨对象合成会创建独立 BASE
+Mesh 输出、为每个来源保留 JOIN_BRANCH lineage，并且只有调用方明确提交边界
+SelectionSet 和距离规则时才焊接接缝；自动门禁与确定性 Blender 实机门已通过，
+聚合同进程压力和真实角色笼拼接仍保留为未关闭的扩展验收项。
+0.17.1 修复了同一事务中“先创建 Collection、再由后续操作放入对象”时结构 guard
+仍停留在旧指纹、导致 rollback 误报冲突的问题；真实用户对 Collection 的外部修改
+仍会被保护。分页 UV 检查也改为只计算所请求页面，并用明确警告延后全局岛屿指标，
+避免大角色 Mesh 的正常检查被短超时误报为连接丢失。
+0.17.2 修复了拓扑操作失败后重建 Vertex Group 导致的事务回退死锁、大网格边表
+重排导致的 ComponentMap 错位，以及多层 UV/Pin Join 的原生崩溃与空材质槽处理。
+失败恢复保留未改变的 Group identity；边映射按写回后的实际连接关系验证。
+0.17.3 新增只读 `mesh.boundary.inspect`，以当前指纹分页报告边界分类、
+定向路径、两组端点配对、侧轨歧义和搜索预算。旧 Grid Fill 的失败在写前
+返回结构化诊断；单闭环要求明确四角，两个闭环使用 bridge。合法的周围
+分叉不会仅因度数大于 2 被拒绝。边界补面后续阶段与现场证据见
+[分期路线图](docs/roadmap/0.17.x-explicit-boundary-patching.md)和
+[验收记录](docs/validation/2026-09-03-explicit-boundary-patching.md)。
+0.17.4 实现定向四边/闭环四角 Grid Fill、精确 create_edge/create_face 和开链
+bridge，统一走现有事务写入器。生成前检查局部相交和属性来源；新 UV、权重
+使用固定边界插值，独立 UV 岛需要显式选择。ComponentMap 分别报告真实血缘
+和创建证据。全量测试、合成属性压力及 Blender 回滚/重连已通过。
+0.17.5 完成局部质量检查、累计位移限制、嵌套 batch 引用与边界图像标注。
+真实检查点的独立副本已完成侧带、中央补片、固定边界拟合、三层 UV 整理、
+骨骼权重验证及 rollback / commit → save → reload。逐组件审计确认旧坐标、
+权重、UV/Pin、Seam、绑定及其余对象保持不变；艺术与纹理布局评价仍待确认。
+完整指标、参考未覆盖区域和可复用示例见上述验收记录。
+
+2026-09-05 的[新 issue 开发计划](docs/roadmap/2026-09-05-rendering-and-animation-review.md)
+建议先关闭后续相交/范围/位移数值反例，再交付静态 NPR 材质与相机对照、生产渲染任务、
+已有动画有限帧采样。各项仍为计划；按[多任务工作树方案](docs/roadmap/2026-09-05-parallel-development.md)
+独立开发并串行集成公共入口，保留 0.18 Shape Key → 0.19 骨架 → 0.20 Modifier 的顺序。
+
+补丁与既有 Join/Weld/batch、UV/权重实机回归见
+[0.17.2 验收记录](docs/validation/2026-09-03-mesh-recovery-and-join-hotfix.md)。
 既有验收记录见
 [首个纵向切片](docs/validation/2026-08-28-first-vertical-slice.md) 和
 [0.3.1 自主观察闭环](docs/validation/2026-08-29-autonomous-observation.md)，以及
@@ -97,8 +132,9 @@ SelectionSet 与求值曲面拟合见
 0.16 受控 Library 与模板覆盖面见
 [0.16.0 路线图](docs/roadmap/0.16.0-library-template-coverage.md)和
 [0.16.0 验收记录](docs/validation/2026-09-01-library-template-coverage.md)。
-0.17 跨对象 Mesh 合成与接缝焊接计划见
-[0.17.0 路线图](docs/roadmap/0.17.0-cross-object-mesh-composition.md)。
+0.17 跨对象 Mesh 合成与接缝焊接见
+[0.17.0 路线图](docs/roadmap/0.17.0-cross-object-mesh-composition.md)和
+[0.17.0 验收记录](docs/validation/2026-09-01-cross-object-mesh-composition.md)。
 
 权威设计与交接信息见 [docs/design.md](docs/design.md)，常见使用流程见
 [docs/usage.md](docs/usage.md)，完整文档导航见
@@ -315,9 +351,9 @@ extract、Collection、父级和 rig.bind。运行期失败回退完整活动事
 模板只提供不存在几何的先验形体，不宣称恢复遮挡下不存在的原始人体数据。详细边界见
 [0.16.0 路线图](docs/roadmap/0.16.0-library-template-coverage.md)。
 
-## 0.17.0 跨对象 Mesh 合成与接缝焊接（下一阶段）
+## 0.17.0 跨对象 Mesh 合成与接缝焊接
 
-0.17 计划新增只读 `mesh.join.preflight` 和事务型 `mesh.join`：将 2–32 个精确
+0.17 新增只读 `mesh.join.preflight` 和事务型 `mesh.join`：将 2–32 个精确
 BASE Mesh 对象转换到明确坐标系，按显式策略统一材质、UV、颜色和 Vertex Group，
 创建一个独立输出，并为每个输入返回一条 JOIN_BRANCH ComponentMap。输入对象是保留
 还是在 commit 时删除由请求直接声明。
@@ -325,10 +361,17 @@ BASE Mesh 对象转换到明确坐标系，按显式策略统一材质、UV、�
 join 不会自动按距离焊接。新的 `mesh.edit(weld_vertices)` 只处理同一 revision 上
 显式 SelectionSet 接受的顶点组，并返回 MERGED lineage、属性影响和新的边界证据。
 Batch v5 将 Library append、拟合、join、weld、权重、绑定和验证组合为一次原子流程。
-这一步完成后再按 0.18 Shape Key、0.19 骨架创作、0.20 Modifier 最终化推进。详细
+Batch v5 会为每个来源维护 JOIN_BRANCH → Weld/Topology 的独立组合 Map，并在
+assembly manifest 中记录 Join schema 与边界证据。会话资源上限相应扩展为 192 个
+SelectionSet 和 128 张 ComponentMap，组件/关系总预算不变。确定性
+commit/save/reload 实机门已通过；聚合同会话压力与真实角色笼拼接仍明确待关闭。
+模型结构主线仍按 0.18 Shape Key、0.19 骨架创作、0.20 Modifier 最终化推进；
+此前插入的正确性与渲染工作见上述 2026-09-05 更新计划。详细
 接口、事务语义和实机验收计划见
 [0.17.0 路线图](docs/roadmap/0.17.0-cross-object-mesh-composition.md)和
-[0.16 后模型编辑完整性方向](docs/requirements/model-editing-completeness.md)。
+[0.16 后模型编辑完整性方向](docs/requirements/model-editing-completeness.md)；实机证据与
+尚存限制见
+[0.17.0 验收记录](docs/validation/2026-09-01-cross-object-mesh-composition.md)。
 
 ## 目录
 
@@ -360,7 +403,7 @@ uv run --no-sync blender-research-mcp --version
 构建 Blender 开发插件：
 
 ~~~powershell
-uv run --no-sync python scripts/build_addon.py --version 0.16.0
+uv run --no-sync python scripts/build_addon.py --version 0.17.2
 ~~~
 
 `--version` 会同时校验项目版本、插件运行时版本和 Blender `bl_info`，并默认

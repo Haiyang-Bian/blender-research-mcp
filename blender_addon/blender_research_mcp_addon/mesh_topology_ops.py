@@ -10,7 +10,9 @@ from typing import Any
 import bmesh
 import bpy
 
+from .execution_budget import check_deadline
 from .lookdev_ops import session_identity
+from .mesh_boundary_ops import auto_boundary, graph_from_bmesh
 from .mesh_component_map import remap_selection
 from .mesh_component_map_model import (
     DOMAINS,
@@ -46,6 +48,14 @@ from .mesh_ops import (
     topology_fingerprint,
     unsupported_attributes,
     validate_attribute_policy,
+    write_bmesh_exact,
+)
+from .mesh_patch_ops import (
+    apply_patch_plan,
+    is_patch,
+    no_op_result,
+    prepare_patch,
+    validate_patch,
 )
 from .mesh_query_ops import validate_selection
 from .mesh_resource_model import MeshResourceBook, MeshResourceError, SelectionRecord
@@ -60,6 +70,8 @@ TOPOLOGY_OPERATIONS = {
     "bridge",
     "fill",
     "grid_fill",
+    "create_edge",
+    "create_face",
 }
 
 _DOMAIN_COLLECTION = {
@@ -137,6 +149,8 @@ def _validate_operation(raw: Any, material_count: int) -> dict[str, Any]:
         raise MeshOperationError("MESH_OPERATION_INVALID", "operation must be an object")
     operation_type = raw.get("type")
     validate_attribute_policy(raw)
+    if is_patch(raw):
+        return validate_patch(raw, material_count)
     common = {"type", "selection_id"}
     if operation_type == "subdivide":
         operation = _closed(
@@ -468,29 +482,33 @@ def _operate(
             raise MeshOperationError("MESH_BOUNDARY_INVALID", "Fill created no faces")
         _set_face_properties(faces, operation, material_count)
         return {"boundary_loops": len(loops), "created_faces": len(faces)}
-    components = _boundary_components(selected)
-    degrees = [_component_degrees(component) for component in components]
-    valid = (len(components) == 1 and all(degree == 2 for degree in degrees[0])) or (
-        len(components) == 2
-        and all(sum(degree == 1 for degree in item) in {0, 2} for item in degrees)
-        and all(all(degree in {1, 2} for degree in item) for item in degrees)
-    )
-    if not valid:
-        raise MeshOperationError(
-            "MESH_BOUNDARY_INVALID",
-            "Grid fill requires one closed boundary or two compatible boundary chains",
+    boundary = auto_boundary(graph_from_bmesh(bm), selection.indices)
+    permitted = {index for side in boundary["edges"] for index in side}
+    # Restrict the native rail search on this detached working BMesh only.
+    # Restore flags before writeback, including on a native exception.
+    flags = [(edge, bool(edge.hide)) for edge in bm.edges]
+    try:
+        for edge, _hidden in flags:
+            if len(edge.link_faces) <= 1 and edge.index not in permitted:
+                edge.hide = True
+        result = bmesh.ops.grid_fill(
+            bm,
+            edges=selected,
+            mat_nr=_material_index(operation, material_count) or 0,
+            use_smooth=bool(operation.get("smooth", False)),
+            use_interp_simple=bool(operation.get("use_interp_simple", False)),
         )
-    result = bmesh.ops.grid_fill(
-        bm,
-        edges=selected,
-        mat_nr=_material_index(operation, material_count) or 0,
-        use_smooth=bool(operation.get("smooth", False)),
-        use_interp_simple=bool(operation.get("use_interp_simple", False)),
-    )
+    finally:
+        for edge, hidden in flags:
+            edge.hide = hidden
     faces = _new_faces(result)
     if not faces:
-        raise MeshOperationError("MESH_BOUNDARY_INVALID", "Grid fill created no faces")
-    return {"boundary_components": len(components), "created_faces": len(faces)}
+        raise MeshOperationError(
+            "MESH_BOUNDARY_INVALID",
+            "Native Grid Fill rejected a validated boundary",
+            details={"reason": "NATIVE_GRID_REJECTED", "phase": "generation", "boundary": boundary},
+        )
+    return {"boundary_components": 2, "created_faces": len(faces), "boundary": boundary}
 
 
 @dataclass
@@ -498,7 +516,7 @@ class _LineageLayer:
     sequence: Any
     layer: Any
     before: tuple[Any, ...]
-    before_ids: frozenset[int]
+    before_keys: tuple[int, ...]
 
 
 def _start_lineage(bm: Any) -> dict[str, _LineageLayer]:
@@ -514,7 +532,7 @@ def _start_lineage(bm: Any) -> dict[str, _LineageLayer]:
             sequence,
             layer,
             before,
-            frozenset(id(item) for item in before),
+            tuple(hash(item) for item in before),
         )
     return result
 
@@ -537,22 +555,45 @@ def _finish_lineage(
         state.sequence.ensure_lookup_table()
         targets: dict[int, list[int]] = {}
         created_indices = []
+        # CustomData changes can invalidate Python wrappers without deleting the
+        # native elements. Capture their native hashes before the operation;
+        # Python id()/is_valid on the old wrapper cannot identify survivors.
+        survivors = {key: index for index, key in enumerate(state.before_keys)}
         for item in state.sequence:
-            source = int(item[state.layer]) - 1
+            survivor = survivors.get(hash(item))
+            if survivor is not None and int(item[state.layer]) != survivor + 1:
+                survivor = None
+            source = survivor if survivor is not None else int(item[state.layer]) - 1
+            if survivor is None and operation_type in {
+                "grid_fill",
+                "create_edge",
+                "create_face",
+                "bridge",
+            }:
+                source = -1
+            if (
+                survivor is None
+                and domain == "VERTEX"
+                and operation_type
+                in {"subdivide", "loop_cut", "bisect", "bevel_edges", "inset_faces"}
+            ):
+                # An interpolated integer tag is not exact vertex ancestry.
+                # Edge/face-derived vertices are CREATED in the vertex domain.
+                source = -1
             if source >= 0 and source < len(state.before):
                 targets.setdefault(source, []).append(int(item.index))
-            if id(item) not in state.before_ids:
+            if survivor is None:
                 created_indices.append(int(item.index))
         rows = []
         deleted_indices = []
-        for source, before_item in enumerate(state.before):
+        for source in range(len(state.before)):
             mapped = tuple(sorted(set(targets.get(source, ()))))
             if not mapped:
                 deleted_indices.append(source)
                 continue
             if len(mapped) > 1:
                 relation = "SPLIT"
-            elif id(state.sequence[mapped[0]]) == id(before_item):
+            elif hash(state.sequence[mapped[0]]) == state.before_keys[source]:
                 relation = "SURVIVED"
             else:
                 relation = "DERIVED"
@@ -600,9 +641,11 @@ def _created_selections(
     record: ComponentMapRecord,
     obj: Any,
     mesh: Any,
+    identifiers: list[str] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], list[str]]:
     result = {}
-    identifiers = []
+    if identifiers is None:
+        identifiers = []
     for domain in DOMAINS:
         indices = record.created.get(domain, ())
         if not indices:
@@ -639,7 +682,21 @@ def edit_mesh_topology(
     initial_mesh_reference = _mesh_reference(initial_mesh)
     operation = _validate_operation(params.get("operation"), len(initial_mesh.materials))
     operation_type = str(operation["type"])
-    selection = _selection(book, operation, obj, initial_mesh)
+    try:
+        patch = prepare_patch(book, obj, initial_mesh, operation) if is_patch(operation) else None
+    except (MeshOperationError, MeshResourceError) as exc:
+        exc.details.update(writeback=False, recovery="NOT_NEEDED")
+        exc.details.setdefault("phase", "preflight")
+        exc.details.setdefault(
+            "next_steps",
+            ["Inspect current boundary evidence and reduce the operation if a budget was exceeded"],
+        )
+        raise
+    selection = (
+        patch.selection if patch is not None else _selection(book, operation, obj, initial_mesh)
+    )
+    if patch is not None and patch.no_op:
+        return no_op_result(transaction, obj, patch, data_scope)
     before_map_evidence = _map_evidence(obj, initial_mesh)
     before_revision = mesh_revision_id(initial_mesh)
     before_attributes = _attribute_signature(initial_mesh)
@@ -694,12 +751,17 @@ def edit_mesh_topology(
     component_map = None
     created_selection_ids: list[str] = []
     rebound_selection_id = None
+    writeback_started = False
     try:
         bm.from_mesh(mesh)
         component_baseline = _bmesh_baseline(bm)
         requested = {_DOMAIN_COLLECTION[selection.domain]: _index_page(list(selection.indices))}
         lineage = _start_lineage(bm)
-        evidence = _operate(bm, obj, selection, operation, len(mesh.materials))
+        evidence = (
+            apply_patch_plan(bm, patch, operation)
+            if patch is not None
+            else _operate(bm, obj, selection, operation, len(mesh.materials))
+        )
         bm.normal_update()
         components = _component_changes(bm, component_baseline)
         components["affected"] = requested
@@ -714,8 +776,10 @@ def edit_mesh_topology(
             )
         relations, created, deleted = _finish_lineage(bm, lineage, operation_type)
         lineage = None
-        bm.to_mesh(mesh)
-        mesh.update(calc_edges=True, calc_edges_loose=True)
+        if patch is not None:
+            check_deadline(reserve_seconds=1.0)
+        writeback_started = True
+        write_bmesh_exact(bm, mesh)
         migration_result = finish_topology_attributes(obj, mesh, topology_attribute_evidence)
         if unsupported_attributes(mesh):
             raise MeshOperationError(
@@ -781,6 +845,20 @@ def edit_mesh_topology(
                 relations=relations,
                 created=created,
                 deleted=deleted,
+                creation_evidence=(
+                    {
+                        "vertices": [
+                            {"index": i, "grid_parameter": patch.lattice.get(i)}
+                            for i in created["VERTEX"]
+                        ],
+                        "boundary": patch.boundary,
+                        "attributes": patch.attributes["evidence"],
+                        "quality": patch.evidence,
+                        "fallback": "NONE",
+                    }
+                    if patch is not None
+                    else None
+                ),
             )
             book.add_component_map(component_map)
             rebound_result = remap_selection(
@@ -795,7 +873,7 @@ def edit_mesh_topology(
             rebound = rebound_result["selection"]
             rebound_selection_id = str(rebound["selection_id"])
             created_selections, created_selection_ids = _created_selections(
-                book, component_map, obj, mesh
+                book, component_map, obj, mesh, created_selection_ids
             )
         else:
             rebound_record = book.add_selection(
@@ -834,6 +912,7 @@ def edit_mesh_topology(
             _remove_new_guard(transaction, guard)
         if new_weight_guard and weight_guard is not None:
             transaction.remove_weight_snapshot_guard(weight_guard)
+        exc.details.update(writeback=writeback_started, recovery="CALL_RESTORED")
         raise
     except Exception as exc:
         if component_map is not None:

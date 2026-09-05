@@ -105,6 +105,7 @@ async def capture_image(
     overlays: str = "CURRENT",
     orbit: dict[str, float] | None = None,
     view_reference_capture_id: str | None = None,
+    boundary_annotations: dict[str, Any] | None = None,
 ) -> tuple[bytes, dict[str, Any]]:
     result = await client.call(
         "viewport.capture",
@@ -117,6 +118,11 @@ async def capture_image(
             "overlays": overlays,
             "orbit": orbit,
             "_view_reference_capture_id": view_reference_capture_id,
+            **(
+                {"boundary_annotations": boundary_annotations}
+                if boundary_annotations is not None
+                else {}
+            ),
         },
         deadline_ms=CAPTURE_DEADLINE_MS,
         read_only=True,
