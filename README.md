@@ -86,6 +86,12 @@ bridge，统一走现有事务写入器。生成前检查局部相交和属性�
 骨骼权重验证及 rollback / commit → save → reload。逐组件审计确认旧坐标、
 权重、UV/Pin、Seam、绑定及其余对象保持不变；艺术与纹理布局评价仍待确认。
 完整指标、参考未覆盖区域和可复用示例见上述验收记录。
+
+2026-09-05 的[新 issue 开发计划](docs/roadmap/2026-09-05-rendering-and-animation-review.md)
+建议先关闭后续相交/范围/位移数值反例，再交付静态 NPR 材质与相机对照、生产渲染任务、
+已有动画有限帧采样。各项仍为计划；按[多任务工作树方案](docs/roadmap/2026-09-05-parallel-development.md)
+独立开发并串行集成公共入口，保留 0.18 Shape Key → 0.19 骨架 → 0.20 Modifier 的顺序。
+
 补丁与既有 Join/Weld/batch、UV/权重实机回归见
 [0.17.2 验收记录](docs/validation/2026-09-03-mesh-recovery-and-join-hotfix.md)。
 既有验收记录见
@@ -359,7 +365,8 @@ Batch v5 会为每个来源维护 JOIN_BRANCH → Weld/Topology 的独立组合 
 assembly manifest 中记录 Join schema 与边界证据。会话资源上限相应扩展为 192 个
 SelectionSet 和 128 张 ComponentMap，组件/关系总预算不变。确定性
 commit/save/reload 实机门已通过；聚合同会话压力与真实角色笼拼接仍明确待关闭。
-后续再按 0.18 Shape Key、0.19 骨架创作、0.20 Modifier 最终化推进。详细
+模型结构主线仍按 0.18 Shape Key、0.19 骨架创作、0.20 Modifier 最终化推进；
+此前插入的正确性与渲染工作见上述 2026-09-05 更新计划。详细
 接口、事务语义和实机验收计划见
 [0.17.0 路线图](docs/roadmap/0.17.0-cross-object-mesh-composition.md)和
 [0.16 后模型编辑完整性方向](docs/requirements/model-editing-completeness.md)；实机证据与

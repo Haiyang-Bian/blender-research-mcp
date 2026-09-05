@@ -1,5 +1,14 @@
 # Explicit boundary patching acceptance
 
+## Subsequent reports — 2026-09-05 planning addendum
+
+The successful gates below remain evidence for their recorded fixtures and builds.
+Later reports describe candidate/writeback intersection disagreement, unscoped
+TARGET_INTERSECTION returning faces outside the input selection, and a near-limit
+floating-point displacement rejection. They are open, not covered by the old pass.
+See [QLT-01–03 and the new acceptance matrix](../roadmap/2026-09-05-rendering-and-animation-review.md).
+This addendum records a planning review only; no new runtime gate was executed.
+
 ## 0.17.3 checkpoint
 
 Blender 4.2.23 LTS, package/add-on 0.17.3, protocol 1, transactions 13.

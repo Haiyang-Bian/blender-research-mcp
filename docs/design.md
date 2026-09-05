@@ -1,8 +1,8 @@
 # Blender Research MCP — design and handoff
 
-- Status: 0.17.5 explicit boundary patch workflow, engineering acceptance complete
+- Status: 0.17.5 implemented; recorded acceptance passed, subsequent correctness reports open
 - Current milestone: 0.17.5 local validation, bounded deformation, batch and capture
-- Next milestone: 0.18 Shape Key authoring
+- Next planned work: 0.17.6 correctness hardening, then staged rendering workflows
 - Primary Blender target: 4.2.23 LTS
 - Package and add-on version: 0.17.5
 - Protocol version: 1
@@ -14,6 +14,16 @@ unchanged. Boundary inspection, explicit authoring, integrated workflows and the
 real checkpoint-copy engineering gates are complete. Artistic approval, texture
 placement and the four reference-uncovered initial-form vertices remain explicitly
 separate from engineering acceptance. See the linked acceptance record.
+
+The [2026-09-05 issue review](roadmap/2026-09-05-rendering-and-animation-review.md)
+adds a proposed 0.17.6–0.17.9 sequence: correctness fixes, camera-based LookDev and
+isolated NPR templates, production render jobs, then bounded existing-animation
+sampling. The approved 0.18 Shape Key → 0.19 bone authoring → 0.20 Modifier finalization
+order remains intact. These new items are plans, not advertised capabilities.
+The earlier patch acceptance records retain their original scope; new intersection
+and displacement counterexamples are open and must pass their own regressions.
+Implementation can use [separate tasks/worktrees](roadmap/2026-09-05-parallel-development.md)
+with explicit file ownership and serial integration of shared protocol/transaction changes.
 
 ### Explicit patch workflow contract
 
